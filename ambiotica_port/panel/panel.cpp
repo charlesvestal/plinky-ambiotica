@@ -38,7 +38,16 @@ struct ambiotica_panel : panel_t {
 #if AMB_STAGE >= 2
     full_params fx;
     fc_state    st;
-    unsigned char sram_pool[40 * 1024];
+    /* Reverb (~79 KB, 4-comb) lives here now, not PSRAM — its scattered
+     * delay-line access was ~10x slower in PSRAM and blew the core0 budget.
+     * Sized per chain level so low levels keep the panel object small. */
+#if AMB_CHAIN_LEVEL >= 4
+    unsigned char sram_pool[114 * 1024];   /* reverb + harmony + drift + bloom */
+#elif AMB_CHAIN_LEVEL >= 2
+    unsigned char sram_pool[88 * 1024];    /* reverb (+ drift/bloom at L3) */
+#else
+    unsigned char sram_pool[1 * 1024];     /* L0/L1: no SRAM DSP */
+#endif
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
     play_surface_t play;
     slider_t       fxslider[FX_N];
@@ -61,14 +70,48 @@ struct ambiotica_panel : panel_t {
         psram_bytes = (unsigned long) g_amb_ps_cap;
         const int sr = (int) AMB_SR;
         const int loopcap = 32 * sr;
-        if (g_amb_ps_cap >= (size_t) 7 * 1024 * 1024) {
-            g_amb_region = 1;
-            looper = looper_create(loopcap, sr); granular = granular_create(sr);
-            microloop = microloop_create(sr);    reverb = reverb_create(sr);
-            g_amb_region = 0;
-            harmony = harmony_create(sr); bloom = bloom_create(sr); drift = drift_create(sr);
-        }
-        dsp_ok = looper && granular && microloop && reverb && harmony && bloom && drift;
+        const bool ps = g_amb_ps_cap >= (size_t) 4 * 1024 * 1024;   /* looper 4 MB (+ big modules at high levels) */
+        g_amb_region = 1;   /* PSRAM: big buffers (sequential-ish) */
+#if AMB_CHAIN_LEVEL >= 1
+        if (ps) looper    = looper_create(loopcap, sr);
+#endif
+#if AMB_CHAIN_LEVEL >= 5
+        if (ps) microloop = microloop_create(sr);
+#endif
+#if AMB_CHAIN_LEVEL >= 6
+        if (ps) granular  = granular_create(sr);
+#endif
+        g_amb_region = 0;   /* SRAM pool: fast-access modules */
+#if AMB_CHAIN_LEVEL >= 2
+        reverb  = reverb_create(sr);        /* moved here (was PSRAM -> too slow) */
+#endif
+#if AMB_CHAIN_LEVEL >= 3
+        bloom   = bloom_create(sr);
+        drift   = drift_create(sr);
+#endif
+#if AMB_CHAIN_LEVEL >= 4
+        harmony = harmony_create(sr);
+#endif
+        /* dsp_ok = every module this level will process was created */
+        dsp_ok = true;
+#if AMB_CHAIN_LEVEL >= 1
+        dsp_ok = dsp_ok && looper;
+#endif
+#if AMB_CHAIN_LEVEL >= 2
+        dsp_ok = dsp_ok && reverb;
+#endif
+#if AMB_CHAIN_LEVEL >= 3
+        dsp_ok = dsp_ok && bloom && drift;
+#endif
+#if AMB_CHAIN_LEVEL >= 4
+        dsp_ok = dsp_ok && harmony;
+#endif
+#if AMB_CHAIN_LEVEL >= 5
+        dsp_ok = dsp_ok && microloop;
+#endif
+#if AMB_CHAIN_LEVEL >= 6
+        dsp_ok = dsp_ok && granular;
+#endif
         fc_init(&st, 0.7f);
 #endif
     }
