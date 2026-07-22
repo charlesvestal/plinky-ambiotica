@@ -31,7 +31,7 @@ struct bloom_s {
 /* One-pole coefficient for a time constant (a = exp(-1/(t*sr))). */
 static float coef_for(float t_seconds, double sr) {
     if (t_seconds <= 0.0f) return 0.0f;
-    return (float) exp(-1.0 / ((double) t_seconds * sr));
+    return expf(-1.0f / ((float) t_seconds * (float) sr));   /* expf: wasm toolchain has no double exp */
 }
 
 bloom_t* bloom_create(double sample_rate) {

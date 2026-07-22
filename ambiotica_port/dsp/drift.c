@@ -42,7 +42,7 @@ drift_t* drift_create(double sample_rate) {
     d->inc_l = (float) (DRIFT_RATE_L / d->sr);
     d->inc_r = (float) (DRIFT_RATE_R / d->sr);
     d->phase_r = 0.25f;            /* start in quadrature */
-    d->amount_a = 1.0f - (float) exp(-1.0 / (0.030 * d->sr));   /* ~30 ms */
+    d->amount_a = 1.0f - expf(-1.0f / (0.030f * (float) d->sr));   /* ~30 ms; expf (no double exp on wasm) */
     d->amount_sm = 0.0f;
     drift_set_amount(d, 0.0f);
     return d;
