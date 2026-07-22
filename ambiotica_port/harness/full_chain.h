@@ -25,6 +25,14 @@
 #define FC_BLK 64            /* = Plinky BLOCK_SIZE; keeps fc_state small (~5.5 KB) */
 #define FC_BEATS_PER_BAR 4
 
+/* Chain complexity ladder, to find what fits core0's ~2 ms budget on device.
+ * Each level adds a module (cheapest -> most expensive):
+ *   0 passthrough · 1 looper · 2 +reverb · 3 +bloom/drift · 4 +harmony(Spectra)
+ *   5 +microloop · 6 +granular/regen (full). */
+#ifndef AMB_CHAIN_LEVEL
+#define AMB_CHAIN_LEVEL 6
+#endif
+
 typedef struct {
     float mix, loop_layer, grain_size, scatter, micro_hold, decay, mod_depth, mod_rate;
     float bloom, drift_amt, spectra, ring;      /* spectra = harmony amount */
@@ -102,6 +110,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         st->dryL[i] = in_l[i] - st->dcL; st->dryR[i] = in_r[i] - st->dcR;
     }
     for (int i = 0; i < n; i++) { st->srcL[i] = st->dryL[i]; st->srcR[i] = st->dryR[i]; }
+#if AMB_CHAIN_LEVEL >= 6
     if (driftFbGain > 0.0f || st->driftFbCur > 1e-6f)   /* drift regeneration */
         for (int i = 0; i < n; i++) {
             st->driftFbCur += 0.0007f * (driftFbGain - st->driftFbCur);
@@ -109,21 +118,46 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
             st->fbL += fbIC * (fl - st->fbL); st->fbR += fbIC * (fr - st->fbR);
             st->srcL[i] += st->driftFbCur * fast_tanhf(st->fbL); st->srcR[i] += st->driftFbCur * fast_tanhf(st->fbR);
         }
+#endif
+#if AMB_CHAIN_LEVEL >= 1
     looper_process(l, st->srcL, st->srcR, st->loopL, st->loopR, n);
     for (int i = 0; i < n; i++) { st->loopL[i] *= kLoopBedMakeup; st->loopR[i] *= kLoopBedMakeup; }
+#else
+    for (int i = 0; i < n; i++) { st->loopL[i] = st->loopR[i] = 0.f; }
+#endif
+#if AMB_CHAIN_LEVEL >= 6
     granular_process(g, st->loopL, st->loopR, st->granL, st->granR, n);
+#else
+    for (int i = 0; i < n; i++) { st->granL[i] = st->granR[i] = 0.f; }
+#endif
     for (int i = 0; i < n; i++) { st->layL[i] = cleanG * st->loopL[i] + shimmerG * st->granL[i];
                                   st->layR[i] = cleanG * st->loopR[i] + shimmerG * st->granR[i]; }
+#if AMB_CHAIN_LEVEL >= 3
     bloom_process(b, st->srcL, st->srcR, st->blL, st->blR, n);
+#else
+    for (int i = 0; i < n; i++) { st->blL[i] = st->srcL[i]; st->blR[i] = st->srcR[i]; }
+#endif
+#if AMB_CHAIN_LEVEL >= 5
     microloop_process(m, st->blL, st->blR, st->micL, st->micR, n);
+#else
+    for (int i = 0; i < n; i++) { st->micL[i] = st->micR[i] = 0.f; }
+#endif
     for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + st->micL[i];
                                   st->rinR[i] = st->blR[i] + st->layR[i] + st->micR[i]; }
+#if AMB_CHAIN_LEVEL >= 2
     reverb_process(r, st->rinL, st->rinR, st->wetL, st->wetR, n);
+#else
+    for (int i = 0; i < n; i++) { st->wetL[i] = st->rinL[i]; st->wetR[i] = st->rinR[i]; }
+#endif
+#if AMB_CHAIN_LEVEL >= 4
     harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* Spectra on reverb tail */
+#endif
     for (int i = 0; i < n; i++) { st->revFbL[i] = st->wetL[i]; st->revFbR[i] = st->wetR[i]; } st->revFbN = n;
     for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i];
                                   st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i]; }
+#if AMB_CHAIN_LEVEL >= 3
     drift_process(d, st->wbL, st->wbR, st->wbL, st->wbR, n);                /* wet-bus detune */
+#endif
 
     const float c = 0.9989f, ic = 1.0f - c; float mm = st->mixCur;
     for (int i = 0; i < n; i++) {
