@@ -21,7 +21,7 @@
 #include <math.h>
 #include <string.h>
 
-#define FC_BLK 256
+#define FC_BLK 64            /* = Plinky BLOCK_SIZE; keeps fc_state small (~5.5 KB) */
 #define FC_BEATS_PER_BAR 4
 
 typedef struct {
