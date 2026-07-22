@@ -36,7 +36,7 @@
 typedef struct {
     float mix, loop_layer, grain_size, scatter, micro_hold, decay, mod_depth, mod_rate;
     float bloom, drift_amt, spectra, ring;      /* spectra = harmony amount */
-    float loop_length_bars, bpm;
+    float loop_length_bars, micro_bars, bpm;    /* micro_bars = Satellite micro-loop length */
     int   key, chord;                            /* Spectra chord: 0..4 = min/maj/sus4/5th/oct */
 } full_params;
 
@@ -77,6 +77,9 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
     granular_set_scatter(g, p->scatter);
     granular_set_mod_depth(g, 0.0f);
     microloop_set_hold(m, p->micro_hold);
+    { float mb = p->micro_bars > 0.01f ? p->micro_bars : 0.25f;      /* Satellite micro length */
+      int mlen = (int)(mb * FC_BEATS_PER_BAR * 60.0f / bpm * sr); if (mlen < 1) mlen = 1;
+      microloop_set_loop_len(m, mlen); }
     bloom_set_amount(b, p->bloom * 0.15f);
     drift_set_amount(d, p->drift_amt);
     harmony_set_amount(h, p->spectra);
@@ -100,7 +103,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     const float scatter  = p->scatter;
     const float cleanG   = (scatter <= 0.5f) ? 1.0f : (1.0f - 2.0f * (scatter - 0.5f));
     const float shimmerG = scatter;
-    const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay);
+    const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
     const float dcIC = 0.005f, fbIC = 0.02f;
 
     fc_push_params(l, g, m, r, h, b, d, p, sr);

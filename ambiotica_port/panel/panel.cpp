@@ -123,14 +123,29 @@ struct ambiotica_panel : panel_t {
 
 #if AMB_STAGE >= 2
     void push_fx_from_ui() {
-        fx.loop_layer       = fx_val[FX_ORBIT] / 127.f;
-        fx.loop_length_bars = 0.5f + 7.5f * (fx_val[FX_ORBIT] / 127.f);
-        fx.grain_size = fx.scatter = fx_val[FX_CONSTELLATE] / 127.f;
-        fx.micro_hold       = fx_val[FX_SATELLITE] / 127.f;
-        fx.decay = fx.ring   = fx_val[FX_TAIL] / 127.f;
-        fx.mod_depth = fx.mod_rate = fx.drift_amt = fx_val[FX_FLUX] / 127.f;
-        fx.spectra          = fx_val[FX_SPECTRA] / 127.f;
-        fx.mix              = fx_val[FX_MIX] / 127.f;
+        /* Mirrors the plugin's MacroMap.h::deriveStages exactly — same curves and
+         * knob DIRECTIONS — so each control behaves identically (timbre aside). */
+        const float orbit  = fx_val[FX_ORBIT]       / 127.f;
+        const float tex    = fx_val[FX_CONSTELLATE] / 127.f;
+        const float sat    = fx_val[FX_SATELLITE]   / 127.f;
+        const float tail   = fx_val[FX_TAIL]        / 127.f;
+        const float motion = fx_val[FX_FLUX]        / 127.f;
+        const float harm   = fx_val[FX_SPECTRA]     / 127.f;
+
+        fx.loop_length_bars = 0.5f + 7.5f * (1.f - orbit);   /* Orbit: REVERSED (up = shorter) */
+        fx.loop_layer       = 0.82f;                          /* kLoopBedLayer: constant bed */
+        fx.decay            = 0.30f + 0.70f * tail;           /* Tail: reverb decay */
+        fx.ring             = tail;                            /* Tail: chord ring length */
+        fx.grain_size       = 0.15f + 0.70f * tex;            /* Constellate: grain size */
+        fx.scatter          = tex;                            /* Constellate: scatter */
+        fx.mod_depth        = motion;                          /* Flux */
+        fx.mod_rate         = 0.10f + 0.80f * motion;
+        fx.drift_amt        = motion;
+        fx.bloom            = 0.60f;                           /* kBakedBloom: constant swell */
+        fx.spectra          = harm;                            /* Spectra: chord amount */
+        fx.micro_hold       = sat;                             /* Satellite: hold -> Freeze at top */
+        fx.micro_bars       = 0.125f + 1.875f * (1.f - sat);  /* Satellite: micro length, REVERSED */
+        fx.mix              = fx_val[FX_MIX] / 127.f;          /* Mix: dry/wet */
     }
 #endif
 
