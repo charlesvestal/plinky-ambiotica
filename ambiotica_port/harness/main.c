@@ -15,7 +15,7 @@
 #include <math.h>
 #include <time.h>
 
-#include "ambiotica_chain.h"   /* looper/granular/microloop/reverb + ambt_params + ambt_render_chain */
+#include "full_chain.h"        /* all 7 modules + full_params + fc_render */
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -90,6 +90,7 @@ int main(void) {
     make_input(inL, inR, TOTAL, SR);
 
     looper_t* l; granular_t* g; microloop_t* m; reverb_t* r;
+    harmony_t* h; bloom_t* b; drift_t* d;
     const int loopcap = 32 * SR;   /* kLoopBufMaxSeconds(32) * sr — matches the plugin */
 
     printf("module buffers (allocated at create; this is the Plinky RAM budget):\n");
@@ -99,18 +100,22 @@ int main(void) {
     CREATE("granular",  g = granular_create(SR));
     CREATE("microloop", m = microloop_create(SR));
     CREATE("reverb",    r = reverb_create(SR));
+    CREATE("harmony",   h = harmony_create(SR));     /* Spectra */
+    CREATE("bloom",     b = bloom_create(SR));
+    CREATE("drift",     d = drift_create(SR));       /* Flux */
     #undef CREATE
     printf("  ----------------------\n");
     printf("  TOTAL      %9.1f KB   (%.2f MB)\n", g_total / 1024.0, g_total / 1048576.0);
-    printf("  -> PSRAM usable ~7.9 MB: %s\n", (g_total <= 7.9 * 1048576) ? "FITS" : "OVER BUDGET (must cap loop length)");
+    printf("  -> PSRAM usable ~7.9 MB: %s\n", (g_total <= 7.9 * 1048576) ? "FITS" : "OVER BUDGET");
 
-    ambt_params p; memset(&p, 0, sizeof p);
+    full_params p; memset(&p, 0, sizeof p);
     p.mix = 0.7f; p.loop_layer = 0.5f; p.grain_size = 0.4f; p.scatter = 0.5f;
     p.micro_hold = 0.3f; p.decay = 0.6f; p.mod_depth = 0.3f; p.mod_rate = 0.4f;
-    p.mod_shape = 0; p.mod_sync = 0; p.lofi = 0; p.loop_length_bars = 2.0f; p.bpm = 120.f;
+    p.bloom = 0.5f; p.drift_amt = 0.3f; p.spectra = 0.6f; p.ring = 0.5f;
+    p.loop_length_bars = 2.0f; p.bpm = 120.f; p.key = 0; p.chord = 0;   /* C minor */
 
     clock_t t0 = clock();
-    ambt_render_chain(l, g, m, r, &p, SR, inL, inR, outL, outR, TOTAL);
+    fc_render(l, g, m, r, h, b, d, &p, SR, inL, inR, outL, outR, TOTAL);
     double cpu = (double)(clock() - t0) / CLOCKS_PER_SEC;
     printf("\nrender: %.1fs audio in %.3fs CPU  => %.0fx realtime (desktop, not RP2350)\n",
            (double)SECS, cpu, SECS / cpu);

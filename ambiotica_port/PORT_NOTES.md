@@ -14,15 +14,25 @@ writes `out.wav` + a memory map.
 **Result:** zero heap in the process path; correct ambient output (plucks build,
 long wash decays after input stops; peak 0.32, no clipping/NaN).
 
-### Memory map @ 32 kHz (full 32 s loop cap)
+### Memory map @ 32 kHz — FULL chain, int16 loop bed (measured)
 
 | Module | Size | Access | Target |
 |---|---|---|---|
-| looper | 8.0 MB | sequential | PSRAM (**too big — cap it**) |
+| looper (int16) | 4.0 MB | sequential | PSRAM |
 | microloop | 1.5 MB | semi-random | PSRAM |
 | granular | 1.25 MB | scattered (**perf risk**) | PSRAM |
 | reverb | 0.15 MB | scattered | **SRAM arena** (dodges PSRAM slowness) |
-| **total** | **10.65 MB** | | **> ~7.9 MB PSRAM → over budget** |
+| harmony (Spectra) | 27 KB | delay lines | SRAM arena |
+| drift (Flux) | 6 KB | small | SRAM |
+| bloom | 0.1 KB | tiny | SRAM |
+| **total** | **6.78 MB** | | **fits ~7.9 MB PSRAM ✅ (~1 MB headroom)** |
+
+Full 7-module chain (`harness/full_chain.h`, all modules incl. Spectra/Drift/
+Bloom + drift regeneration feedback) runs at 32 kHz, zero heap, **stable** (0
+NaN, 0 clip under feedback), with the signature self-evolving tail. The extra 4
+modules add only +34 KB. Harness chain is faithful in signal order + key makeups,
+not a byte-exact `processBlock` clone (mutes/gravity/exact makeups + Spectra
+prominence = later on-device fidelity tuning).
 
 ### Placement plan for Plinky
 - **reverb → SRAM arena** (128/256 KB): small + scattered = ideal fit.
