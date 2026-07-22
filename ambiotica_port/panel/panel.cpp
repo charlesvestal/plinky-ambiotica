@@ -43,8 +43,8 @@ struct ambiotica_panel : panel_t {
     fc_state    st;                    /* chain persistent + scratch state (~22 KB) */
 
     /* SRAM pool for small module state (harmony ~27 KB + drift + bloom + structs).
-     * Kept comfortably under the 128 KB panel-object budget alongside fc_state. */
-    unsigned char sram_pool[64 * 1024];
+     * Kept well under the 128 KB panel-object budget alongside fc_state. */
+    unsigned char sram_pool[40 * 1024];
 
     /* per-block float scratch for the int<->float conversion (off the stack) */
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
@@ -53,6 +53,10 @@ struct ambiotica_panel : panel_t {
     slider_t       fxslider[FX_N];
     unsigned char  fx_val[FX_N];       /* 0..127 UI values (serialised) */
     int            synth_preset = 0;    /* VERIFY (4) */
+
+    unsigned short voices_active = 0;   /* voices sounding at end of last frame */
+    unsigned short voices_seen = 0;     /* voices touched this frame */
+    bool           dsp_ok = false;      /* false -> passthrough (alloc failed) */
 
     /* ---------------- lifecycle ---------------- */
     void setup_default_panel_state() override {
@@ -63,15 +67,21 @@ struct ambiotica_panel : panel_t {
         const int sr = (int)AMB_SR;
         const int loopcap = 32 * sr;   /* 32 s max loop (int16 bed -> 4 MB) */
 
-        g_amb_region = 1;              /* -> PSRAM */
-        looper    = looper_create(loopcap, sr);
-        granular  = granular_create(sr);
-        microloop = microloop_create(sr);
-        reverb    = reverb_create(sr);          /* VERIFY (9): scattered in PSRAM */
-        g_amb_region = 0;             /* -> SRAM pool */
-        harmony   = harmony_create(sr);
-        bloom     = bloom_create(sr);
-        drift     = drift_create(sr);
+        /* Only build the PSRAM modules if the device actually has the room.
+         * get_psram_size() returns 0 if PSRAM wasn't detected at boot; creating
+         * against a too-small arena would hand modules NULL buffers. */
+        if (g_amb_ps_cap >= (size_t)7 * 1024 * 1024) {
+            g_amb_region = 1;              /* -> PSRAM */
+            looper    = looper_create(loopcap, sr);
+            granular  = granular_create(sr);
+            microloop = microloop_create(sr);
+            reverb    = reverb_create(sr);          /* VERIFY (9): scattered in PSRAM */
+            g_amb_region = 0;             /* -> SRAM pool */
+            harmony   = harmony_create(sr);
+            bloom     = bloom_create(sr);
+            drift     = drift_create(sr);
+        }
+        dsp_ok = looper && granular && microloop && reverb && harmony && bloom && drift;
 
         fc_init(&st, 0.7f);
 
@@ -94,10 +104,16 @@ struct ambiotica_panel : panel_t {
         fx.mix              = fx_val[FX_MIX] / 127.f;
     }
 
-    /* play surface -> built-in synth voice */
+    /* play surface -> built-in synth voice. do_play_surface calls this every
+     * frame for each pressed finger; retrigger only on a NEW voice, otherwise
+     * just update pressure. Lifted voices are released in on_ui (note-off). */
     static void note_cb(void* user, int voice, int note, unsigned char vel, finger_t f) {  /* VERIFY (3) */
         ambiotica_panel* self = (ambiotica_panel*)user;
-        play_synth(voice, self->synth_preset, (int)vel, note << 8, /*retrigger*/ true);
+        if (voice < 0 || voice >= 16) return;
+        unsigned short bit = (unsigned short)(1u << voice);
+        bool is_new = (self->voices_active & bit) == 0;
+        play_synth(voice, self->synth_preset, (int)vel, note << 8, is_new);
+        self->voices_seen |= bit;
         (void)f;
     }
 
@@ -106,9 +122,14 @@ struct ambiotica_panel : panel_t {
         leds_clear();
 
         /* LEFT 8 cols: play surface driving the built-in synth (VERIFY 3/4) */
+        voices_seen = 0;
         play.do_play_surface(0, 0, 8, 16, /*max_voices*/ 8, DIMMEST(TEAL), TEAL,
                              /*starting_pitch*/ 48, /*interval_degrees*/ 3,
                              note_cb, this);
+        /* note-offs: release any voice that was sounding but wasn't touched now */
+        unsigned short released = (unsigned short)(voices_active & ~voices_seen);
+        for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
+        voices_active = voices_seen;
 
         /* RIGHT 8 cols: one vertical FX macro slider per column (VERIFY 5/6) */
         static const char* nm[FX_N] = { "Orbit","Constellate","Satellite","Tail","Flux","Spectra","Mix" };
@@ -123,6 +144,7 @@ struct ambiotica_panel : panel_t {
     /* ---------------- audio: Ambiotica insert on the synth dry (core1) ---------------- */
     void on_dsp_final_mix(const int16_t* audiobuf_in, int* dry_stereo) override {   /* VERIFY (2) */
         (void)audiobuf_in;
+        if (!dsp_ok) return;           /* alloc failed -> pass synth dry through untouched */
         const float k = 1.0f / 32768.0f;
         for (int i = 0; i < BLOCK_SIZE; i++) { sL[i] = dry_stereo[2*i] * k; sR[i] = dry_stereo[2*i+1] * k; }
 
