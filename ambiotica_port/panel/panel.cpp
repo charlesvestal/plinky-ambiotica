@@ -55,6 +55,10 @@ struct ambiotica_panel : panel_t {
     unsigned char  fx_val[FX_N];
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
+
+    /* visualization taps — written in on_dsp_final_mix (audio), read in on_ui */
+    float        viz_out = 0.f, viz_grain = 0.f;   /* output level, grain-firing activity */
+    unsigned int viz_loop = 0, frame_ctr = 0;      /* loop-cycle sample counter, UI frame */
 #endif
 
     void setup_default_panel_state() override {
@@ -140,6 +144,20 @@ struct ambiotica_panel : panel_t {
         self->voices_seen |= bit;
         (void)f;
     }
+
+    /* play-surface glow: breathes with the wash, sparkles as grains fire.
+       Signature matches do_play_surface's brightness callback (VERIFY). */
+    static int viz_brightness(void* user, int si, int sp, int x, int y, int note) {
+        (void)si; (void)sp; (void)note;
+        ambiotica_panel* self = (ambiotica_panel*)user;
+        int b = (int)(self->viz_out * 28.f);                       /* breathing base glow */
+        if (self->viz_grain > 0.03f) {                             /* grain sparkles */
+            unsigned h = pcg_hash((unsigned)(x * 131 + y * 977 + (self->frame_ctr >> 2)));
+            if ((h & 31u) < (unsigned)(self->viz_grain * 44.f))
+                b += (int)(self->viz_grain * 150.f);
+        }
+        return b;
+    }
 #endif
 
     void on_ui(int dt_us) override {
@@ -159,8 +177,12 @@ struct ambiotica_panel : panel_t {
         int mb = (int)(psram_bytes / (1024 * 1024));   /* PSRAM size as a bottom-row bar */
         for (int x = 0; x < 16; x++) set_led(x, 15, x < mb ? WHITE : DIMMEST(WHITE));
 #else   /* stages 4 and 5: real UI */
+        frame_ctr++;
         voices_seen = 0;
-        play.do_play_surface(0, 0, 8, 16, 8, DIMMEST(TEAL), TEAL, 48, 3, note_cb, this);
+        /* play surface, now with an activity glow/sparkle via the brightness cb */
+        play.do_play_surface(0, 0, 8, 16, 8, DIMMEST(TEAL), TEAL, 48, 3, note_cb, this,
+                             VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, 0, -1,
+                             viz_brightness, this);
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
         voices_active = voices_seen;
@@ -171,6 +193,15 @@ struct ambiotica_panel : panel_t {
             fx_val[i] = (unsigned char)last_widget_new_value();
         }
         push_fx_from_ui();
+        /* col 15 = loop clock: a dot that rises once per loop cycle, pulsing with level */
+        {
+            int llen = (int)(fx.loop_length_bars * 4.f * 60.f / (fx.bpm > 0.f ? fx.bpm : 120.f) * (float)AMB_SR);
+            if (llen < 1) llen = 1;
+            int row = (int)(((float)viz_loop / (float)llen) * 16.f); if (row > 15) row = 15;
+            for (int y = 0; y < 16; y++)
+                set_led(15, y, (y == row) ? fade_col(WHITE, 120 + (int)(viz_out * 130.f))
+                                          : (y == 0 ? DIMMEST(TEAL) : 0));
+        }
 #endif
     }
 
@@ -186,6 +217,17 @@ struct ambiotica_panel : panel_t {
             dry_stereo[2*i]   = (int)(oL[i] * 32767.0f);
             dry_stereo[2*i+1] = (int)(oR[i] * 32767.0f);
         }
+        /* cheap visualization taps: output level, grain activity, loop phase */
+        float op = 0.f, gp = 0.f;
+        for (int i = 0; i < BLOCK_SIZE; i++) {
+            float a = oL[i] < 0.f ? -oL[i] : oL[i];             if (a > op) op = a;
+            float g = st.granL[i] < 0.f ? -st.granL[i] : st.granL[i]; if (g > gp) gp = g;
+        }
+        viz_out   = viz_out * 0.9f + op * 0.1f;                 /* smooth breathing glow */
+        viz_grain = viz_grain > gp ? viz_grain * 0.85f : gp;    /* fast attack, slow decay */
+        int llen = (int)(fx.loop_length_bars * 4.f * 60.f / (fx.bpm > 0.f ? fx.bpm : 120.f) * (float)AMB_SR);
+        if (llen < 1) llen = 1;
+        viz_loop += BLOCK_SIZE; if (viz_loop >= (unsigned)llen) viz_loop -= (unsigned)llen;
     }
 #endif
 
