@@ -3,3 +3,7 @@ ambiotica_port/harness/obj_*/
 ambiotica_port/harness/amb_harness*
 ambiotica_port/harness/*.o
 ambiotica_port/harness/*.wav
+
+# generated single-file panel (regenerate via panel/amalgamate.sh)
+ambiotica_port/panel/plinky_ambiotica.cpp
+ambiotica_port/panel/*.o
