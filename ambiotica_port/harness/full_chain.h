@@ -12,6 +12,7 @@
 #define AMB_FULL_CHAIN_H
 
 #include "looper.h"
+#include "fast_math.h"
 #include "granular.h"
 #include "microloop.h"
 #include "reverb.h"
@@ -106,7 +107,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
             st->driftFbCur += 0.0007f * (driftFbGain - st->driftFbCur);
             float fl = (i < st->revFbN) ? st->revFbL[i] : 0.f, fr = (i < st->revFbN) ? st->revFbR[i] : 0.f;
             st->fbL += fbIC * (fl - st->fbL); st->fbR += fbIC * (fr - st->fbR);
-            st->srcL[i] += st->driftFbCur * tanhf(st->fbL); st->srcR[i] += st->driftFbCur * tanhf(st->fbR);
+            st->srcL[i] += st->driftFbCur * fast_tanhf(st->fbL); st->srcR[i] += st->driftFbCur * fast_tanhf(st->fbR);
         }
     looper_process(l, st->srcL, st->srcR, st->loopL, st->loopR, n);
     for (int i = 0; i < n; i++) { st->loopL[i] *= kLoopBedMakeup; st->loopR[i] *= kLoopBedMakeup; }

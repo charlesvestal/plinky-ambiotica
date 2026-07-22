@@ -1,98 +1,79 @@
-/* Ambiotica-on-Plinky — panel scaffold.
+/* Ambiotica-on-Plinky — panel (with AMB_STAGE bisection switch).
  *
- * Built-in synth (play surface, left half) -> Ambiotica chain -> output.
- * Ambiotica is inserted on the synth's dry stereo in on_dsp_final_mix; Plinky's
- * own do_fx (delay/reverb) is left unused because Ambiotica IS the FX.
+ * AMB_STAGE gates how much the panel does, to localize an on-device load crash
+ * WITHOUT a serial console. Each stage paints the grid so you can see it loaded:
+ *   1 bare    — just lights the grid TEAL. Proves the panel shell loads.
+ *   2 members — + the big member arrays (unused). Grid BLUE. Tests object size
+ *               vs the 128 KB arena.
+ *   3 modules — + create all 7 DSP modules (6.9 MB PSRAM alloc + zeroing). Grid
+ *               GREEN if all allocated / RED if not; bottom row = a bar of the
+ *               reported PSRAM size in MB. Tests PSRAM + the big memset-at-load.
+ *   4 play    — + play surface driving the built-in synth. Normal left/right UI.
+ *   5 dsp     — + Ambiotica inserted in on_dsp_final_mix (full panel).
  *
- * Memory: looper/granular/microloop/reverb -> PSRAM (get_psram_ptr); harmony/
- * drift/bloom + all small state -> the panel's SRAM pool (128 KB arena). Chain
- * scratch + persistent state live in fc_state (a member), never the stack.
+ * Flash 1..5 in order; the first that hangs on the loading screen pinpoints it.
  *
- * ================= VERIFY IN EMULATOR (blind-coded vs llm.txt) =================
- *  1. Sample rate constant (AMB_SR) — assumed 32000. Confirm Plinky's DSP rate.
- *  2. on_dsp_final_mix(audiobuf_in, dry_stereo): dry_stereo is int stereo
- *     interleaved, BLOCK_SIZE frames, ~int16 range. Confirm scale (±32767) and
- *     that this is the right hook to post-process the synth (and that we may
- *     leave delaysend/reverbsend untouched to bypass do_fx).
- *  3. play_surface_t member + do_play_surface(...) signature/flags; note_cb type
- *     (play_surface_note_fn) and finger_t. Confirm play_synth() usable here.
- *  4. Built-in synth preset: which preset_idx makes sound; may need to load one.
- *  5. slider_t::simple_slider(...) args + last_widget_new_value() read-back.
- *  6. palette[8][i], DIMMEST(), leds_clear(), BLOCK_SIZE, get_psram_ptr/size.
- *  7. on_serialise field-macro API (save_and_load.h) — persistence stubbed.
- *  8. libm availability (expf/cosf/tanhf/powf/lrintf) in the panel toolchain.
- *  9. reverb (150 KB, scattered) lives in PSRAM -> measure CPU; the #1 perf risk.
- * =============================================================================
+ * ============== VERIFY IN EMULATOR (blind-coded vs llm.txt) ==============
+ *  sample rate (AMB_SR=32000); on_dsp_final_mix scale/hook; play_surface_t /
+ *  do_play_surface / play_synth / synth preset; slider_t / last_widget_new_value;
+ *  palette / DIMMEST / BLOCK_SIZE; on_serialise field macros; reverb-in-PSRAM CPU.
+ * ========================================================================
  */
+#ifndef AMB_STAGE
+#define AMB_STAGE 5
+#endif
+
 #define PANEL_PAD_COLOR TEAL
-#define AMB_SR 32000.0                 /* VERIFY (1) */
+#define AMB_SR 32000.0
 
 enum { FX_ORBIT, FX_CONSTELLATE, FX_SATELLITE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
 struct ambiotica_panel : panel_t {
-    /* DSP modules (allocated from the arenas in setup_default_panel_state) */
-    looper_t*    looper    = 0;
-    granular_t*  granular  = 0;
-    microloop_t* microloop = 0;
-    reverb_t*    reverb    = 0;
-    harmony_t*   harmony   = 0;
-    bloom_t*     bloom     = 0;
-    drift_t*     drift     = 0;
-
-    full_params fx;                    /* written by on_ui (core0), read by DSP (core1) */
-    fc_state    st;                    /* chain persistent + scratch state (~22 KB) */
-
-    /* SRAM pool for small module state (harmony ~27 KB + drift + bloom + structs).
-     * Kept well under the 128 KB panel-object budget alongside fc_state. */
+#if AMB_STAGE >= 3
+    looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0; reverb_t* reverb = 0;
+    harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
+    bool dsp_ok = false;
+    unsigned long psram_bytes = 0;
+#endif
+#if AMB_STAGE >= 2
+    full_params fx;
+    fc_state    st;
     unsigned char sram_pool[40 * 1024];
-
-    /* per-block float scratch for the int<->float conversion (off the stack) */
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
-
-    play_surface_t play;               /* VERIFY (3) */
+    play_surface_t play;
     slider_t       fxslider[FX_N];
-    unsigned char  fx_val[FX_N];       /* 0..127 UI values (serialised) */
-    int            synth_preset = 0;    /* VERIFY (4) */
+    unsigned char  fx_val[FX_N];
+    int            synth_preset = 0;
+    unsigned short voices_active = 0, voices_seen = 0;
+#endif
 
-    unsigned short voices_active = 0;   /* voices sounding at end of last frame */
-    unsigned short voices_seen = 0;     /* voices touched this frame */
-    bool           dsp_ok = false;      /* false -> passthrough (alloc failed) */
-
-    /* ---------------- lifecycle ---------------- */
     void setup_default_panel_state() override {
-        /* wire the arenas */
-        g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
-        g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
-
-        const int sr = (int)AMB_SR;
-        const int loopcap = 32 * sr;   /* 32 s max loop (int16 bed -> 4 MB) */
-
-        /* Only build the PSRAM modules if the device actually has the room.
-         * get_psram_size() returns 0 if PSRAM wasn't detected at boot; creating
-         * against a too-small arena would hand modules NULL buffers. */
-        if (g_amb_ps_cap >= (size_t)7 * 1024 * 1024) {
-            g_amb_region = 1;              /* -> PSRAM */
-            looper    = looper_create(loopcap, sr);
-            granular  = granular_create(sr);
-            microloop = microloop_create(sr);
-            reverb    = reverb_create(sr);          /* VERIFY (9): scattered in PSRAM */
-            g_amb_region = 0;             /* -> SRAM pool */
-            harmony   = harmony_create(sr);
-            bloom     = bloom_create(sr);
-            drift     = drift_create(sr);
-        }
-        dsp_ok = looper && granular && microloop && reverb && harmony && bloom && drift;
-
-        fc_init(&st, 0.7f);
-
-        /* default macro positions (0..127) */
+#if AMB_STAGE >= 2
         fx_val[FX_ORBIT] = 48; fx_val[FX_CONSTELLATE] = 48; fx_val[FX_SATELLITE] = 32;
         fx_val[FX_TAIL] = 76; fx_val[FX_FLUX] = 40; fx_val[FX_SPECTRA] = 64; fx_val[FX_MIX] = 90;
         memset(&fx, 0, sizeof fx);
         fx.bpm = 120.f; fx.loop_length_bars = 2.f; fx.key = 0; fx.chord = 0; fx.bloom = 0.4f;
         push_fx_from_ui();
+#endif
+#if AMB_STAGE >= 3
+        g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
+        g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
+        psram_bytes = (unsigned long) g_amb_ps_cap;
+        const int sr = (int) AMB_SR;
+        const int loopcap = 32 * sr;
+        if (g_amb_ps_cap >= (size_t) 7 * 1024 * 1024) {
+            g_amb_region = 1;
+            looper = looper_create(loopcap, sr); granular = granular_create(sr);
+            microloop = microloop_create(sr);    reverb = reverb_create(sr);
+            g_amb_region = 0;
+            harmony = harmony_create(sr); bloom = bloom_create(sr); drift = drift_create(sr);
+        }
+        dsp_ok = looper && granular && microloop && reverb && harmony && bloom && drift;
+        fc_init(&st, 0.7f);
+#endif
     }
 
+#if AMB_STAGE >= 2
     void push_fx_from_ui() {
         fx.loop_layer       = fx_val[FX_ORBIT] / 127.f;
         fx.loop_length_bars = 0.5f + 7.5f * (fx_val[FX_ORBIT] / 127.f);
@@ -103,11 +84,10 @@ struct ambiotica_panel : panel_t {
         fx.spectra          = fx_val[FX_SPECTRA] / 127.f;
         fx.mix              = fx_val[FX_MIX] / 127.f;
     }
+#endif
 
-    /* play surface -> built-in synth voice. do_play_surface calls this every
-     * frame for each pressed finger; retrigger only on a NEW voice, otherwise
-     * just update pressure. Lifted voices are released in on_ui (note-off). */
-    static void note_cb(void* user, int voice, int note, unsigned char vel, finger_t f) {  /* VERIFY (3) */
+#if AMB_STAGE >= 4
+    static void note_cb(void* user, int voice, int note, unsigned char vel, finger_t f) {
         ambiotica_panel* self = (ambiotica_panel*)user;
         if (voice < 0 || voice >= 16) return;
         unsigned short bit = (unsigned short)(1u << voice);
@@ -116,22 +96,30 @@ struct ambiotica_panel : panel_t {
         self->voices_seen |= bit;
         (void)f;
     }
+#endif
 
     void on_ui(int dt_us) override {
         (void)dt_us;
         leds_clear();
 
-        /* LEFT 8 cols: play surface driving the built-in synth (VERIFY 3/4) */
+#if AMB_STAGE == 1
+        for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++)
+            set_led(x, y, ((x + y) & 1) ? TEAL : DIMMEST(TEAL));
+#elif AMB_STAGE == 2
+        for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++)
+            set_led(x, y, ((x + y) & 1) ? BLUE : DIMMEST(BLUE));
+#elif AMB_STAGE == 3
+        uint32_t c = dsp_ok ? GREEN : RED;
+        for (int y = 0; y < 15; y++) for (int x = 0; x < 16; x++)
+            set_led(x, y, ((x + y) & 1) ? c : DIMMEST(c));
+        int mb = (int)(psram_bytes / (1024 * 1024));   /* PSRAM size as a bottom-row bar */
+        for (int x = 0; x < 16; x++) set_led(x, 15, x < mb ? WHITE : DIMMEST(WHITE));
+#else   /* stages 4 and 5: real UI */
         voices_seen = 0;
-        play.do_play_surface(0, 0, 8, 16, /*max_voices*/ 8, DIMMEST(TEAL), TEAL,
-                             /*starting_pitch*/ 48, /*interval_degrees*/ 3,
-                             note_cb, this);
-        /* note-offs: release any voice that was sounding but wasn't touched now */
+        play.do_play_surface(0, 0, 8, 16, 8, DIMMEST(TEAL), TEAL, 48, 3, note_cb, this);
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
         voices_active = voices_seen;
-
-        /* RIGHT 8 cols: one vertical FX macro slider per column (VERIFY 5/6) */
         static const char* nm[FX_N] = { "Orbit","Constellate","Satellite","Tail","Flux","Spectra","Mix" };
         for (int i = 0; i < FX_N; i++) {
             fxslider[i].simple_slider(8 + i, 0, 16, VERTICAL | SHOW_STEM,
@@ -139,29 +127,28 @@ struct ambiotica_panel : panel_t {
             fx_val[i] = (unsigned char)last_widget_new_value();
         }
         push_fx_from_ui();
+#endif
     }
 
-    /* ---------------- audio: Ambiotica insert on the synth dry (core1) ---------------- */
-    void on_dsp_final_mix(const int16_t* audiobuf_in, int* dry_stereo) override {   /* VERIFY (2) */
+#if AMB_STAGE >= 5
+    void on_dsp_final_mix(const int16_t* audiobuf_in, int* dry_stereo) override {
         (void)audiobuf_in;
-        if (!dsp_ok) return;           /* alloc failed -> pass synth dry through untouched */
+        if (!dsp_ok) return;
         const float k = 1.0f / 32768.0f;
         for (int i = 0; i < BLOCK_SIZE; i++) { sL[i] = dry_stereo[2*i] * k; sR[i] = dry_stereo[2*i+1] * k; }
-
         fc_render_block(&st, looper, granular, microloop, reverb, harmony, bloom, drift,
                         &fx, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
-
         for (int i = 0; i < BLOCK_SIZE; i++) {
             dry_stereo[2*i]   = (int)(oL[i] * 32767.0f);
             dry_stereo[2*i+1] = (int)(oR[i] * 32767.0f);
         }
     }
+#endif
 
-    /* ---------------- persistence (song slots) — VERIFY (7) ---------------- */
+#if AMB_STAGE >= 2
     bool on_serialise(serialiser_t& s, int version) override {
-        /* TODO: use the field macros from save_and_load.h to persist:
-         *   fx_val[FX_N], synth_preset, fx.bpm, fx.key, fx.chord
-         * then rebuild derived state with push_fx_from_ui(). */
+        /* TODO (VERIFY): persist fx_val[], synth_preset, fx.key/chord via save_and_load.h field macros */
         return panel_t::on_serialise(s, version);
     }
+#endif
 };

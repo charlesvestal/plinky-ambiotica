@@ -1,5 +1,6 @@
 /* Ambiotica harmony — see harmony.h. */
 #include "harmony.h"
+#include "fast_math.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -37,7 +38,7 @@ harmony_t* harmony_create(double sample_rate) {
         /* spread voices L..R */
         float pan = (HARMONY_MAX_VOICES > 1) ? (float) v / (float)(HARMONY_MAX_VOICES - 1) : 0.5f;
         float th = (0.5f + (pan - 0.5f) * 0.8f) * 1.5707963f;       /* keep both chans */
-        h->gL[v] = cosf(th); h->gR[v] = sinf(th);
+        h->gL[v] = fast_cosf(th); h->gR[v] = fast_sinf(th);
     }
     h->n_voices = 0;
     /* damping ~8 kHz one-pole — bright, long ring (still tames the very top) */

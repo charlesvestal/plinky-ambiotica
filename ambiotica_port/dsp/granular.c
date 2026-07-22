@@ -1,5 +1,6 @@
 /* Granular stage — 8-grain scheduler over a 2s capture ring. */
 #include "granular.h"
+#include "fast_math.h"
 #include "lfo.h"
 #include "rate_util.h"
 
@@ -271,7 +272,7 @@ void granular_process(granular_t *g,
         /* Per-sample shared mod factor (same across all active grains). */
         float lfo_val = lfo_tick_sine(&g->mod_lfo);
         float pitch_mod = (mod_cents > 0.0f)
-            ? powf(2.0f, lfo_val * mod_cents * (1.0f / 1200.0f))
+            ? fast_exp2f(lfo_val * mod_cents * (1.0f / 1200.0f))
             : 1.0f;
         /* 1. Write current input to capture buffer. */
         g->buf_L[g->write_pos] = in_l[n];
@@ -310,7 +311,7 @@ void granular_process(granular_t *g,
                 env = (phase < 0.85f) ? sinf (1.5707963f * (phase / 0.85f))
                                       : cosf (1.5707963f * ((phase - 0.85f) / 0.15f));
             else
-                env = 0.5f * (1.0f - cosf(TWO_PI * phase));
+                env = 0.5f * (1.0f - fast_cosf(TWO_PI * phase));
 
             sum_l += yl * env;
             sum_r += yr * env;

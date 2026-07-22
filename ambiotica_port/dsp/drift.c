@@ -1,5 +1,6 @@
 /* Ambiotica drift — see drift.h. */
 #include "drift.h"
+#include "fast_math.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -110,8 +111,8 @@ void drift_process(drift_t *d,
         /* Nominal delay and modulation depth both scale with the smoothed
          * amount, so the read head grows out from 0 as Drift comes up — no
          * bypass click and no comb at low settings. */
-        float ml = sinf(DRIFT_TWO_PI * pl);
-        float mr = sinf(DRIFT_TWO_PI * pr);
+        float ml = fast_sinf(DRIFT_TWO_PI * pl);
+        float mr = fast_sinf(DRIFT_TWO_PI * pr);
         float dlyL = center * a + DRIFT_DEPTH_MAX * a * ml;
         float dlyR = center * a + DRIFT_DEPTH_MAX * a * mr;
         if (dlyL < 0.0f) dlyL = 0.0f;

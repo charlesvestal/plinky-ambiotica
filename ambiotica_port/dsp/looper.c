@@ -1,5 +1,6 @@
 /* Rolling-capture stereo looper with feedback. */
 #include "looper.h"
+#include "fast_math.h"
 #include "rate_util.h"
 
 #include <stdlib.h>
@@ -269,7 +270,7 @@ void looper_process(looper_t *l,
                 if (ph == 0) l->rev_base[h] = pos;          /* anchor window start at "now" */
                 int rabs = l->rev_base[h] - ph;             /* read backward from the anchor */
                 while (rabs < 0) rabs += cap;
-                const float gain = 0.5f - 0.5f * cosf(6.2831853f * (float)ph / (float)L);
+                const float gain = 0.5f - 0.5f * fast_cosf(6.2831853f * (float)ph / (float)L);
                 rL += gain * ld(l->buf_L[rabs]);
                 rR += gain * ld(l->buf_R[rabs]);
             }

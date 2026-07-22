@@ -1,5 +1,6 @@
 /* Micro-loop — short feedback delay that locks into freeze near max hold. */
 #include "microloop.h"
+#include "fast_math.h"
 #include "rate_util.h"
 
 #include <stdlib.h>
@@ -103,8 +104,8 @@ static void micro_spawn_grain(microloop_t *m, int write_pos) {
     m->grain[gi].len = len;
     m->grain[gi].age = 0;
     m->grain[gi].active = 1;
-    m->grain[gi].gL = cosf(theta);
-    m->grain[gi].gR = sinf(theta);
+    m->grain[gi].gL = fast_cosf(theta);
+    m->grain[gi].gR = fast_sinf(theta);
 
     /* Schedule next spawn so ~3 grains overlap (smooth overlap-add). */
     m->spawn_timer = len / 3; if (m->spawn_timer < 1) m->spawn_timer = 1;
@@ -125,7 +126,7 @@ static inline void micro_cloud(microloop_t *m, int active, int write_pos,
         float sL = m->buf_L[i0] + (m->buf_L[i1] - m->buf_L[i0]) * fr;
         float sR = m->buf_R[i0] + (m->buf_R[i1] - m->buf_R[i0]) * fr;
         /* Hann window over the grain's life. */
-        float w = 0.5f - 0.5f * cosf(6.2831853f * ((float)m->grain[gi].age + 0.5f)
+        float w = 0.5f - 0.5f * fast_cosf(6.2831853f * ((float)m->grain[gi].age + 0.5f)
                                      / (float)m->grain[gi].len);
         cl += sL * w * m->grain[gi].gL;
         cr += sR * w * m->grain[gi].gR;
@@ -148,7 +149,7 @@ static inline float micro_shimmer (microloop_t *m, float in) {
       float a=m->shbuf[i%m->shlen], b=m->shbuf[(i+m->shlen-1)%m->shlen]; s0=a+(b-a)*fr; }
     { int bk=(int)p1; float fr=p1-(float)bk; int i=m->shwidx-bk; while(i<0)i+=m->shlen;
       float a=m->shbuf[i%m->shlen], b=m->shbuf[(i+m->shlen-1)%m->shlen]; s1=a+(b-a)*fr; }
-    float w0 = sinf(3.14159265f * x0); w0 = w0*w0;
+    float w0 = fast_sinf(3.14159265f * x0); w0 = w0*w0;
     m->shwidx = (m->shwidx + 1) % m->shlen;
     return s0*w0 + s1*(1.0f - w0);
 }
@@ -330,8 +331,8 @@ void microloop_process(microloop_t *m,
             if (rb < 0) rb += buf_capacity;
             const float t  = (float)(m->crossfade_len - m->xfade_remaining)
                            * (1.0f / (float) m->crossfade_len);     /* 0..1 */
-            const float gb = sinf(t * 1.5707963f);
-            const float ga = cosf(t * 1.5707963f);
+            const float gb = fast_sinf(t * 1.5707963f);
+            const float ga = fast_cosf(t * 1.5707963f);
             read_L = ga * read_L + gb * m->buf_L[rb];
             read_R = ga * read_R + gb * m->buf_R[rb];
             if (--m->xfade_remaining == 0) {
@@ -357,7 +358,7 @@ void microloop_process(microloop_t *m,
                 if (ph == 0) m->rev_base[h] = write_pos;
                 int rabs = m->rev_base[h] - ph;
                 while (rabs < 0) rabs += buf_capacity;
-                const float gain = 0.5f - 0.5f * cosf(6.2831853f * (float)ph / (float)L);
+                const float gain = 0.5f - 0.5f * fast_cosf(6.2831853f * (float)ph / (float)L);
                 rL += gain * m->buf_L[rabs];
                 rR += gain * m->buf_R[rabs];
             }

@@ -1,4 +1,5 @@
 #include "lfo.h"
+#include "fast_math.h"
 #include <math.h>
 
 #ifndef M_PI
@@ -28,7 +29,7 @@ void lfo_set_phase(lfo_t *lfo, float radians) {
 
 float lfo_tick_sine(lfo_t *lfo) {
     if (!lfo) return 0.0f;
-    float y = sinf(lfo->phase);
+    float y = fast_sinf(lfo->phase);
     lfo->phase += lfo->increment;
     if (lfo->phase >= TWO_PI) lfo->phase -= TWO_PI;
     return y;
@@ -36,7 +37,7 @@ float lfo_tick_sine(lfo_t *lfo) {
 
 float lfo_sine_at_offset(const lfo_t *lfo, float radian_offset) {
     if (!lfo) return 0.0f;
-    return sinf(lfo->phase + radian_offset);
+    return fast_sinf(lfo->phase + radian_offset);
 }
 
 float lfo_shape_apply(int shape, float sine) {
