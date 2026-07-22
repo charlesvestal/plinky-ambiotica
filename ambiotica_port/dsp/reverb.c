@@ -18,10 +18,16 @@
 #endif
 #define TWO_PI (2.0f * (float)M_PI)
 
-#define R_COMB           4    /* Plinky port: 8->4 combs so reverb fits fast SRAM
-                                 and halves per-sample delay-line work (was 150 KB
-                                 in slow PSRAM; the scattered access blew the core0
-                                 budget). Slightly less dense tail, still lush. */
+/* Plinky port: reverb lives in fast SRAM now (PSRAM scatter was too slow). 4
+ * combs by default; drop to 3 at chain level >=4 so reverb + Spectra(harmony)
+ * both fit the 128 KB panel arena. Arrays are sized to R_COMB_MAX; loops and
+ * allocation use the active R_COMB count. */
+#define R_COMB_MAX       4
+#if defined(AMB_CHAIN_LEVEL) && (AMB_CHAIN_LEVEL >= 4)
+#define R_COMB           3
+#else
+#define R_COMB           4
+#endif
 #define R_AP             4
 #define R_STEREO_SPREAD  37
 #define R_MOD_HEADROOM   256   /* extra samples per comb buffer for mod range */
@@ -29,7 +35,7 @@
 
 /* Comb lengths (samples @ 44.1 kHz) span ~50–74 ms — chosen for
  * ambient-pad modal density (longer than typical small-room values). */
-static const int R_COMB_BASE[R_COMB] = {
+static const int R_COMB_BASE[R_COMB_MAX] = {
     2237, 2557, 2861, 3137        /* 4 spread across the original 8 */
 };
 static const int R_AP_BASE[R_AP] = {
@@ -39,7 +45,7 @@ static const int R_AP_BASE[R_AP] = {
 /* Initial LFO phase per comb — irregular placement so the 8 mods start
  * decorrelated rather than aligned. Phases drift apart further at runtime
  * because each comb runs at its own rate (see R_COMB_RATE_MULT). */
-static const float R_COMB_PHASE[R_COMB] = {
+static const float R_COMB_PHASE[R_COMB_MAX] = {
     0.00f, 1.71f, 3.27f, 5.02f
 };
 
@@ -47,26 +53,26 @@ static const float R_COMB_PHASE[R_COMB] = {
  * Spread around 1.0 with irrational-ish ratios so the 8 LFOs never re-sync.
  * This is the "asynchronous LFO" character: tail evolves continuously
  * instead of pulsing in unison (= detune sound). */
-static const float R_COMB_RATE_MULT[R_COMB] = {
+static const float R_COMB_RATE_MULT[R_COMB_MAX] = {
     1.000f, 0.872f, 0.954f, 0.827f
 };
 
 struct reverb_s {
     /* L channel — combs */
-    float *comb_buf_L[R_COMB];
-    int    comb_buf_len_L[R_COMB];
-    int    comb_write_L[R_COMB];
-    float  comb_damp_L[R_COMB];
+    float *comb_buf_L[R_COMB_MAX];
+    int    comb_buf_len_L[R_COMB_MAX];
+    int    comb_write_L[R_COMB_MAX];
+    float  comb_damp_L[R_COMB_MAX];
 
     float *ap_buf_L[R_AP];
     int    ap_buf_len_L[R_AP];
     int    ap_pos_L[R_AP];
 
     /* R channel — combs (length includes stereo spread offset) */
-    float *comb_buf_R[R_COMB];
-    int    comb_buf_len_R[R_COMB];
-    int    comb_write_R[R_COMB];
-    float  comb_damp_R[R_COMB];
+    float *comb_buf_R[R_COMB_MAX];
+    int    comb_buf_len_R[R_COMB_MAX];
+    int    comb_write_R[R_COMB_MAX];
+    float  comb_damp_R[R_COMB_MAX];
 
     float *ap_buf_R[R_AP];
     int    ap_buf_len_R[R_AP];
@@ -75,7 +81,7 @@ struct reverb_s {
     /* Rate-scaled geometry (computed from sample_rate in reverb_create).
      * At 44.1 kHz these equal the R_*_BASE / R_STEREO_SPREAD reference
      * constants exactly. */
-    int   comb_base[R_COMB];
+    int   comb_base[R_COMB_MAX];
     int   ap_base[R_AP];
     int   stereo_spread;
     float mod_depth_max;       /* scaled equivalent of the 45-sample max swing */
@@ -90,7 +96,7 @@ struct reverb_s {
     float wet_gain;
 
     /* Modulation — one LFO per comb, each at its own rate. */
-    lfo_t lfo[R_COMB];
+    lfo_t lfo[R_COMB_MAX];
     float base_rate_hz;       /* user-set rate before per-comb multiplication */
     float mod_depth_target,    mod_depth_current;  /* 0..R_MOD_HEADROOM/2 */
     int   mod_shape;           /* 0=sine, 1=warp, 2=sink */

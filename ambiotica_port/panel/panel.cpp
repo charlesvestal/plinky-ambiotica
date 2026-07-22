@@ -41,10 +41,11 @@ struct ambiotica_panel : panel_t {
     /* Reverb (~79 KB, 4-comb) lives here now, not PSRAM — its scattered
      * delay-line access was ~10x slower in PSRAM and blew the core0 budget.
      * Sized per chain level so low levels keep the panel object small. */
-#if AMB_CHAIN_LEVEL >= 4
-    unsigned char sram_pool[106 * 1024];   /* reverb(79) + harmony 4-voice(18) + drift(6) */
-#elif AMB_CHAIN_LEVEL >= 2
-    unsigned char sram_pool[88 * 1024];    /* reverb (+ drift/bloom at L3) */
+#if AMB_CHAIN_LEVEL >= 2
+    /* One size for all L>=2 (L3 proved 88 KB fits the arena). L2/L3 = 4-comb
+     * reverb(79)+drift(6)=85 KB; L4+ = 3-comb reverb(62)+harmony 3v(14)+drift(6)
+     * =82 KB. Micro-loop/granular (L5/L6) stay in PSRAM, not this pool. */
+    unsigned char sram_pool[88 * 1024];
 #else
     unsigned char sram_pool[1 * 1024];     /* L0/L1: no SRAM DSP */
 #endif
