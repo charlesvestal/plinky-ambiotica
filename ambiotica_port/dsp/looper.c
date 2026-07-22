@@ -18,7 +18,9 @@ typedef int16_t lsamp_t;
 static inline float   ld(lsamp_t v) { return (float)v * (1.0f / 32768.0f); }
 static inline lsamp_t st(float v) {
     v = v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v);
-    return (lsamp_t)lrintf(v * 32767.0f);
+    /* round-to-nearest without lrintf (wasm toolchain doesn't provide it) */
+    float s = v * 32767.0f;
+    return (lsamp_t)(s < 0.0f ? s - 0.5f : s + 0.5f);
 }
 #else
 typedef float lsamp_t;
