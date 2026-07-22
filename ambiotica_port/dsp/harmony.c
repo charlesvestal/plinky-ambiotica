@@ -132,7 +132,7 @@ void harmony_process(harmony_t *h,
             h->lp[v] += da * (r - h->lp[v]);                /* damp the feedback */
             /* High-Q resonator WITH gain at resonance (sings the pitch out of
              * the broadband wash); tanh keeps the ring from howling. */
-            h->buf[v][widx] = ig * inMono + tanhf (fb * h->lp[v]);
+            h->buf[v][widx] = ig * inMono + fast_tanhf(fb * h->lp[v]);
             oL += r * h->gL[v];
             oR += r * h->gR[v];
         }

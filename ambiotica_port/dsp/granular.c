@@ -308,10 +308,11 @@ void granular_process(granular_t *g,
             float phase = (float)gr->age / (float)gr->length;
             float env;
             if (gr->reversed)
-                env = (phase < 0.85f) ? sinf (1.5707963f * (phase / 0.85f))
-                                      : cosf (1.5707963f * ((phase - 0.85f) / 0.15f));
+                env = (phase < 0.85f) ? fast_sinf(1.5707963f * (phase / 0.85f))
+                                      : fast_cosf(1.5707963f * ((phase - 0.85f) / 0.15f));
             else
                 env = 0.5f * (1.0f - fast_cosf(TWO_PI * phase));
+            if (env < 0.f) env = 0.f;   /* fast-trig can dip <0 at grain edges -> click */
 
             sum_l += yl * env;
             sum_r += yr * env;
