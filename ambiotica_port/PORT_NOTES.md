@@ -56,6 +56,30 @@ Result (measured, `harness/`):
 
 Build both: `harness/build.sh` → `amb_harness_float`, `amb_harness_i16`.
 
+## Milestone 2 — panel scaffold (`panel/`)
+
+Single-file Plinky panel, blind-coded against `llm.txt` (no local SDK to compile
+against — validated in the emulator by the user).
+
+- `panel/alloc_prelude.h` — two-region arena allocator; `#define calloc` →
+  PSRAM (`get_psram_ptr`) for looper/granular/microloop/reverb, or the panel's
+  64 KB SRAM pool for harmony/drift/bloom + structs. reverb (150 KB, scattered)
+  is forced into PSRAM → **#1 on-device perf risk to measure**.
+- `panel/panel.cpp` — `ambiotica_panel : panel_t`: play surface (left 8 cols) →
+  `play_synth` (built-in synth); FX macro sliders (right 8 cols) → `full_params`;
+  **Ambiotica inserted in `on_dsp_final_mix`** on the synth's dry stereo (Plinky
+  `do_fx` left unused — Ambiotica is the FX); `fc_render_block` per 64-frame
+  block; `fc_state` + scratch as members (nothing large on the stack).
+- `panel/amalgamate.sh` → `plinky_ambiotica.cpp` (**2,513 lines**, well under the
+  ~10k IDE limit). DSP half validated: compiles + links + runs as one TU
+  (no dup statics, calloc redirect works).
+
+### VERIFY in emulator (blind-coded — see panel.cpp header for the full list)
+sample rate; `on_dsp_final_mix` scale/hook; `play_surface_t`/`do_play_surface`/
+`play_synth`; synth preset; `slider_t`/`last_widget_new_value`; `palette`/
+`DIMMEST`/`BLOCK_SIZE`; `on_serialise` field macros; libm availability;
+reverb-in-PSRAM CPU cost.
+
 ## Open risks / TODO
 - PSRAM scattered-access performance for granular (only measurable on-device).
 - Real RP2350 CPU headroom (desktop 239× realtime is not predictive).
