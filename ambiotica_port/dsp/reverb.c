@@ -18,7 +18,10 @@
 #endif
 #define TWO_PI (2.0f * (float)M_PI)
 
-#define R_COMB           8
+#define R_COMB           4    /* Plinky port: 8->4 combs so reverb fits fast SRAM
+                                 and halves per-sample delay-line work (was 150 KB
+                                 in slow PSRAM; the scattered access blew the core0
+                                 budget). Slightly less dense tail, still lush. */
 #define R_AP             4
 #define R_STEREO_SPREAD  37
 #define R_MOD_HEADROOM   256   /* extra samples per comb buffer for mod range */
@@ -27,7 +30,7 @@
 /* Comb lengths (samples @ 44.1 kHz) span ~50–74 ms — chosen for
  * ambient-pad modal density (longer than typical small-room values). */
 static const int R_COMB_BASE[R_COMB] = {
-    2237, 2381, 2557, 2719, 2861, 2999, 3137, 3271
+    2237, 2557, 2861, 3137        /* 4 spread across the original 8 */
 };
 static const int R_AP_BASE[R_AP] = {
     347, 421, 511, 619
@@ -37,7 +40,7 @@ static const int R_AP_BASE[R_AP] = {
  * decorrelated rather than aligned. Phases drift apart further at runtime
  * because each comb runs at its own rate (see R_COMB_RATE_MULT). */
 static const float R_COMB_PHASE[R_COMB] = {
-    0.00f, 0.83f, 1.71f, 2.42f, 3.27f, 4.15f, 5.02f, 5.74f
+    0.00f, 1.71f, 3.27f, 5.02f
 };
 
 /* Per-comb LFO rate multipliers — each comb runs at base_rate * mult[i].
@@ -45,7 +48,7 @@ static const float R_COMB_PHASE[R_COMB] = {
  * This is the "asynchronous LFO" character: tail evolves continuously
  * instead of pulsing in unison (= detune sound). */
 static const float R_COMB_RATE_MULT[R_COMB] = {
-    1.000f, 1.093f, 0.872f, 1.207f, 0.954f, 1.131f, 0.827f, 1.049f
+    1.000f, 0.872f, 0.954f, 0.827f
 };
 
 struct reverb_s {
