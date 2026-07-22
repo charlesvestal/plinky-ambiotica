@@ -1,5 +1,5 @@
 # harness build artifacts
 ambiotica_port/harness/obj_*/
-ambiotica_port/harness/amb_harness_*
+ambiotica_port/harness/amb_harness*
 ambiotica_port/harness/*.o
 ambiotica_port/harness/*.wav
