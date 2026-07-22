@@ -162,7 +162,7 @@ struct ambiotica_panel : panel_t {
 
     /* play-surface glow: breathes with the wash, sparkles as grains fire.
        Signature matches do_play_surface's brightness callback (VERIFY). */
-    static int viz_brightness(void* user, int si, int sp, int x, int y, int note) {
+    static unsigned char viz_brightness(void* user, int si, int sp, int x, int y, int note) {
         (void)si; (void)sp; (void)note;
         ambiotica_panel* self = (ambiotica_panel*)user;
         int b = (int)(self->viz_out * 28.f);                       /* breathing base glow */
@@ -171,7 +171,8 @@ struct ambiotica_panel : panel_t {
             if ((h & 31u) < (unsigned)(self->viz_grain * 44.f))
                 b += (int)(self->viz_grain * 150.f);
         }
-        return b;
+        if (b < 0) b = 0; if (b > 255) b = 255;
+        return (unsigned char)b;
     }
 #endif
 
