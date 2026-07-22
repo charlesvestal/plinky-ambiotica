@@ -42,7 +42,7 @@ struct ambiotica_panel : panel_t {
      * delay-line access was ~10x slower in PSRAM and blew the core0 budget.
      * Sized per chain level so low levels keep the panel object small. */
 #if AMB_CHAIN_LEVEL >= 4
-    unsigned char sram_pool[114 * 1024];   /* reverb + harmony + drift + bloom */
+    unsigned char sram_pool[106 * 1024];   /* reverb(79) + harmony 4-voice(18) + drift(6) */
 #elif AMB_CHAIN_LEVEL >= 2
     unsigned char sram_pool[88 * 1024];    /* reverb (+ drift/bloom at L3) */
 #else

@@ -14,7 +14,7 @@
 #ifndef AMBIOTICA_HARMONY_H
 #define AMBIOTICA_HARMONY_H
 
-#define HARMONY_MAX_VOICES 6
+#define HARMONY_MAX_VOICES 4   /* Plinky port: 6->4 (chords are <=3 notes); saves ~9 KB SRAM */
 
 typedef struct harmony_s harmony_t;
 
