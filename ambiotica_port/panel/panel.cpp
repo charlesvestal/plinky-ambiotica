@@ -9,12 +9,12 @@
  *               GREEN if all allocated / RED if not; bottom row = a bar of the
  *               reported PSRAM size in MB. Tests PSRAM + the big memset-at-load.
  *   4 play    — + play surface driving the built-in synth. Normal left/right UI.
- *   5 dsp     — + Ambiotica inserted in on_dsp_final_mix (full panel).
+ *   5 dsp     — + Ambiotica in on_dsp (core1), owns audio_out (full panel).
  *
  * Flash 1..5 in order; the first that hangs on the loading screen pinpoints it.
  *
  * ============== VERIFY IN EMULATOR (blind-coded vs llm.txt) ==============
- *  sample rate (AMB_SR=32000); on_dsp_final_mix scale/hook; play_surface_t /
+ *  sample rate (AMB_SR=32000); on_dsp core1 hook + mix_buffers_out->dry scale; play_surface_t /
  *  do_play_surface / play_synth / synth preset; slider_t / last_widget_new_value;
  *  palette / DIMMEST / BLOCK_SIZE; on_serialise field macros; reverb-in-PSRAM CPU.
  * ========================================================================
@@ -56,7 +56,7 @@ struct ambiotica_panel : panel_t {
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
 
-    /* visualization taps — written in on_dsp_final_mix (audio), read in on_ui */
+    /* visualization taps — written in on_dsp (core1 audio), read in on_ui */
     float        viz_out = 0.f, viz_grain = 0.f;   /* output level, grain-firing activity */
     unsigned int viz_loop = 0, frame_ctr = 0;      /* loop-cycle sample counter, UI frame */
 #endif
@@ -222,28 +222,53 @@ struct ambiotica_panel : panel_t {
     }
 
 #if AMB_STAGE >= 5
-    void on_dsp_final_mix(const int16_t* audiobuf_in, int* dry_stereo) override {
-        (void)audiobuf_in;
-        if (!dsp_ok) return;
+    /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
+     * we run Ambiotica on its dry stereo bus, write final int16 to audiobuf_out,
+     * and return true to own the output (bypass the built-in FX — Ambiotica IS
+     * the FX). Running on core1 means an overrun crackles rather than locking the
+     * UI/USB, so this is where the heavy chain belongs.
+     *
+     * v1: dry bus only. The synth's reverb/delay SEND buses are not captured yet
+     * (their half-rate format needs confirming); if a preset routes signal to
+     * them it'll sound thinner. v1.1 will route reverbsend -> reverb input and
+     * delaysend -> micro-loop input. */
+    bool on_dsp(const int16_t* audiobuf_in, int16_t* audiobuf_out,
+                mix_buffers_t* mix_buffers_out) override {
+        panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);   /* render synth -> dry */
+
+        if (!dsp_ok) {                                   /* passthrough (alloc failed) */
+            for (int i = 0; i < BLOCK_SIZE * 2; i++) {
+                int v = mix_buffers_out->dry[i];
+                audiobuf_out[i] = (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
+            }
+            return true;
+        }
+
         const float k = 1.0f / 32768.0f;
-        for (int i = 0; i < BLOCK_SIZE; i++) { sL[i] = dry_stereo[2*i] * k; sR[i] = dry_stereo[2*i+1] * k; }
+        for (int i = 0; i < BLOCK_SIZE; i++) {
+            sL[i] = mix_buffers_out->dry[2*i]   * k;
+            sR[i] = mix_buffers_out->dry[2*i+1] * k;
+        }
         fc_render_block(&st, looper, granular, microloop, reverb, harmony, bloom, drift,
                         &fx, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
         for (int i = 0; i < BLOCK_SIZE; i++) {
-            dry_stereo[2*i]   = (int)(oL[i] * 32767.0f);
-            dry_stereo[2*i+1] = (int)(oR[i] * 32767.0f);
+            int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);
+            audiobuf_out[2*i]   = (int16_t)(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
+            audiobuf_out[2*i+1] = (int16_t)(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
         }
+
         /* cheap visualization taps: output level, grain activity, loop phase */
         float op = 0.f, gp = 0.f;
         for (int i = 0; i < BLOCK_SIZE; i++) {
-            float a = oL[i] < 0.f ? -oL[i] : oL[i];             if (a > op) op = a;
+            float a = oL[i] < 0.f ? -oL[i] : oL[i];                   if (a > op) op = a;
             float g = st.granL[i] < 0.f ? -st.granL[i] : st.granL[i]; if (g > gp) gp = g;
         }
-        viz_out   = viz_out * 0.9f + op * 0.1f;                 /* smooth breathing glow */
-        viz_grain = viz_grain > gp ? viz_grain * 0.85f : gp;    /* fast attack, slow decay */
+        viz_out   = viz_out * 0.9f + op * 0.1f;
+        viz_grain = viz_grain > gp ? viz_grain * 0.85f : gp;
         int llen = (int)(fx.loop_length_bars * 4.f * 60.f / (fx.bpm > 0.f ? fx.bpm : 120.f) * (float)AMB_SR);
         if (llen < 1) llen = 1;
         viz_loop += BLOCK_SIZE; if (viz_loop >= (unsigned)llen) viz_loop -= (unsigned)llen;
+        return true;
     }
 #endif
 
