@@ -57,7 +57,7 @@ harmony_t* harmony_create(double sample_rate) {
     /* Port: measured (harm2 vs the revoiced C3..G3 chord) — at a typical wet the chord
      * is proportional, NOT saturated, so it's under-level: 0.45 buried it, 1.25 clipped
      * above Spectra ~0.37. 0.8 lifts it to ~0.22 (audible), soft-limits near max. */
-    h->out_gain = 0.8f;
+    h->out_gain = 1.0f;
 #else
     h->out_gain = 1.25f;            /* chord level in the wash (louder, ring stays finite) */
 #endif

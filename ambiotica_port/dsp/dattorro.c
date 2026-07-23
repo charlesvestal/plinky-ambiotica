@@ -188,7 +188,7 @@ static inline void dattorro_tick(dattorro_t* d, float inL, float inR, float* yl,
         ol  += TAP_L_SGN[i] * dl_read(line[TAP_L[i][0]], d->tapL[i]);
         orr += TAP_R_SGN[i] * dl_read(line[TAP_R[i][0]], d->tapR[i]);
     }
-    *yl = ol * 0.6f; *yr = orr * 0.6f;   /* 0.6: tap sum headroom */
+    *yl = ol * 0.95f; *yr = orr * 0.95f;   /* tap sum -> wet level (louder wash + more Spectra drive) */
 }
 
 void dattorro_process(dattorro_t* d, const float* in_l, const float* in_r,
