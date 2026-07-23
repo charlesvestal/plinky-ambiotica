@@ -174,7 +174,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
                             harmony_t* h, bloom_t* b, drift_t* d, const full_params* p, double sr,
                             const float* in_l, const float* in_r, float* out_l, float* out_r, int n) {
     if (n > FC_BLK) n = FC_BLK;
-    const float kLoopBedMakeup = 1.9f;
+    const float kLoopBedMakeup = 2.6f;   /* loop bed presence (early loop ~= dry) */
     const float scatter  = p->scatter;
     const float cleanG   = (scatter <= 0.5f) ? 1.0f : (1.0f - 2.0f * (scatter - 0.5f));
     const float shimmerG = 0.55f + 0.30f * scatter;   /* 0.55..0.85 — plugin parity: a grain
@@ -247,9 +247,9 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
                                   st->rinR[i] = st->blR[i] + st->layR[i] + st->micR[i]; }
 #if defined(AMB_DATTORRO)
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
-      dattorro_set_decay(st->dat, t);            /* Tail -> tail length (tracks the plugin) */
-      dattorro_set_mod(st->dat, p->mod_depth);   /* Flux modulates the tank allpasses */
-      dattorro_set_damp(st->dat, 0.35f); }
+      dattorro_set_decay(st->dat, t);                       /* Tail -> tail length (tracks the plugin) */
+      dattorro_set_mod(st->dat, 0.25f + 0.75f * p->mod_depth); /* Flux + a floor so the tank always shimmers */
+      dattorro_set_damp(st->dat, 0.22f); }                  /* brighter/shinier tail = lusher */
     dattorro_process(st->dat, st->rinL, st->rinR, st->wetL, st->wetR, n);   /* Dattorro plate */
     { float pk = 0.f; for (int i = 0; i < n; i++) { float a = st->wetL[i] < 0 ? -st->wetL[i] : st->wetL[i]; if (a > pk) pk = a; } st->br_peak = pk; }
 #elif defined(AMB_BUILTIN_REVERB)
@@ -274,6 +274,12 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #endif
 
     const float c = 0.9989f, ic = 1.0f - c; float mm = st->mixCur;
+#ifdef FC_SOFT_CLIP
+    /* Master makeup: the input is trimmed to a safe nominal, so the chain runs quiet
+     * (out RMS ~0.17, peaks ~0.9 -> lots of headroom). Juice the whole thing up; the
+     * soft-clip below then acts as a gentle limiter/glue on the transient peaks. */
+    const float kOutMakeup = 2.0f;
+#endif
     /* Gravity: a slow ~0.30 Hz tremolo throb (post-mix) so the "collapse into the
      * drone" is felt, not just heard. depth 0..0.40 with Gravity. Mirrors plugin. */
     const float gravAmt   = p->gravity < 0.f ? 0.f : (p->gravity > 1.f ? 1.f : p->gravity);
@@ -295,7 +301,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
          * not, so the harness stays bit-faithful to the plugin's hard clamp.
          * With the input trimmed to plugin-nominal above, this should now only
          * catch transient peaks rather than being the sound. */
-        lv = fast_tanhf(lv); rv = fast_tanhf(rv);
+        lv = fast_tanhf(kOutMakeup * lv); rv = fast_tanhf(kOutMakeup * rv);   /* juice + soft-limit */
 #else
         lv = lv < -1 ? -1 : lv > 1 ? 1 : lv; rv = rv < -1 ? -1 : rv > 1 ? 1 : rv;
 #endif
