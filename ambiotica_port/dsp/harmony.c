@@ -6,14 +6,15 @@
 #include <math.h>
 
 #define H_MIN_FREQ   28.0f    /* lowest tunable note -> biggest delay buffer */
-#define H_IN_GAIN    0.22f    /* excitation into each high-Q resonator (chord onset).
-                                Plugin value — the resonator fb is near 1 (ring), so
-                                over-driving the excitation pushes its feedback tanh
-                                into saturation and the chord rings up to near-max,
-                                then Spectra (amount) scales it past the ceiling.
-                                With the input gain-staged to plugin-nominal, 0.22 is
-                                already the right drive; do NOT lift it to compensate
-                                for the quieter native reverb. */
+#ifdef AMB_BUILTIN_REVERB
+/* Port: Spectra resonates the reverb wet, and the native do_reverb wash is quieter
+ * than the plugin's, so at the plugin's 0.22 the resonators are barely driven and
+ * don't ring. Excitation ONLY scales the resonator input (the passthrough wet is
+ * un-gained), so lifting this drives the ring harder WITHOUT raising the wash. */
+#define H_IN_GAIN    0.7f
+#else
+#define H_IN_GAIN    0.22f    /* plugin value */
+#endif
 #define H_SMOOTH     0.0008f  /* per-sample glide of delay length (no zipper)  */
 
 struct harmony_s {
