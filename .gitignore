@@ -14,3 +14,7 @@ ambiotica_port/harness/*.o
 # generated single-file panel (regenerate via panel/amalgamate.sh)
 ambiotica_port/panel/plinky_ambiotica*.cpp
 ambiotica_port/panel/*.o
+
+# Plinky IDE API reference — third-party (plinky12.com), NOT redistributable.
+# Fetch the latest from the site when needed; never commit it.
+llm.txt
