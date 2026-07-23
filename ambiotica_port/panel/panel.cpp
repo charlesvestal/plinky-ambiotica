@@ -95,8 +95,10 @@ struct ambiotica_panel : panel_t {
          * raw MIX_PARAM_* — if it needs +128, this is the one line to flip.) */
         set_param_packed(VOICE_PARAM_REVERB_SEND,   0, &synth_presets[synth_preset]);
         set_param_packed(VOICE_PARAM_DELAY_SEND,    0, &synth_presets[synth_preset]);
-        set_param_packed(MIX_PARAM_REVERB_SHIMMER,  0, &synth_presets[MIX_PRESET_IDX]);
-        set_param_packed(MIX_PARAM_REVERB_FEEDBACK, 0, &synth_presets[MIX_PRESET_IDX]);
+        set_param_packed(MIX_PARAM_REVERB_SHIMMER,  0, &synth_presets[MIX_PRESET_IDX]);   /* shimmer OFF */
+        /* Gentle fixed feedback for a decaying ambient tail (packed = value in each of
+         * the 8 corner bytes). 28/127 ~ medium; default 96 self-oscillated. TUNABLE. */
+        set_param_packed(MIX_PARAM_REVERB_FEEDBACK, (unsigned long long)28 * 0x0101010101010101ULL, &synth_presets[MIX_PRESET_IDX]);
 
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;

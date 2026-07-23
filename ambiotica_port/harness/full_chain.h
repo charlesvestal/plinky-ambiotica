@@ -116,7 +116,7 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
     /* do_reverb expects a SEND-level input (stock reverbsend ~= mono*reverb_send>>8,
      * ~1/10 full scale); feeding full-scale ±32767 slammed the ceiling. Attenuate
      * in; scale out with makeup. Both TUNABLE via the debug REVLVL readout. */
-    const float kIn = 3000.0f, kOut = 1.0f / 32768.0f;
+    const float kIn = 3000.0f, kOut = 2.5f / 32768.0f;   /* +makeup: wet was ~0.05-0.13, aim ~0.15-0.35 */
     float rawmax = 0.f;
     for (int i = 0; i < n; i += 2) {
         float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
