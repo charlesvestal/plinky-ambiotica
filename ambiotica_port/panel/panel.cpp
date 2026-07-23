@@ -43,6 +43,7 @@ struct ambiotica_panel : panel_t {
        so every column pulses across the full brightness range regardless of the
        absolute signal level (loopL, micL and granL differ ~10x in magnitude). */
     float        viz_out = 0.f;                                 /* output level (play-surface breathing) */
+    float        viz_rev = 0.f;                                 /* DEBUG: reverb wet peak (cascade watch) */
     float        viz_loop_env = 0.f,  viz_loop_pk = 0.f;       /* Orbit: main-loop emit meter */
     float        viz_micro_env = 0.f, viz_micro_pk = 0.f;      /* Satellite: micro-loop emit meter */
     float        viz_grain_env = 0.f, viz_grain_pk = 0.f;      /* Constellate: granular meter */
@@ -195,6 +196,18 @@ struct ambiotica_panel : panel_t {
     void on_ui(int dt_us) override {
         leds_clear();
         frame_ctr++;
+        /* --- TEMP REVERB DEBUG: is the wet cascading, and did our param-zeroing take?
+         * mixShim/mixFb printed at BOTH addressings (raw vs +128) so we can see which
+         * one actually holds the value and whether it's now 0. Remove once solved. --- */
+        if ((frame_ctr % 60) == 0) {
+            printf("REVDBG wet=%d xshim=%d xfb=%d | shim raw=%llx +128=%llx | fb raw=%llx +128=%llx | send=%llx\n",
+                   (int)(viz_rev * 1000.f), reverb_extra_shimmer, reverb_extra_fb_gain_q8,
+                   (unsigned long long)get_param_packed(MIX_PARAM_REVERB_SHIMMER,        &synth_presets[MIX_PRESET_IDX]),
+                   (unsigned long long)get_param_packed(MIX_PARAM_REVERB_SHIMMER + 128,  &synth_presets[MIX_PRESET_IDX]),
+                   (unsigned long long)get_param_packed(MIX_PARAM_REVERB_FEEDBACK,       &synth_presets[MIX_PRESET_IDX]),
+                   (unsigned long long)get_param_packed(MIX_PARAM_REVERB_FEEDBACK + 128, &synth_presets[MIX_PRESET_IDX]),
+                   (unsigned long long)get_param_packed(VOICE_PARAM_REVERB_SEND,         &synth_presets[synth_preset]));
+        }
 #ifdef AMB_DEBUG
         /* print per-stage metrics from core0 (~2x/sec). hf x1000: clean ~4-20;
          * the first stage that spikes is where the fizz is injected. */
@@ -315,13 +328,15 @@ struct ambiotica_panel : panel_t {
 
         /* cheap visualization taps: output level (breathing) + per-channel block
            peaks for the main loop, micro-loop and granular. */
-        float op = 0.f, gp = 0.f, lp = 0.f, mp = 0.f;
+        float op = 0.f, gp = 0.f, lp = 0.f, mp = 0.f, wp = 0.f;
         for (int i = 0; i < BLOCK_SIZE; i++) {
             float a = oL[i]       < 0.f ? -oL[i]       : oL[i];       if (a > op) op = a;
             float g = st.granL[i] < 0.f ? -st.granL[i] : st.granL[i]; if (g > gp) gp = g;
             float l = st.loopL[i] < 0.f ? -st.loopL[i] : st.loopL[i]; if (l > lp) lp = l;
             float m = st.micL[i]  < 0.f ? -st.micL[i]  : st.micL[i];  if (m > mp) mp = m;
+            float w = st.wetL[i]  < 0.f ? -st.wetL[i]  : st.wetL[i];  if (w > wp) wp = w;   /* DEBUG */
         }
+        viz_rev       = viz_rev > wp ? viz_rev * 0.98f : wp;        /* DEBUG: peak-hold to catch a cascade */
         viz_out       = viz_out * 0.9f + op * 0.1f;
         /* per-channel meter: fast envelope + slow-release peak-hold (see meter_bri) */
         viz_loop_env  = viz_loop_env  * 0.90f + lp * 0.10f;  viz_loop_pk  = lp > viz_loop_pk  ? lp : viz_loop_pk  * 0.9990f;
