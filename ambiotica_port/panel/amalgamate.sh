@@ -31,7 +31,12 @@ MODULES="looper granular microloop reverb harmony bloom drift lfo"
     echo "// Ambiotica-on-Plinky. Vendored DSP from ambiotica-plugin, (c) Charles Vestal — MIT (see LICENSE)."
     [ -n "$LEVEL" ] && echo "#define AMB_CHAIN_LEVEL $LEVEL"
     echo "#define LOOPER_I16"
-    echo "#define AMB_BUILTIN_REVERB   // use the Plinky native do_reverb() instead of our modal reverb"
+    # AMB_BUILTIN_REVERB (native do_reverb) is PARKED pending a dev API update:
+    # do_reverb needs the reverb's base shimmer+feedback CONFIGURED first (the
+    # "magical globals" do_fx normally sets); driving it standalone left shimmer
+    # stuck on + an endless tail. The gated code stays in full_chain.h — re-enable
+    # this line and wire the config globals once the improved reverb API ships.
+    # echo "#define AMB_BUILTIN_REVERB"
     strip "$HN/alloc_prelude.h"
     for h in $MODULES; do strip "$DSP/$h.h"; done
     strip "$DSP/rate_util.h"
