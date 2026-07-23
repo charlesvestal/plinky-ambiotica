@@ -34,6 +34,11 @@
 #define AMB_CHAIN_LEVEL 6
 #endif
 
+#ifdef AMB_STAGE_TIMING   /* per-stage core1 profiling (time_us from the SDK); panel prints it */
+static unsigned int g_stage_us[7];   /* 0 loop 1 gran 2 micro 3 reverb 4 harmony 5 mix */
+static unsigned int g_stage_n;
+#endif
+
 typedef struct {
     float mix, loop_layer, grain_size, scatter, micro_hold, decay, mod_depth, mod_rate;
     float bloom, drift_amt, spectra, ring;      /* spectra = harmony amount */
@@ -200,6 +205,13 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         st->have_pushed = 1;
     }
 
+#ifdef AMB_STAGE_TIMING
+    unsigned int _tl = time_us();
+    #define STG(k) do { unsigned int _tn = time_us(); g_stage_us[k] += _tn - _tl; _tl = _tn; } while (0)
+#else
+    #define STG(k)
+#endif
+
     /* Event Horizon: horizon 1 = full sustain; lower DRAINS the engine (a global "let
      * go"). The plugin actively scales the whole loop buffer (looper_leak), but that
      * scans the entire loop window every block — far too expensive on the RP2350 (it
@@ -228,11 +240,13 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #else
     for (int i = 0; i < n; i++) { st->loopL[i] = st->loopR[i] = 0.f; }
 #endif
+    STG(0);   /* looper + drift regen */
 #if AMB_CHAIN_LEVEL >= 6
     granular_process(g, st->loopL, st->loopR, st->granL, st->granR, n);
 #else
     for (int i = 0; i < n; i++) { st->granL[i] = st->granR[i] = 0.f; }
 #endif
+    STG(1);   /* granular */
     for (int i = 0; i < n; i++) { st->layL[i] = cleanG * st->loopL[i] + shimmerG * st->granL[i];
                                   st->layR[i] = cleanG * st->loopR[i] + shimmerG * st->granR[i]; }
 #if AMB_CHAIN_LEVEL >= 3
@@ -262,6 +276,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
       float microRevSend = 1.0f - 0.45f * mp;
       for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + microRevSend * st->micL[i];
                                     st->rinR[i] = st->blR[i] + st->layR[i] + microRevSend * st->micR[i]; } }
+    STG(2);   /* bloom + microloop + makeup */
 #if defined(AMB_DATTORRO)
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
       dattorro_set_decay(st->dat, t);                       /* Tail -> tail length (tracks the plugin) */
@@ -276,6 +291,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #else
     for (int i = 0; i < n; i++) { st->wetL[i] = st->rinL[i]; st->wetR[i] = st->rinR[i]; }
 #endif
+    STG(3);   /* reverb (Dattorro) */
 #if AMB_CHAIN_LEVEL >= 4
     harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* Spectra on reverb tail */
 #endif
@@ -286,6 +302,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     for (int i = 0; i < n; i++) { st->revFbL[i] = st->wetL[i]; st->revFbR[i] = st->wetR[i]; } st->revFbN = n;
     for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i];
                                   st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i]; }
+    STG(4);   /* harmony (Spectra) */
 #if AMB_CHAIN_LEVEL >= 3
     drift_process(d, st->wbL, st->wbR, st->wbL, st->wbR, n);                /* wet-bus detune */
 #endif
@@ -316,6 +333,11 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         out_l[i] = lv; out_r[i] = rv;
     }
     st->gravPhase = gph;
+    STG(5);   /* drift + mix/output */
+#ifdef AMB_STAGE_TIMING
+    g_stage_n++;
+#endif
+    #undef STG
 }
 
 /* Harness convenience: render `total` frames in FC_BLK chunks (one fc_state). */
