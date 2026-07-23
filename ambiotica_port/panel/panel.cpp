@@ -227,7 +227,10 @@ struct ambiotica_panel : panel_t {
 #endif
         voices_seen = 0;
         /* play surface, now with an activity glow/sparkle via the brightness cb */
-        play.do_play_surface(0, 0, 8, 16, 8, DIMMEST(TEAL), TEAL, 48, 3, note_cb, this,
+        /* 4-voice polyphony: the synth renders inside the same core1 2ms budget
+         * as our FX; 8 voices' render time pushed us over. 4 leaves headroom for
+         * the full chain and is plenty for an ambient wash. */
+        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(TEAL), TEAL, 48, 3, note_cb, this,
                              VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, 0, -1,
                              viz_brightness, this);
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
