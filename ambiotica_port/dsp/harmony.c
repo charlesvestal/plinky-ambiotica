@@ -6,7 +6,15 @@
 #include <math.h>
 
 #define H_MIN_FREQ   28.0f    /* lowest tunable note -> biggest delay buffer */
+#ifdef AMB_BUILTIN_REVERB
+#define H_IN_GAIN    1.0f     /* native do_reverb wet is ~5x quieter than the modal
+                                reverb it replaced; lift the excitation so Spectra
+                                still sings the chord out of the (quieter) wash.
+                                Only the passthrough term is un-gained, so this
+                                does not change the wet level, just the ring. */
+#else
 #define H_IN_GAIN    0.22f    /* excitation into each high-Q resonator (chord onset) */
+#endif
 #define H_SMOOTH     0.0008f  /* per-sample glide of delay length (no zipper)  */
 
 struct harmony_s {
