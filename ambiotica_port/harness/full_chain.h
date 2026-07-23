@@ -53,6 +53,7 @@ typedef struct {
     full_params last_pushed;   /* memoize: only re-push params when they change */
     int have_pushed;
     float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
+    float br_size;             /* built-in reverb: per-sample-smoothed room size (declick Tail) */
     float br_peak;             /* DEBUG: raw do_reverb wet peak (pre-clamp) this block */
 } fc_state;
 
@@ -108,9 +109,14 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
 static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
                               float* outL, float* outR, int n, const full_params* p) {
     /* Room size from Tail. (Feedback/shimmer come from the mix preset resolved by
-     * the do_fx warmup in the panel — shimmer is zeroed there.) */
-    int size_q7 = 20 + (int)(p->decay * 70.0f);   /* ~20..90 (TUNABLE) */
-    if (size_q7 < 0) size_q7 = 0; if (size_q7 > 127) size_q7 = 127;
+     * the do_fx warmup in the panel — shimmer is zeroed there.) The modal reverb
+     * this replaced smoothed its decay per-sample (reverb.c fb_current); do_reverb
+     * takes a raw size each call, so a Tail move would step the room size and click.
+     * Smooth it per-sample here to restore that de-click. */
+    float size_target = 20.0f + p->decay * 70.0f;   /* ~20..90 (TUNABLE) */
+    if (size_target < 0.f) size_target = 0.f; else if (size_target > 127.f) size_target = 127.f;
+    if (st->br_size <= 0.f) st->br_size = size_target;         /* init on first block */
+    const float size_sc = 0.002f;   /* ~30 ms one-pole at the 16 kHz half-rate iter */
     reverb_extra_fb_gain_q8 = 0;
     reverb_extra_shimmer    = 0;
     /* do_reverb expects a SEND-level input (stock reverbsend ~= mono*reverb_send>>8,
@@ -123,6 +129,8 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
         float dR = 0.5f * (inR[i] + (i + 1 < n ? inR[i + 1] : inR[i]));
         float cl = dL < -1.f ? -1.f : dL > 1.f ? 1.f : dL;
         float cr = dR < -1.f ? -1.f : dR > 1.f ? 1.f : dR;
+        st->br_size += size_sc * (size_target - st->br_size);
+        int size_q7 = (int)(st->br_size + 0.5f);
         int wl = 0, wr = 0;
         do_reverb((int)(cl * kIn), (int)(cr * kIn), size_q7, &wl, &wr);   /* accumulates */
         float wL = (float)wl * kOut, wR = (float)wr * kOut;

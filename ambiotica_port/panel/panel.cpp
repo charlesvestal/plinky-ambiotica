@@ -27,7 +27,8 @@ struct ambiotica_panel : panel_t {
     harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
     bool dsp_ok = false;
 
-    full_params fx;
+    full_params fx;      /* target macros (set from the sliders in on_ui) */
+    full_params fx_sm;   /* per-block-smoothed macros actually fed to the chain (de-click) */
     fc_state    st;
     /* Reverb + harmony + drift + bloom live here (fast SRAM) — the reverb's
      * scattered delay-line access was too slow in PSRAM. ~82 KB used; fits the
@@ -92,6 +93,7 @@ struct ambiotica_panel : panel_t {
         memset(&fx, 0, sizeof fx);
         fx.bpm = 120.f; fx.loop_length_bars = 2.f; fx.key = 0; fx.chord = 0; fx.bloom = 0.4f;
         push_fx_from_ui();
+        fx_sm = fx;   /* start the smoother at the target so nothing ramps up from 0 on boot */
 
         /* Ambiotica IS the FX. Silence the Plinky built-in reverb/delay so it can't
          * run in parallel with our chain: (1) the stock synth preset ships
@@ -321,8 +323,28 @@ struct ambiotica_panel : panel_t {
             sL[i] = mix_buffers_out->dry[2*i]   * k;
             sR[i] = mix_buffers_out->dry[2*i+1] * k;
         }
+
+        /* Per-block macro smoothing (~30 ms). The plugin gets smooth param values
+           from the host; the Plinky sliders deliver coarse 0..127 steps, so pushing
+           them straight to the chain clicks (Tail room-size, Spectra amount, micro
+           hold, ...). Ramp the continuous macros toward their targets; length +
+           discrete params pass through (their DSP crossfades/snaps handle those). */
+        const float ps = 0.06f;
+        /* Ramp toward the target, then SNAP when within a deadband so fx_sm settles
+           bit-exactly on fx — otherwise the one-pole asymptote never equals the
+           target and fc_push_params' memcmp gate would re-run powf/expf every block
+           (the DSP budget is tight). During an active move it re-pushes as intended. */
+        #define AMB_SM(f) { float d_ = fx.f - fx_sm.f; fx_sm.f += ps * d_; \
+                            if (d_ < 5e-4f && d_ > -5e-4f) fx_sm.f = fx.f; }
+        AMB_SM(mix); AMB_SM(loop_layer); AMB_SM(grain_size); AMB_SM(scatter);
+        AMB_SM(micro_hold); AMB_SM(decay); AMB_SM(mod_depth); AMB_SM(mod_rate);
+        AMB_SM(bloom); AMB_SM(drift_amt); AMB_SM(spectra); AMB_SM(ring);
+        #undef AMB_SM
+        fx_sm.loop_length_bars = fx.loop_length_bars; fx_sm.micro_bars = fx.micro_bars;
+        fx_sm.bpm = fx.bpm; fx_sm.key = fx.key; fx_sm.chord = fx.chord;
+
         fc_render_block(&st, looper, granular, microloop, reverb, harmony, bloom, drift,
-                        &fx, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
+                        &fx_sm, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
 
 #ifdef AMB_DEBUG
         /* measure each stage on core1; on_ui prints them (core0) */
