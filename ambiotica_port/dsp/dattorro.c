@@ -30,6 +30,7 @@ struct dattorro_s {
     dline  modap[2], da[2], ap2[2], db[2];   /* tank: L=0, R=1 */
     int    tapL[7], tapR[7];      /* scaled tap offsets */
     float  bw_lp;                 /* input bandwidth one-pole */
+    float  hp_lp, hp_a;           /* input sub-bass high-pass (keeps low notes from building mud) */
     float  damp_lp[2];            /* tank damping one-pole (L,R) */
     float  lfo_ph[2];             /* two slow modulation LFOs */
     float  lfo_inc;
@@ -102,6 +103,9 @@ dattorro_t* dattorro_create(double sample_rate) {
     for (int i = 0; i < 7; i++) { d->tapL[i] = scl(d, TAP_L[i][1]); d->tapR[i] = scl(d, TAP_R[i][1]); }
     if (!ok) { dattorro_destroy(d); return NULL; }
     d->dd1 = 0.70f; d->bw = 0.9995f; d->mod_depth = 0.5f;
+    d->hp_a = 1.0f - expf(-6.2831853f * 80.0f / internal);   /* 80 Hz sub-bass HP — matches the
+                                                                plugin reverb (R_HPF_LP_COEF): stops
+                                                                sub-80 Hz piling up in the tail */
     dattorro_set_decay(d, 0.5f);
     dattorro_set_damp(d, 0.35f);
     return d;
@@ -123,7 +127,7 @@ void dattorro_reset(dattorro_t* d) {
         memset(d->ap2[c].buf,   0, (size_t)d->ap2[c].len   * sizeof(float));
         memset(d->db[c].buf,    0, (size_t)d->db[c].len    * sizeof(float));
     }
-    d->bw_lp = d->damp_lp[0] = d->damp_lp[1] = 0.0f;
+    d->bw_lp = d->hp_lp = d->damp_lp[0] = d->damp_lp[1] = 0.0f;
     d->holdL = d->holdR = 0.0f;
 }
 
@@ -147,6 +151,8 @@ void dattorro_set_mod(dattorro_t* d, float x) {
 /* One half-rate stereo tick. */
 static inline void dattorro_tick(dattorro_t* d, float inL, float inR, float* yl, float* yr) {
     float mono = 0.5f * (inL + inR);
+    d->hp_lp += d->hp_a * (mono - d->hp_lp);   /* high-pass: drop sub-bass so long notes don't build mud */
+    mono -= d->hp_lp;
     d->bw_lp += d->bw * (mono - d->bw_lp);
     float x = d->bw_lp;
     x = ap_tick(&d->inap[0], d->inap_len[0], x, 0.75f);

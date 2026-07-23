@@ -6,15 +6,7 @@
 #include <math.h>
 
 #define H_MIN_FREQ   28.0f    /* lowest tunable note -> biggest delay buffer */
-#if defined(AMB_BUILTIN_REVERB) || defined(AMB_DATTORRO)
-/* Port: Spectra resonates the reverb wet, and the port wash is quieter than the
- * plugin's, so at the plugin's 0.22 the resonators are barely driven and don't ring.
- * Excitation ONLY scales the resonator input (the passthrough wet is un-gained), so
- * lifting this drives the ring harder WITHOUT raising the wash. */
-#define H_IN_GAIN    0.7f
-#else
-#define H_IN_GAIN    0.22f    /* plugin value */
-#endif
+#define H_IN_GAIN    0.22f    /* plugin value (excitation into each high-Q resonator) */
 #define H_SMOOTH     0.0008f  /* per-sample glide of delay length (no zipper)  */
 
 struct harmony_s {
@@ -53,14 +45,7 @@ harmony_t* harmony_create(double sample_rate) {
     h->damp_a   = 1.0f - expf(-6.2831853f * 8000.0f / (float) h->sr);
     h->amount_a = 1.0f - expf(-1.0f / (0.020f * (float) h->sr));     /* ~20 ms */
     h->fb       = 0.995f;           /* default ring length (see harmony_set_ring) */
-#if defined(AMB_BUILTIN_REVERB) || defined(AMB_DATTORRO)
-    /* Port: measured (harm2 vs the revoiced C3..G3 chord) — at a typical wet the chord
-     * is proportional, NOT saturated, so it's under-level: 0.45 buried it, 1.25 clipped
-     * above Spectra ~0.37. 0.8 lifts it to ~0.22 (audible), soft-limits near max. */
-    h->out_gain = 1.0f;
-#else
-    h->out_gain = 1.25f;            /* chord level in the wash (louder, ring stays finite) */
-#endif
+    h->out_gain = 1.25f;            /* plugin value (chord level in the wash) */
     return h;
 }
 
