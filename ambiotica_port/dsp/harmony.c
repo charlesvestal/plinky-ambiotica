@@ -90,7 +90,16 @@ void harmony_set_ring(harmony_t *h, float ring_0_1) {
     if (!h) return;
     if (ring_0_1 < 0.0f) ring_0_1 = 0.0f;
     if (ring_0_1 > 1.0f) ring_0_1 = 1.0f;
-    h->fb = 0.982f + 0.011f * ring_0_1;   /* 0.982 .. 0.993 (decays in finite time) */
+#if defined(AMB_DATTORRO) || defined(AMB_BUILTIN_REVERB)
+    /* Port: the Dattorro reverb wash is ~13x hotter than the plugin's reverb (tap 0.95
+     * vs wet_gain 0.18), so the plugin's max Q (fb 0.993) drives the resonators into a
+     * sustained, saturated resonance at high Tail that keeps building and rings on the
+     * chord pitches ("keeps getting louder, changes with chords"). Cap the Q lower so
+     * the ring decays in a shorter finite time and can't self-sustain against the wash. */
+    h->fb = 0.982f + 0.005f * ring_0_1;   /* 0.982 .. 0.987 */
+#else
+    h->fb = 0.982f + 0.011f * ring_0_1;   /* plugin: 0.982 .. 0.993 */
+#endif
 }
 
 void harmony_set_amount(harmony_t *h, float amount) {
