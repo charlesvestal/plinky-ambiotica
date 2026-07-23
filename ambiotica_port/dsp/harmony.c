@@ -6,11 +6,11 @@
 #include <math.h>
 
 #define H_MIN_FREQ   28.0f    /* lowest tunable note -> biggest delay buffer */
-#ifdef AMB_BUILTIN_REVERB
-/* Port: Spectra resonates the reverb wet, and the native do_reverb wash is quieter
- * than the plugin's, so at the plugin's 0.22 the resonators are barely driven and
- * don't ring. Excitation ONLY scales the resonator input (the passthrough wet is
- * un-gained), so lifting this drives the ring harder WITHOUT raising the wash. */
+#if defined(AMB_BUILTIN_REVERB) || defined(AMB_DATTORRO)
+/* Port: Spectra resonates the reverb wet, and the port wash is quieter than the
+ * plugin's, so at the plugin's 0.22 the resonators are barely driven and don't ring.
+ * Excitation ONLY scales the resonator input (the passthrough wet is un-gained), so
+ * lifting this drives the ring harder WITHOUT raising the wash. */
 #define H_IN_GAIN    0.7f
 #else
 #define H_IN_GAIN    0.22f    /* plugin value */
@@ -53,12 +53,10 @@ harmony_t* harmony_create(double sample_rate) {
     h->damp_a   = 1.0f - expf(-6.2831853f * 8000.0f / (float) h->sr);
     h->amount_a = 1.0f - expf(-1.0f / (0.020f * (float) h->sr));     /* ~20 ms */
     h->fb       = 0.995f;           /* default ring length (see harmony_set_ring) */
-#ifdef AMB_BUILTIN_REVERB
-    /* Port: measured (harm2 vs the revoiced C3..G3 chord) — at a typical wet (RMS
-     * ~0.10) the chord is proportional, NOT saturated, so it's simply under-level:
-     * 0.45 left the chord peak ~0.12 (buried under the wash), while 1.25 clipped the
-     * output above Spectra ~0.37. 0.8 lifts the chord to ~0.22 (clearly audible) and
-     * only soft-limits near max Spectra+Tail. */
+#if defined(AMB_BUILTIN_REVERB) || defined(AMB_DATTORRO)
+    /* Port: measured (harm2 vs the revoiced C3..G3 chord) — at a typical wet the chord
+     * is proportional, NOT saturated, so it's under-level: 0.45 buried it, 1.25 clipped
+     * above Spectra ~0.37. 0.8 lifts it to ~0.22 (audible), soft-limits near max. */
     h->out_gain = 0.8f;
 #else
     h->out_gain = 1.25f;            /* chord level in the wash (louder, ring stays finite) */
