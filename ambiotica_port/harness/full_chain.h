@@ -224,6 +224,14 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #endif
 
     const float c = 0.9989f, ic = 1.0f - c; float mm = st->mixCur;
+#ifdef FC_SOFT_CLIP
+    /* Omitted-in-port plugin "output Level". The port sums several full-scale
+     * buses (loop bed x1.9 makeup + grains + micro + reverb wet) plus the drift
+     * regen tail, which slowly drives the soft-limiter into constant saturation
+     * (reads as hard clipping, and creeps up over ~20 s as loop energy piles up).
+     * Trim first so tanh is a safety net, not the sound. TUNABLE. */
+    const float kOutLevel = 0.6f;
+#endif
     for (int i = 0; i < n; i++) {
         mm = c * mm + ic * p->mix; float dg = 1.0f - mm;
         float lv = dg * st->dryL[i] + mm * st->wbL[i], rv = dg * st->dryR[i] + mm * st->wbR[i];
@@ -232,6 +240,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
          * (many Plinky synth voices) would otherwise slam the ±1 ceiling and
          * alias ("sample-rate-mismatch" buzz). Panel defines this; harness does
          * not, so the harness stays bit-faithful to the plugin's hard clamp. */
+        lv *= kOutLevel; rv *= kOutLevel;                 /* headroom before the soft-limit */
         lv = fast_tanhf(lv); rv = fast_tanhf(rv);
 #else
         lv = lv < -1 ? -1 : lv > 1 ? 1 : lv; rv = rv < -1 ? -1 : rv > 1 ? 1 : rv;
