@@ -50,6 +50,8 @@ typedef struct {
     float layL[FC_BLK], layR[FC_BLK], blL[FC_BLK], blR[FC_BLK];
     float micL[FC_BLK], micR[FC_BLK], rinL[FC_BLK], rinR[FC_BLK];
     float wetL[FC_BLK], wetR[FC_BLK], wbL[FC_BLK], wbR[FC_BLK];
+    full_params last_pushed;   /* memoize: only re-push params when they change */
+    int have_pushed;
 } fc_state;
 
 static const int FC_CHORD_SEMIS[5][4] = {
@@ -106,7 +108,14 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
     const float dcIC = 0.005f, fbIC = 0.02f;
 
-    fc_push_params(l, g, m, r, h, b, d, p, sr);
+    /* Only re-push params (incl. the powf chord build + expf mod rate) when they
+     * actually change — otherwise the audio thread wastes transcendentals every
+     * block on constant values. */
+    if (!st->have_pushed || memcmp(p, &st->last_pushed, sizeof(full_params)) != 0) {
+        fc_push_params(l, g, m, r, h, b, d, p, sr);
+        st->last_pushed = *p;
+        st->have_pushed = 1;
+    }
 
     for (int i = 0; i < n; i++) {                        /* DC block */
         st->dcL += dcIC * (in_l[i] - st->dcL); st->dcR += dcIC * (in_r[i] - st->dcR);
