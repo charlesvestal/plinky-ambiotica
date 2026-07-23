@@ -86,6 +86,17 @@ struct ambiotica_panel : panel_t {
         fx.bpm = 120.f; fx.loop_length_bars = 2.f; fx.key = 0; fx.chord = 0; fx.bloom = 0.4f;
         push_fx_from_ui();
 
+        /* Ambiotica IS the FX. Silence the Plinky built-in reverb/delay so it can't
+         * run in parallel with our chain: (1) the stock synth preset ships
+         * reverb_send=24, and (2) the MIX preset's REVERB_SHIMMER/FEEDBACK drive
+         * the native reverb do_reverb() reads — the octave-shimmer cascade.
+         * set_param_packed(...,0,...) clears every corner. (Mix-param addressing:
+         * raw MIX_PARAM_* — if it needs +128, this is the one line to flip.) */
+        set_param_packed(VOICE_PARAM_REVERB_SEND,   0, &synth_presets[synth_preset]);
+        set_param_packed(VOICE_PARAM_DELAY_SEND,    0, &synth_presets[synth_preset]);
+        set_param_packed(MIX_PARAM_REVERB_SHIMMER,  0, &synth_presets[MIX_PRESET_IDX]);
+        set_param_packed(MIX_PARAM_REVERB_FEEDBACK, 0, &synth_presets[MIX_PRESET_IDX]);
+
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
         const int sr = (int) AMB_SR;
