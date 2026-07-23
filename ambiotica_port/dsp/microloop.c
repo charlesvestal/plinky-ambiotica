@@ -19,9 +19,13 @@
 #define M_FREEZE_MIX_T      0.050f   /* ~50 ms ramp of cloud in/out on freeze  */
 #define M_CLOUD_GAIN        0.90f    /* level trim for the overlapped cloud    */
 
+static inline float m_ld(short v) { return (float)v * (1.0f / 32768.0f); }
+static inline short m_st(float v) { v = v > 1.f ? 1.f : (v < -1.f ? -1.f : v);
+                                    float s = v * 32767.f; return (short)(s < 0.f ? s - 0.5f : s + 0.5f); }
+
 struct microloop_s {
-    float *buf_L;
-    float *buf_R;
+    short *buf;            /* interleaved int16 stereo capture: buf[pos*2]=L, [pos*2+1]=R
+                              (halves PSRAM data + one cache line per frame vs buf_L/buf_R) */
     int    buf_capacity;
     int    write_pos;
     float  hold;       /* 0..1 — both loop length and blend amount */
@@ -123,8 +127,10 @@ static inline void micro_cloud(microloop_t *m, int active, int write_pos,
         if (!m->grain[gi].active) continue;
         int i0 = (int)m->grain[gi].rd; float fr = m->grain[gi].rd - (float)i0;
         int i1 = i0 + 1; if (i1 >= cap) i1 = 0;
-        float sL = m->buf_L[i0] + (m->buf_L[i1] - m->buf_L[i0]) * fr;
-        float sR = m->buf_R[i0] + (m->buf_R[i1] - m->buf_R[i0]) * fr;
+        float bl0 = m_ld(m->buf[i0*2]),   bl1 = m_ld(m->buf[i1*2]);
+        float br0 = m_ld(m->buf[i0*2+1]), br1 = m_ld(m->buf[i1*2+1]);
+        float sL = bl0 + (bl1 - bl0) * fr;
+        float sR = br0 + (br1 - br0) * fr;
         /* Hann window over the grain's life. */
         float w = 0.5f - 0.5f * fast_cosf(6.2831853f * ((float)m->grain[gi].age + 0.5f)
                                      / (float)m->grain[gi].len);
@@ -163,9 +169,8 @@ microloop_t* microloop_create(double sample_rate) {
     m->crossfade_len = amb_scale_samples(M_CROSSFADE_LEN, sr);
     m->smooth_c      = amb_scale_onepole(M_SMOOTH_COEF, sr);
     m->buf_capacity = m->max_len;
-    m->buf_L = (float*)calloc((size_t)m->buf_capacity, sizeof(float));
-    m->buf_R = (float*)calloc((size_t)m->buf_capacity, sizeof(float));
-    if (!m->buf_L || !m->buf_R) { microloop_destroy(m); return NULL; }
+    m->buf = (short*)calloc((size_t)m->buf_capacity * 2, sizeof(short));
+    if (!m->buf) { microloop_destroy(m); return NULL; }
     m->loop_len_current = m->min_len;
     m->loop_len_pending = m->min_len;
     m->loop_len_queued  = m->min_len;
@@ -193,8 +198,7 @@ microloop_t* microloop_create(double sample_rate) {
 
 void microloop_destroy(microloop_t *m) {
     if (!m) return;
-    free(m->buf_L);
-    free(m->buf_R);
+    free(m->buf);
     free(m->shbuf);
     free(m);
 }
@@ -202,8 +206,7 @@ void microloop_destroy(microloop_t *m) {
 /* Clear the captured buffer + freeze/shimmer state (RT-safe). Keeps params. */
 void microloop_reset(microloop_t *m) {
     if (!m) return;
-    memset(m->buf_L, 0, (size_t)m->buf_capacity * sizeof(float));
-    memset(m->buf_R, 0, (size_t)m->buf_capacity * sizeof(float));
+    memset(m->buf, 0, (size_t)m->buf_capacity * 2 * sizeof(short));
     memset(m->shbuf, 0, (size_t)m->shlen * sizeof(float));
     m->write_pos = 0;
     m->fb_current = 0.0f;
@@ -234,8 +237,8 @@ void microloop_leak(microloop_t *m, float factor) {
     int idx = m->write_pos;
     for (int i = 0; i < len; i++) {
         if (--idx < 0) idx += cap;
-        m->buf_L[idx] *= factor;
-        m->buf_R[idx] *= factor;
+        m->buf[idx*2]   = m_st(m_ld(m->buf[idx*2])   * factor);
+        m->buf[idx*2+1] = m_st(m_ld(m->buf[idx*2+1]) * factor);
     }
 }
 
@@ -324,8 +327,8 @@ void microloop_process(microloop_t *m,
          * (cos/sin) because the two taps read decorrelated content. */
         int ra = write_pos - m->loop_len_current;
         if (ra < 0) ra += buf_capacity;
-        float read_L = m->buf_L[ra];
-        float read_R = m->buf_R[ra];
+        float read_L = m_ld(m->buf[ra*2]);
+        float read_R = m_ld(m->buf[ra*2+1]);
         if (m->xfade_remaining > 0) {
             int rb = write_pos - m->loop_len_pending;
             if (rb < 0) rb += buf_capacity;
@@ -333,8 +336,8 @@ void microloop_process(microloop_t *m,
                            * (1.0f / (float) m->crossfade_len);     /* 0..1 */
             const float gb = fast_sinf(t * 1.5707963f);
             const float ga = fast_cosf(t * 1.5707963f);
-            read_L = ga * read_L + gb * m->buf_L[rb];
-            read_R = ga * read_R + gb * m->buf_R[rb];
+            read_L = ga * read_L + gb * m_ld(m->buf[rb*2]);
+            read_R = ga * read_R + gb * m_ld(m->buf[rb*2+1]);
             if (--m->xfade_remaining == 0) {
                 m->loop_len_current = m->loop_len_pending;          /* commit */
                 if (m->has_queued && m->loop_len_queued != m->loop_len_current) {
@@ -359,8 +362,8 @@ void microloop_process(microloop_t *m,
                 int rabs = m->rev_base[h] - ph;
                 while (rabs < 0) rabs += buf_capacity;
                 const float gain = 0.5f - 0.5f * fast_cosf(6.2831853f * (float)ph / (float)L);
-                rL += gain * m->buf_L[rabs];
-                rR += gain * m->buf_R[rabs];
+                rL += gain * m_ld(m->buf[rabs*2]);
+                rR += gain * m_ld(m->buf[rabs*2+1]);
             }
             const float rc = m->reverse_current;
             read_L = (1.0f - rc) * read_L + rc * rL;
@@ -412,8 +415,8 @@ void microloop_process(microloop_t *m,
             float new_R = in_r[n] + fb_curr * read_R;
             if (new_L >  1.0f) new_L =  1.0f; else if (new_L < -1.0f) new_L = -1.0f;
             if (new_R >  1.0f) new_R =  1.0f; else if (new_R < -1.0f) new_R = -1.0f;
-            m->buf_L[write_pos] = new_L;
-            m->buf_R[write_pos] = new_R;
+            m->buf[write_pos*2]   = m_st(new_L);
+            m->buf[write_pos*2+1] = m_st(new_R);
         }
 
         write_pos++;
