@@ -102,7 +102,8 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
     drift_set_amount(d, p->drift_amt);
     harmony_set_amount(h, p->spectra);
     harmony_set_ring(h, p->ring);
-    { float f[HARMONY_MAX_VOICES]; int nv = fc_build_chord(p->key, p->chord, f); harmony_set_chord(h, f, nv); }
+    /* chord (fc_build_chord uses powf per voice) is rebuilt in fc_render_block ONLY on
+     * key/chord change — not here, which runs on every param move (Flux, Gravity ramp). */
     reverb_set_decay(r, p->decay);
     reverb_set_mod_depth(r, p->mod_depth);
     reverb_set_mod_shape(r, 0);
@@ -191,6 +192,10 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
      * block on constant values. */
     if (!st->have_pushed || memcmp(p, &st->last_pushed, sizeof(full_params)) != 0) {
         fc_push_params(l, g, m, r, h, b, d, p, sr);
+        if (!st->have_pushed || p->key != st->last_pushed.key || p->chord != st->last_pushed.chord) {
+            float f[HARMONY_MAX_VOICES]; int nv = fc_build_chord(p->key, p->chord, f);   /* powf per voice — key/chord only */
+            harmony_set_chord(h, f, nv);
+        }
         st->last_pushed = *p;
         st->have_pushed = 1;
     }
@@ -285,18 +290,18 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     drift_process(d, st->wbL, st->wbR, st->wbL, st->wbR, n);                /* wet-bus detune */
 #endif
 
-    const float c = 0.9989f, ic = 1.0f - c; float mm = st->mixCur;
-    /* Gravity: a slow ~0.30 Hz tremolo throb (post-mix) so the "collapse into the
-     * drone" is felt, not just heard. depth 0..0.40 with Gravity. Mirrors plugin. */
+    /* Equal-power dry/wet crossfade (plugin): 50% keeps full loudness vs a linear
+     * blend's -6 dB dip. Gains computed ONCE per block — mix is already smoothed
+     * upstream (fx_sm), and per-sample fast_cosf/sinf here was over the core1 budget. */
+    st->mixCur += 0.10f * (p->mix - st->mixCur);
+    const float mmix = st->mixCur;
+    const float dg = fast_cosf(mmix * 1.5707963f), wg = fast_sinf(mmix * 1.5707963f);
+    /* Gravity: slow ~0.30 Hz tremolo throb (post-mix), per-sample only when engaged. */
     const float gravAmt   = p->gravity < 0.f ? 0.f : (p->gravity > 1.f ? 1.f : p->gravity);
     const float tremInc   = 6.2831853f * 0.30f / (float) sr;
     const float tremDepth = 0.40f * gravAmt;
     float gph = st->gravPhase;
     for (int i = 0; i < n; i++) {
-        mm = c * mm + ic * p->mix;
-        /* equal-power dry/wet crossfade (plugin): 50% keeps full loudness (each -3 dB)
-         * instead of the -6 dB dip of a linear blend. fast_cosf/sinf are exact enough. */
-        float dg = fast_cosf(mm * 1.5707963f), wg = fast_sinf(mm * 1.5707963f);
         float lv = dg * st->dryL[i] + wg * st->wbL[i], rv = dg * st->dryR[i] + wg * st->wbR[i];
         if (gravAmt > 0.001f) {                          /* tremolo throb */
             gph += tremInc; if (gph > 6.2831853f) gph -= 6.2831853f;
@@ -304,19 +309,12 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
             lv *= trem; rv *= trem;
         }
 #ifdef FC_SOFT_CLIP
-        /* graceful saturation instead of harsh hard-clip — hot polyphonic input
-         * (many Plinky synth voices) would otherwise slam the ±1 ceiling and
-         * alias ("sample-rate-mismatch" buzz). Panel defines this; harness does
-         * not, so the harness stays bit-faithful to the plugin's hard clamp.
-         * With the input trimmed to plugin-nominal above, this should now only
-         * catch transient peaks rather than being the sound. */
         lv = fast_tanhf(lv); rv = fast_tanhf(rv);   /* port soft-clip (hot poly); plugin hard-clips */
 #else
         lv = lv < -1 ? -1 : lv > 1 ? 1 : lv; rv = rv < -1 ? -1 : rv > 1 ? 1 : rv;
 #endif
         out_l[i] = lv; out_r[i] = rv;
     }
-    st->mixCur = mm;
     st->gravPhase = gph;
 }
 
