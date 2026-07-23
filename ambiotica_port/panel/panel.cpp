@@ -215,7 +215,7 @@ struct ambiotica_panel : panel_t {
     void on_ui(int dt_us) override {
         leds_clear();
         frame_ctr++;
-        if (frame_ctr == 60) {   /* once: which reverb config globals actually linked? (nonzero addr = exists) */
+        if ((frame_ctr % 120) == 0) {   /* every ~2s: which reverb config globals linked? (nonzero addr = exists) */
             printf("REVGLOB shim: k_reverb_shim=%p reverb_shimmer=%p reverb_shim=%p reverb_shimmer_amount=%p\n",
                    (void*)&k_reverb_shim, (void*)&reverb_shimmer, (void*)&reverb_shim, (void*)&reverb_shimmer_amount);
             printf("REVGLOB fade: k_reverb_fade=%p reverb_fade=%p reverb_feedback=%p reverb_fb=%p fb_gain_q8=%p\n",
