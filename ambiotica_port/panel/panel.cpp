@@ -1,59 +1,35 @@
-/* Ambiotica-on-Plinky — panel (with AMB_STAGE bisection switch).
+/* Ambiotica-on-Plinky — panel.
  *
- * AMB_STAGE gates how much the panel does, to localize an on-device load crash
- * WITHOUT a serial console. Each stage paints the grid so you can see it loaded:
- *   1 bare    — just lights the grid TEAL. Proves the panel shell loads.
- *   2 members — + the big member arrays (unused). Grid BLUE. Tests object size
- *               vs the 128 KB arena.
- *   3 modules — + create all 7 DSP modules (6.9 MB PSRAM alloc + zeroing). Grid
- *               GREEN if all allocated / RED if not; bottom row = a bar of the
- *               reported PSRAM size in MB. Tests PSRAM + the big memset-at-load.
- *   4 play    — + play surface driving the built-in synth. Normal left/right UI.
- *   5 dsp     — + Ambiotica in on_dsp (core1), owns audio_out (full panel).
+ * Built-in synth (play surface, left half) -> Ambiotica chain -> audio out.
+ * The chain runs on core1 in on_dsp() and owns the output (bypasses the built-in
+ * FX; Ambiotica IS the FX). See PORT_NOTES.md for the core1-budget story.
  *
- * Flash 1..5 in order; the first that hangs on the loading screen pinpoints it.
- *
- * ============== VERIFY IN EMULATOR (blind-coded vs llm.txt) ==============
- *  sample rate (AMB_SR=32000); on_dsp core1 hook + mix_buffers_out->dry scale; play_surface_t /
- *  do_play_surface / play_synth / synth preset; slider_t / last_widget_new_value;
- *  palette / DIMMEST / BLOCK_SIZE; on_serialise field macros; reverb-in-PSRAM CPU.
- * ========================================================================
+ * Compile-time knobs:
+ *   AMB_CHAIN_LEVEL 1..6  chain-complexity ladder (default 6 = full); a perf tool
+ *   AMB_DEBUG             per-stage peak/HF probe, printed from on_ui (core0)
+ *   AMB_BYPASS           skip the chain (synth -> out) to isolate FX vs I/O
  */
-#ifndef AMB_STAGE
-#define AMB_STAGE 5
-#endif
-
 #define PANEL_PAD_COLOR TEAL
 #define AMB_SR 32000.0
 #define FC_SOFT_CLIP            /* soft-limit the chain output (see full_chain.h) */
-/* Attenuate the Plinky synth before the chain: up to 8 polyphonic voices sum far
- * hotter than the plugin's single input, so without headroom multiple notes slam
- * the ceiling and alias. Tune if too quiet/hot. */
+/* Attenuate the Plinky synth before the chain: polyphonic voices sum hotter than
+ * the plugin's single input, so headroom avoids slamming the ceiling. Tune to taste. */
 #define AMB_IN_GAIN 0.35f
 
 enum { FX_ORBIT, FX_CONSTELLATE, FX_SATELLITE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
 struct ambiotica_panel : panel_t {
-#if AMB_STAGE >= 3
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0; reverb_t* reverb = 0;
     harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
     bool dsp_ok = false;
-    unsigned long psram_bytes = 0;
-#endif
-#if AMB_STAGE >= 2
+
     full_params fx;
     fc_state    st;
-    /* Reverb (~79 KB, 4-comb) lives here now, not PSRAM — its scattered
-     * delay-line access was ~10x slower in PSRAM and blew the core0 budget.
-     * Sized per chain level so low levels keep the panel object small. */
-#if AMB_CHAIN_LEVEL >= 2
-    /* One size for all L>=2 (L3 proved 88 KB fits the arena). L2/L3 = 4-comb
-     * reverb(79)+drift(6)=85 KB; L4+ = 3-comb reverb(62)+harmony 3v(14)+drift(6)
-     * =82 KB. Micro-loop/granular (L5/L6) stay in PSRAM, not this pool. */
+    /* Reverb + harmony + drift + bloom live here (fast SRAM) — the reverb's
+     * scattered delay-line access was too slow in PSRAM. ~82 KB used; fits the
+     * 128 KB panel arena. Looper/micro-loop/granular stay in PSRAM. */
     unsigned char sram_pool[88 * 1024];
-#else
-    unsigned char sram_pool[1 * 1024];     /* L0/L1: no SRAM DSP */
-#endif
+
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
     play_surface_t play;
     slider_t       fxslider[FX_N];
@@ -80,20 +56,16 @@ struct ambiotica_panel : panel_t {
         dbg_hf[idx] = (int)(1000.f * dif / (sq + 1e-9f));   /* HF metric x1000 */
     }
 #endif
-#endif
 
     void setup_default_panel_state() override {
-#if AMB_STAGE >= 2
         fx_val[FX_ORBIT] = 48; fx_val[FX_CONSTELLATE] = 48; fx_val[FX_SATELLITE] = 32;
         fx_val[FX_TAIL] = 76; fx_val[FX_FLUX] = 40; fx_val[FX_SPECTRA] = 64; fx_val[FX_MIX] = 90;
         memset(&fx, 0, sizeof fx);
         fx.bpm = 120.f; fx.loop_length_bars = 2.f; fx.key = 0; fx.chord = 0; fx.bloom = 0.4f;
         push_fx_from_ui();
-#endif
-#if AMB_STAGE >= 3
+
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
-        psram_bytes = (unsigned long) g_amb_ps_cap;
         const int sr = (int) AMB_SR;
         const int loopcap = 32 * sr;
         const bool ps = g_amb_ps_cap >= (size_t) 4 * 1024 * 1024;   /* looper 4 MB (+ big modules at high levels) */
@@ -139,10 +111,8 @@ struct ambiotica_panel : panel_t {
         dsp_ok = dsp_ok && granular;
 #endif
         fc_init(&st, 0.7f);
-#endif
     }
 
-#if AMB_STAGE >= 2
     void push_fx_from_ui() {
         /* Mirrors the plugin's MacroMap.h::deriveStages exactly — same curves and
          * knob DIRECTIONS — so each control behaves identically (timbre aside). */
@@ -168,9 +138,7 @@ struct ambiotica_panel : panel_t {
         fx.micro_bars       = 0.125f + 1.875f * (1.f - sat);  /* Satellite: micro length, REVERSED */
         fx.mix              = fx_val[FX_MIX] / 127.f;          /* Mix: dry/wet */
     }
-#endif
 
-#if AMB_STAGE >= 4
     static void note_cb(void* user, int voice, int note, unsigned char vel, finger_t f) {
         ambiotica_panel* self = (ambiotica_panel*)user;
         if (voice < 0 || voice >= 16) return;
@@ -195,25 +163,10 @@ struct ambiotica_panel : panel_t {
         if (b < 0) b = 0; if (b > 255) b = 255;
         return (unsigned char)b;
     }
-#endif
 
     void on_ui(int dt_us) override {
         (void)dt_us;
         leds_clear();
-
-#if AMB_STAGE == 1
-        for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++)
-            set_led(x, y, ((x + y) & 1) ? TEAL : DIMMEST(TEAL));
-#elif AMB_STAGE == 2
-        for (int y = 0; y < 16; y++) for (int x = 0; x < 16; x++)
-            set_led(x, y, ((x + y) & 1) ? BLUE : DIMMEST(BLUE));
-#elif AMB_STAGE == 3
-        uint32_t c = dsp_ok ? GREEN : RED;
-        for (int y = 0; y < 15; y++) for (int x = 0; x < 16; x++)
-            set_led(x, y, ((x + y) & 1) ? c : DIMMEST(c));
-        int mb = (int)(psram_bytes / (1024 * 1024));   /* PSRAM size as a bottom-row bar */
-        for (int x = 0; x < 16; x++) set_led(x, 15, x < mb ? WHITE : DIMMEST(WHITE));
-#else   /* stages 4 and 5: real UI */
         frame_ctr++;
 #ifdef AMB_DEBUG
         /* print per-stage metrics from core0 (~2x/sec). hf x1000: clean ~4-20;
@@ -252,10 +205,8 @@ struct ambiotica_panel : panel_t {
                 set_led(15, y, (y == row) ? fade_col(WHITE, 120 + (int)(viz_out * 130.f))
                                           : (y == 0 ? DIMMEST(TEAL) : 0));
         }
-#endif
     }
 
-#if AMB_STAGE >= 5
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
      * we run Ambiotica on its dry stereo bus, write final int16 to audiobuf_out,
      * and return true to own the output (bypass the built-in FX — Ambiotica IS
@@ -326,12 +277,9 @@ struct ambiotica_panel : panel_t {
         viz_loop += BLOCK_SIZE; if (viz_loop >= (unsigned)llen) viz_loop -= (unsigned)llen;
         return true;
     }
-#endif
 
-#if AMB_STAGE >= 2
     bool on_serialise(serialiser_t& s, int version) override {
-        /* TODO (VERIFY): persist fx_val[], synth_preset, fx.key/chord via save_and_load.h field macros */
+        /* TODO: persist fx_val[], synth_preset, fx.key/chord via save_and_load.h field macros */
         return panel_t::on_serialise(s, version);
     }
-#endif
 };

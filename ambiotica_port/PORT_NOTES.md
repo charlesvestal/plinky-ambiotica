@@ -42,7 +42,7 @@ with margin). Overrun crackle gone.
 
 `harness/` compiles the vendored DSP with `calloc/malloc/free` redirected to an
 instrumented bump allocator, runs the validated chain wiring
-(`ambiotica_chain.h`: looper→granular shimmer-crossfade ∥ microloop → reverb,
+(`harness/full_chain.h`: looper→granular shimmer-crossfade ∥ microloop → reverb,
 mix-smoothed) at **32 kHz** in blocks, feeds four decaying-sine plucks, and
 writes `out.wav` + a memory map.
 
@@ -119,5 +119,5 @@ reverb-in-PSRAM CPU cost.
 - PSRAM scattered-access performance for granular (only measurable on-device).
 - Real RP2350 CPU headroom (desktop 239× realtime is not predictive).
 - Chain currently omits bloom / drift / harmony(Spectra) / Gravity — add after core fits.
-- Process scratch buffers in `ambiotica_chain.h` are ~14 KB of stack; on Plinky
+- Process scratch buffers in `harness/full_chain.h` are ~14 KB of stack; on Plinky
   (stack < ~200 B) these must become panel members / arena.
