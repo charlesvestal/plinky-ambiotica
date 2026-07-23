@@ -107,15 +107,16 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
  * out, and stay in float [-1,1]. The *_q7/q8 mappings + shimmer are the tunables. */
 static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
                               float* outL, float* outR, int n, const full_params* p) {
-    /* reverb_size_q7 IS the reverb's decay/feedback (device debug: with all fb
-     * params at 0, the tail still built to the ceiling — size was the culprit).
-     * ~100/127 = near-freeze. Keep it LOW so the tail decays; Tail scales it in a
-     * safe range. TUNABLE — raise the ceiling once we hear a clean decaying tail. */
-    int size_q7 = 8 + (int)(p->decay * 30.0f);   /* ~8..38 (was 48..120 = infinite) */
+    /* Room size from Tail. (Feedback/shimmer come from the mix preset resolved by
+     * the do_fx warmup in the panel — shimmer is zeroed there.) */
+    int size_q7 = 20 + (int)(p->decay * 70.0f);   /* ~20..90 (TUNABLE) */
     if (size_q7 < 0) size_q7 = 0; if (size_q7 > 127) size_q7 = 127;
     reverb_extra_fb_gain_q8 = 0;
     reverb_extra_shimmer    = 0;
-    const float kIn = 32767.0f, kOut = 1.0f / 32768.0f;
+    /* do_reverb expects a SEND-level input (stock reverbsend ~= mono*reverb_send>>8,
+     * ~1/10 full scale); feeding full-scale ±32767 slammed the ceiling. Attenuate
+     * in; scale out with makeup. Both TUNABLE via the debug REVLVL readout. */
+    const float kIn = 3000.0f, kOut = 1.0f / 32768.0f;
     float rawmax = 0.f;
     for (int i = 0; i < n; i += 2) {
         float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
