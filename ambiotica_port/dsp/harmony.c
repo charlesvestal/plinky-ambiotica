@@ -53,12 +53,12 @@ harmony_t* harmony_create(double sample_rate) {
     h->amount_a = 1.0f - expf(-1.0f / (0.020f * (float) h->sr));     /* ~20 ms */
     h->fb       = 0.995f;           /* default ring length (see harmony_set_ring) */
 #ifdef AMB_BUILTIN_REVERB
-    /* Port: the panel's mix has less headroom than the plugin's host chain, and the
-     * high-Q resonators ring near saturation, so at og=1.25 the chord slammed the
-     * output once Spectra passed ~0.37 ("clips above the 6th LED"). 0.45 keeps the
-     * whole Spectra range clip-free; the octave-up revoicing keeps it audible, and
-     * col-15 / Mix bring the level up. */
-    h->out_gain = 0.45f;
+    /* Port: measured (harm2 vs the revoiced C3..G3 chord) — at a typical wet (RMS
+     * ~0.10) the chord is proportional, NOT saturated, so it's simply under-level:
+     * 0.45 left the chord peak ~0.12 (buried under the wash), while 1.25 clipped the
+     * output above Spectra ~0.37. 0.8 lifts the chord to ~0.22 (clearly audible) and
+     * only soft-limits near max Spectra+Tail. */
+    h->out_gain = 0.8f;
 #else
     h->out_gain = 1.25f;            /* chord level in the wash (louder, ring stays finite) */
 #endif

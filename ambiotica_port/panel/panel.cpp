@@ -39,9 +39,8 @@ struct ambiotica_panel : panel_t {
     play_surface_t play;
     slider_t       fxslider[FX_N];
     unsigned char  fx_val[FX_N];
-    slider_t       fxslider15;                 /* TEMP col-15: master output gain (to audition levels) */
-    unsigned char  fx_val15 = 32;              /* 32 -> 1.0x */
-    float          out_gain15 = 1.0f;          /* read in on_dsp (core1) */
+    slider_t       fxslider15;                 /* col-15: bipolar Gravity(up)/Drain(down) */
+    unsigned char  fx_val15 = 64;              /* 64 = centre / neutral */
     int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
     int            chord_type = 0;             /* 0..4 = min/maj/sus4/5th/oct (right buttons) */
     int            synth_preset = 0;
@@ -97,6 +96,7 @@ struct ambiotica_panel : panel_t {
         fx_val[FX_TAIL] = 76; fx_val[FX_FLUX] = 40; fx_val[FX_SPECTRA] = 64; fx_val[FX_MIX] = 90;
         memset(&fx, 0, sizeof fx);
         fx.bpm = 120.f; fx.loop_length_bars = 2.f; fx.key = 0; fx.chord = 0; fx.bloom = 0.4f;
+        fx.gravity = 0.f; fx.horizon = 1.f;   /* neutral: no gravity, full sustain */
         push_fx_from_ui();
         fx_sm = fx;   /* start the smoother at the target so nothing ramps up from 0 on boot */
 
@@ -278,11 +278,17 @@ struct ambiotica_panel : panel_t {
         }
         push_fx_from_ui();
 
-        /* TEMP col-15: a master output gain to audition levels (0..~4x, 32 = 1.0x). */
+        /* col-15: bipolar Gravity / Event-Horizon. Centre (64) = neutral; UP engages
+           Gravity (a slow tremolo "collapse into the drone"); DOWN drains the engine
+           via Event Horizon (empties the loop/micro buffers + ducks the wet). Colour
+           reads GREEN above centre (gravity) / RED below (drain). */
+        int gd = (int)fx_val15 - 64;
         fxslider15.simple_slider(15, 0, 16, VERTICAL | SHOW_STEM,
-                                 fade_col(palette[8][7], 256), 0, 127, fx_val15, "Gain");
+                                 fade_col(gd >= 0 ? GREEN : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
-        out_gain15 = fx_val15 / 32.0f;
+        gd = (int)fx_val15 - 64;
+        fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
+        fx.horizon = gd < 0 ? (float)fx_val15 / 64.f : 1.f;    /* down -> horizon 1..0 (drain) */
     }
 
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
@@ -355,6 +361,7 @@ struct ambiotica_panel : panel_t {
         AMB_SM(mix); AMB_SM(loop_layer); AMB_SM(grain_size); AMB_SM(scatter);
         AMB_SM(micro_hold); AMB_SM(decay); AMB_SM(mod_depth); AMB_SM(mod_rate);
         AMB_SM(bloom); AMB_SM(drift_amt); AMB_SM(spectra); AMB_SM(ring);
+        AMB_SM(gravity); AMB_SM(horizon);
         #undef AMB_SM
         fx_sm.loop_length_bars = fx.loop_length_bars; fx_sm.micro_bars = fx.micro_bars;
         fx_sm.bpm = fx.bpm; fx_sm.key = fx.key; fx_sm.chord = fx.chord;
@@ -371,9 +378,8 @@ struct ambiotica_panel : panel_t {
         dbg_measure(4, st.wetL);   /* reverb + Spectra     */
         dbg_measure(5, oL);        /* final               */
 #endif
-        const float og15 = out_gain15;                       /* TEMP col-15 master gain */
         for (int i = 0; i < BLOCK_SIZE; i++) {
-            int l = (int)(oL[i] * og15 * 32767.0f), r = (int)(oR[i] * og15 * 32767.0f);
+            int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);
             audiobuf_out[2*i]   = (int16_t)(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
             audiobuf_out[2*i+1] = (int16_t)(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
         }

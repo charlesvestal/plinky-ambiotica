@@ -113,6 +113,7 @@ int main(void) {
     p.micro_hold = 0.3f; p.decay = 0.6f; p.mod_depth = 0.3f; p.mod_rate = 0.4f;
     p.bloom = 0.5f; p.drift_amt = 0.3f; p.spectra = 0.6f; p.ring = 0.5f;
     p.loop_length_bars = 2.0f; p.micro_bars = 1.0f; p.bpm = 120.f; p.key = 0; p.chord = 0;   /* C minor */
+    p.gravity = 0.0f; p.horizon = 1.0f;   /* horizon 1 = full sustain (0 would drain the loop) */
 
     clock_t t0 = clock();
     fc_render(l, g, m, r, h, b, d, &p, SR, inL, inR, outL, outR, TOTAL);
