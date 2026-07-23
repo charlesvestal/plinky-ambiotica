@@ -49,6 +49,31 @@ jobs:
             --notes "Auto-generated single-file Plinky panel — drop into the Plinky web IDE. Rebuilt on every push to \`main\`." \
           || gh release upload latest ambiotica_port/panel/plinky_ambiotica.cpp --clobber
 
+      # Browser-viewable copy on a `dist` branch. Release assets force a download
+      # (Content-Disposition: attachment); a file on a ref renders inline via the
+      # blob view / raw.githubusercontent.com. Kept off `main` so build output
+      # never clutters the source tree. Force-pushed as a single fresh commit.
+      - name: Publish viewable copy to dist branch
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tmp="$(mktemp -d)"
+          cp ambiotica_port/panel/plinky_ambiotica.cpp "$tmp/plinky_ambiotica.cpp"
+          printf '%s\n' \
+            "dist branch: generated artifact only." \
+            "" \
+            "plinky_ambiotica.cpp is the single-file Plinky panel, auto-generated" \
+            "from the sources on main. View it here in the browser; do not edit." \
+            "Rebuilt on every push to main." > "$tmp/README.md"
+          cd "$tmp"
+          git init -q -b dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add plinky_ambiotica.cpp README.md
+          git commit -q -m "dist: plinky_ambiotica.cpp @ ${GITHUB_SHA:0:7}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" dist
+
       # Versioned release when a v* tag is pushed.
       - name: Publish tagged release
         if: startsWith(github.ref, 'refs/tags/v')
