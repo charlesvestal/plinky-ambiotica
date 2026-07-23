@@ -188,7 +188,8 @@ struct ambiotica_panel : panel_t {
         if (voice < 0 || voice >= 16) return;
         unsigned short bit = (unsigned short)(1u << voice);
         bool is_new = (self->voices_active & bit) == 0;
-        play_synth(voice, self->synth_preset, (int)vel, note << 8, is_new);
+        int pnote = note - 24; if (pnote < 0) pnote = 0;   /* play surface 2 octaves lower */
+        play_synth(voice, self->synth_preset, (int)vel, pnote << 8, is_new);
         self->voices_seen |= bit;
         (void)f;
     }

@@ -122,7 +122,11 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
     /* do_reverb expects a SEND-level input (stock reverbsend ~= mono*reverb_send>>8,
      * ~1/10 full scale); feeding full-scale ±32767 slammed the ceiling. Attenuate
      * in; scale out with makeup. Both TUNABLE via the debug REVLVL readout. */
-    const float kIn = 3000.0f, kOut = 2.5f / 32768.0f;   /* +makeup: wet was ~0.05-0.13, aim ~0.15-0.35 */
+    /* kOut sets the wet level. The Spectra harmony resonators (fb up to 0.993, Q~143)
+     * saturate and "blow out" once the wet feeding them exceeds ~0.15 RMS (measured
+     * against the plugin's own harmony.c) — so keep the wet peak ~0.30 (RMS ~0.10),
+     * comfortably under that, which also tracks the plugin's reverb-send level. */
+    const float kIn = 3000.0f, kOut = 1.6f / 32768.0f;
     float rawmax = 0.f;
     for (int i = 0; i < n; i += 2) {
         float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
