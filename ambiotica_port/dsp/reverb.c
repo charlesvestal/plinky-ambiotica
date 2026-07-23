@@ -147,7 +147,13 @@ reverb_t* reverb_create(double sample_rate) {
     }
 
     /* Time-based coefficients scaled to the host rate. */
-    r->mod_depth_max = amb_scale_samples_f(45.0, sr);
+    /* Per-comb swing scaled DOWN for the port's reduced comb count. With the
+     * plugin's 8 combs the ±45-sample flutter averages into smooth movement;
+     * with only R_COMB (3 in the full panel) it stays exposed as audible pitch
+     * drift ("falling") under deep Flux — the "broken piano" mode above. Scale
+     * by sqrt(R_COMB/8) to keep the flutter-vs-shimmer ratio near the plugin's
+     * at any comb count (auto-rises back to 45 if combs are restored). */
+    r->mod_depth_max = amb_scale_samples_f(45.0 * sqrtf((float) R_COMB / 8.0f), sr);
     r->hp_a    = amb_scale_onepole(R_HPF_LP_COEF, sr);
     r->smooth_c = amb_scale_onepole(R_SMOOTH_COEF, sr);
     r->fb_target = 0.78f;
