@@ -108,7 +108,13 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
                                                          floor so the pitched (oct/5th) grains
                                                          blend as an in-key bed, not exposed blips */
     const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
-    const float dcIC = 0.005f, fbIC = 0.02f;
+    /* One-pole coefficients from the plugin's cutoffs, at the host rate. These
+     * were hardcoded (0.005 / 0.02 ≈ 25 Hz / 103 Hz); the regen LP at ~103 Hz
+     * instead of the plugin's 2500 Hz fed back a near-sub-bass-only tail, so the
+     * Drift-regen wash spiralled DOWN in pitch (the "falling" heard with Flux up
+     * — absent in the plugin). Match the plugin: 5 Hz DC blocker, 2500 Hz regen LP. */
+    const float dcIC = 1.0f - expf(-6.2831853f *    5.0f / (float) sr);
+    const float fbIC = 1.0f - expf(-6.2831853f * 2500.0f / (float) sr);
 
     /* Only re-push params (incl. the powf chord build + expf mod rate) when they
      * actually change — otherwise the audio thread wastes transcendentals every

@@ -22,7 +22,8 @@ struct drift_s {
 
     float  phase_l, phase_r;       /* 0..1 LFO phases            */
     float  inc_l,   inc_r;         /* per-sample phase increment */
-    float  center;                 /* max nominal delay (samples) */
+    float  center;                 /* max nominal delay (samples, rate-scaled) */
+    float  depth_max;              /* peak mod swing (samples, rate-scaled)    */
     float  amount_target;          /* knob target (0..1)         */
     float  amount_sm;              /* per-sample smoothed amount  */
     float  amount_a;               /* smoothing coef (~30 ms)    */
@@ -33,8 +34,15 @@ drift_t* drift_create(double sample_rate) {
     if (!d) return NULL;
     d->sr = sample_rate > 0.0 ? sample_rate : 44100.0;
 
-    d->center  = DRIFT_DEPTH_MAX + DRIFT_CENTER_PAD;
-    d->buf_len = (int) (2.0f * d->center + 4.0f);
+    /* DRIFT_DEPTH_MAX / _PAD are SAMPLES at 44.1 kHz; scale to the host rate so
+     * the pitch "wow" is time-constant across sample rates. Without this the
+     * 380-sample swing is ~50% DEEPER at Plinky's 32 kHz than in the plugin
+     * (a stronger Flux wobble on the sustained wash/chord). The LFO rate is
+     * already in Hz (inc = RATE/sr), so only the depth needs scaling. */
+    const float rk = (float) (d->sr / 44100.0);
+    d->depth_max = DRIFT_DEPTH_MAX * rk;
+    d->center    = d->depth_max + DRIFT_CENTER_PAD * rk;
+    d->buf_len   = (int) (2.0f * d->center + 4.0f);
 
     d->buf_l = (float*) calloc((size_t) d->buf_len, sizeof(float));
     d->buf_r = (float*) calloc((size_t) d->buf_len, sizeof(float));
@@ -99,6 +107,7 @@ void drift_process(drift_t *d,
     float pl = d->phase_l, pr = d->phase_r;
     const float il = d->inc_l, ir = d->inc_r;
     const float center = d->center;
+    const float dm = d->depth_max;
     float a = d->amount_sm;
     const float aa = d->amount_a, at = d->amount_target;
 
@@ -113,8 +122,8 @@ void drift_process(drift_t *d,
          * bypass click and no comb at low settings. */
         float ml = fast_sinf(DRIFT_TWO_PI * pl);
         float mr = fast_sinf(DRIFT_TWO_PI * pr);
-        float dlyL = center * a + DRIFT_DEPTH_MAX * a * ml;
-        float dlyR = center * a + DRIFT_DEPTH_MAX * a * mr;
+        float dlyL = center * a + dm * a * ml;
+        float dlyR = center * a + dm * a * mr;
         if (dlyL < 0.0f) dlyL = 0.0f;
         if (dlyR < 0.0f) dlyR = 0.0f;
 
