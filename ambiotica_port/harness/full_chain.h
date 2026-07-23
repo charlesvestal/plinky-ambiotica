@@ -292,14 +292,19 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     for (int i = 0; i < n; i++) { st->wetL[i] = st->rinL[i]; st->wetR[i] = st->rinR[i]; }
 #endif
     STG(3);   /* reverb (Dattorro) */
-#if AMB_CHAIN_LEVEL >= 4
-    harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* Spectra on reverb tail */
-#endif
-    if (horizonClear > 0.001f) {                 /* Event Horizon ducks the wet+chord wash (1..0.15) */
+    if (horizonClear > 0.001f) {                 /* Event Horizon ducks the reverb wash (1..0.15) */
         float wetTailGain = 1.0f - 0.85f * horizonClear;
         for (int i = 0; i < n; i++) { st->wetL[i] *= wetTailGain; st->wetR[i] *= wetTailGain; }
     }
+    /* Drift-regen tap = PRE-harmony wet (reverb wash only). The plugin taps POST-harmony
+     * so the in-key chord recirculates; with the port's hotter Dattorro that becomes a
+     * TUNED feedback runaway at the chord pitches — the "feedback that changes when you
+     * change chords". Stashing the pre-chord wash keeps grains/reverb roughly in key
+     * without the chord feeding its own excitation. */
     for (int i = 0; i < n; i++) { st->revFbL[i] = st->wetL[i]; st->revFbR[i] = st->wetR[i]; } st->revFbN = n;
+#if AMB_CHAIN_LEVEL >= 4
+    harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* add the chord (audible mix only) */
+#endif
     for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i];
                                   st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i]; }
     STG(4);   /* harmony (Spectra) */
