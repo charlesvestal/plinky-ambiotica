@@ -64,6 +64,20 @@ struct ambiotica_panel : panel_t {
     /* visualization taps — written in on_dsp (core1 audio), read in on_ui */
     float        viz_out = 0.f, viz_grain = 0.f;   /* output level, grain-firing activity */
     unsigned int viz_loop = 0, frame_ctr = 0;      /* loop-cycle sample counter, UI frame */
+
+#ifdef AMB_DEBUG
+    int dbg_ctr = 0;
+    static void dbg_stage(const char* name, const float* b) {
+        float pk = 0.f, sq = 0.f, dif = 0.f;
+        for (int i = 0; i < BLOCK_SIZE; i++) {
+            float x = b[i]; float a = x < 0 ? -x : x; if (a > pk) pk = a;
+            sq += x * x;
+            if (i) { float dd = b[i] - b[i-1]; dif += dd * dd; }
+        }
+        int hf = (int)(1000.f * dif / (sq + 1e-9f));   /* HF metric x1000 */
+        printf("%s pk=%d/1000 hf=%d\n", name, (int)(pk * 1000.f), hf);
+    }
+#endif
 #endif
 
     void setup_default_panel_state() override {
@@ -268,6 +282,23 @@ struct ambiotica_panel : panel_t {
         }
         fc_render_block(&st, looper, granular, microloop, reverb, harmony, bloom, drift,
                         &fx, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
+
+#ifdef AMB_DEBUG
+        /* Per-stage probe: peak + HF metric (mean squared first-difference /
+         * mean square; higher = more HF/fizz). Printed ~2x/sec so we can see
+         * WHICH stage injects the fizz. Reads fc_state's intermediate buffers. */
+        dbg_ctr++;
+        if (dbg_ctr >= 250) {
+            dbg_ctr = 0;
+            dbg_stage("src ", st.srcL);   /* input + drift regen  */
+            dbg_stage("loop", st.loopL);  /* looper               */
+            dbg_stage("gran", st.granL);  /* granular             */
+            dbg_stage("mic ", st.micL);   /* micro-loop           */
+            dbg_stage("wet ", st.wetL);   /* reverb + Spectra      */
+            dbg_stage("out ", oL);        /* final                */
+            printf("----\n");
+        }
+#endif
         for (int i = 0; i < BLOCK_SIZE; i++) {
             int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);
             audiobuf_out[2*i]   = (int16_t)(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
