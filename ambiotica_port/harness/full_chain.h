@@ -53,7 +53,6 @@ typedef struct {
     full_params last_pushed;   /* memoize: only re-push params when they change */
     int have_pushed;
     float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
-    float br_size;             /* built-in reverb: per-sample-smoothed room size (declick Tail) */
     float br_peak;             /* DEBUG: raw do_reverb wet peak (pre-clamp) this block */
 } fc_state;
 
@@ -108,16 +107,18 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
  * out, and stay in float [-1,1]. The *_q7/q8 mappings + shimmer are the tunables. */
 static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
                               float* outL, float* outR, int n, const full_params* p) {
-    /* Room size from Tail. (Feedback/shimmer come from the mix preset resolved by
-     * the do_fx warmup in the panel — shimmer is zeroed there.) The modal reverb
-     * this replaced smoothed its decay per-sample (reverb.c fb_current); do_reverb
-     * takes a raw size each call, so a Tail move would step the room size and click.
-     * Smooth it per-sample here to restore that de-click. */
-    float size_target = 20.0f + p->decay * 70.0f;   /* ~20..90 (TUNABLE) */
-    if (size_target < 0.f) size_target = 0.f; else if (size_target > 127.f) size_target = 127.f;
-    if (st->br_size <= 0.f) st->br_size = size_target;         /* init on first block */
-    const float size_sc = 0.002f;   /* ~30 ms one-pole at the 16 kHz half-rate iter */
-    reverb_extra_fb_gain_q8 = 0;
+    /* Tail -> reverb TAIL LENGTH, matched to the plugin. Measured in the Plinky sim
+     * (do_reverb RT60): size_q7 alone only spans ~0.6..2 s, but the tail is really
+     * governed by feedback. Base FEEDBACK=12 (mix preset, resolved by the do_fx
+     * warmup) gives ~1.2 s at Tail=0 (plugin ~1.34 s); reverb_extra_fb_gain_q8 0..240
+     * then extends RT60 to ~5.6 s (all finite, no runaway), covering the plugin's
+     * ~1.3..5 s across most of the Tail range. Room size is fixed; the ^0.8 curve
+     * fits the plugin's accelerating RT60(Tail). Tail is fed pre-smoothed (fx_sm),
+     * and the fb step is <1/255 per block, so no click. */
+    const int size_q7 = 60;
+    float tail01 = (p->decay - 0.30f) * (1.0f / 0.70f);   /* undo Tail->decay map to 0..1 */
+    if (tail01 < 0.f) tail01 = 0.f; else if (tail01 > 1.f) tail01 = 1.f;
+    reverb_extra_fb_gain_q8 = (int)(240.0f * powf(tail01, 0.8f) + 0.5f);
     reverb_extra_shimmer    = 0;
     /* do_reverb expects a SEND-level input (stock reverbsend ~= mono*reverb_send>>8,
      * ~1/10 full scale); feeding full-scale ±32767 slammed the ceiling. Attenuate
@@ -133,8 +134,6 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
         float dR = 0.5f * (inR[i] + (i + 1 < n ? inR[i + 1] : inR[i]));
         float cl = dL < -1.f ? -1.f : dL > 1.f ? 1.f : dL;
         float cr = dR < -1.f ? -1.f : dR > 1.f ? 1.f : dR;
-        st->br_size += size_sc * (size_target - st->br_size);
-        int size_q7 = (int)(st->br_size + 0.5f);
         int wl = 0, wr = 0;
         do_reverb((int)(cl * kIn), (int)(cr * kIn), size_q7, &wl, &wr);   /* accumulates */
         float wL = (float)wl * kOut, wR = (float)wr * kOut;
