@@ -18,6 +18,26 @@
 
 enum { FX_ORBIT, FX_CONSTELLATE, FX_SATELLITE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
+/* PROBE: the native reverb's shimmer/feedback are configured via internal globals
+ * (do_fx sets them from the mix preset). They're static/unnamed in the shipped
+ * binary, but Plinky 12 may keep some as non-static C globals we can link. Try the
+ * original-firmware names + variants as WEAK externs — undefined ones resolve to
+ * null (no link error), so we can probe the whole list in ONE build, print which
+ * exist, and zero the shimmer/feedback to kill the stuck-on octave cascade. */
+extern "C" {
+    extern int k_reverb_shim         __attribute__((weak));
+    extern int k_reverb_fade         __attribute__((weak));
+    extern int k_reverb_wob          __attribute__((weak));
+    extern int reverb_shimmer        __attribute__((weak));
+    extern int reverb_shim           __attribute__((weak));
+    extern int reverb_fade           __attribute__((weak));
+    extern int reverb_feedback       __attribute__((weak));
+    extern int reverb_fb             __attribute__((weak));
+    extern int reverb_shimmer_amount __attribute__((weak));
+    extern int reverb_fb_gain_q8     __attribute__((weak));
+    extern int reverb_size_q7_global __attribute__((weak));
+}
+
 struct ambiotica_panel : panel_t {
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0; reverb_t* reverb = 0;
     harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
@@ -195,6 +215,12 @@ struct ambiotica_panel : panel_t {
     void on_ui(int dt_us) override {
         leds_clear();
         frame_ctr++;
+        if (frame_ctr == 60) {   /* once: which reverb config globals actually linked? (nonzero addr = exists) */
+            printf("REVGLOB shim: k_reverb_shim=%p reverb_shimmer=%p reverb_shim=%p reverb_shimmer_amount=%p\n",
+                   (void*)&k_reverb_shim, (void*)&reverb_shimmer, (void*)&reverb_shim, (void*)&reverb_shimmer_amount);
+            printf("REVGLOB fade: k_reverb_fade=%p reverb_fade=%p reverb_feedback=%p reverb_fb=%p fb_gain_q8=%p\n",
+                   (void*)&k_reverb_fade, (void*)&reverb_fade, (void*)&reverb_feedback, (void*)&reverb_fb, (void*)&reverb_fb_gain_q8);
+        }
 #ifdef AMB_DEBUG
         /* print per-stage metrics from core0 (~2x/sec). hf x1000: clean ~4-20;
          * the first stage that spikes is where the fizz is injected. */
@@ -269,6 +295,14 @@ struct ambiotica_panel : panel_t {
     bool on_dsp(const int16_t* audiobuf_in, int16_t* audiobuf_out,
                 mix_buffers_t* mix_buffers_out) override {
         panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);   /* render synth -> dry */
+
+#ifdef AMB_BUILTIN_REVERB
+        /* PROBE: kill the reverb's shimmer + feedback config globals (whichever linked). */
+        #define RVZERO(g) do { if (&g) (g) = 0; } while (0)
+        RVZERO(k_reverb_shim); RVZERO(reverb_shimmer); RVZERO(reverb_shim); RVZERO(reverb_shimmer_amount);
+        RVZERO(k_reverb_fade); RVZERO(reverb_fade); RVZERO(reverb_feedback); RVZERO(reverb_fb); RVZERO(reverb_fb_gain_q8);
+        #undef RVZERO
+#endif
 
 #ifdef AMB_BYPASS
         /* DIAGNOSTIC: skip the entire Ambiotica chain — just pass the synth's dry
