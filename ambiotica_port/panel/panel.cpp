@@ -39,6 +39,9 @@ struct ambiotica_panel : panel_t {
     play_surface_t play;
     slider_t       fxslider[FX_N];
     unsigned char  fx_val[FX_N];
+    slider_t       fxslider15;                 /* TEMP col-15: master output gain (to audition levels) */
+    unsigned char  fx_val15 = 32;              /* 32 -> 1.0x */
+    float          out_gain15 = 1.0f;          /* read in on_dsp (core1) */
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
     int            reverb_warmup = 0;   /* native-reverb: do_fx warmup blocks done */
@@ -188,7 +191,7 @@ struct ambiotica_panel : panel_t {
         if (voice < 0 || voice >= 16) return;
         unsigned short bit = (unsigned short)(1u << voice);
         bool is_new = (self->voices_active & bit) == 0;
-        int pnote = note - 24; if (pnote < 0) pnote = 0;   /* play surface 2 octaves lower */
+        int pnote = note - 12; if (pnote < 0) pnote = 0;   /* play surface 1 octave lower */
         play_synth(voice, self->synth_preset, (int)vel, pnote << 8, is_new);
         self->voices_seen |= bit;
         (void)f;
@@ -267,7 +270,12 @@ struct ambiotica_panel : panel_t {
             }
         }
         push_fx_from_ui();
-        /* col 15 is intentionally blank for now (to be repurposed later). */
+
+        /* TEMP col-15: a master output gain to audition levels (0..~4x, 32 = 1.0x). */
+        fxslider15.simple_slider(15, 0, 16, VERTICAL | SHOW_STEM,
+                                 fade_col(palette[8][7], 256), 0, 127, fx_val15, "Gain");
+        fx_val15 = (unsigned char)last_widget_new_value();
+        out_gain15 = fx_val15 / 32.0f;
     }
 
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
@@ -356,8 +364,9 @@ struct ambiotica_panel : panel_t {
         dbg_measure(4, st.wetL);   /* reverb + Spectra     */
         dbg_measure(5, oL);        /* final               */
 #endif
+        const float og15 = out_gain15;                       /* TEMP col-15 master gain */
         for (int i = 0; i < BLOCK_SIZE; i++) {
-            int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);
+            int l = (int)(oL[i] * og15 * 32767.0f), r = (int)(oR[i] * og15 * 32767.0f);
             audiobuf_out[2*i]   = (int16_t)(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
             audiobuf_out[2*i+1] = (int16_t)(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
         }

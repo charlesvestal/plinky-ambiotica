@@ -56,8 +56,17 @@ typedef struct {
     float br_peak;             /* DEBUG: raw do_reverb wet peak (pre-clamp) this block */
 } fc_state;
 
+/* 3-voice chord (reduced from the plugin's 5). The plugin's minor is
+ * {0,3,7,12,19} = C2 Eb2 G2 C3 G3 — the AUDIBLE character lives in the upper
+ * voices (C3/G3); the port used to keep the lowest {0,3,7} = C2 Eb2 G2, a
+ * sub-bass drone you feel but don't hear as a chord. Voice the 3 resonators one
+ * octave up so the full triad sits in an audible, lush register (C3..C5). */
 static const int FC_CHORD_SEMIS[5][4] = {
-    {0,3,7,-1}, {0,4,7,-1}, {0,5,7,-1}, {0,7,-1,-1}, {0,12,-1,-1}   /* min maj sus4 5th oct */
+    {12,15,19,-1},   /* min:  C3 Eb3 G3 */
+    {12,16,19,-1},   /* maj:  C3 E3  G3 */
+    {12,17,19,-1},   /* sus4: C3 F3  G3 */
+    {12,19,24,-1},   /* 5th:  C3 G3  C4 */
+    {12,24,36,-1}    /* oct:  C3 C4  C5 */
 };
 static int fc_build_chord(int key, int chord, float* out) {
     if (key < 0) key = 0; if (key > 11) key = 11;
@@ -118,7 +127,10 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
     const int size_q7 = 60;
     float tail01 = (p->decay - 0.30f) * (1.0f / 0.70f);   /* undo Tail->decay map to 0..1 */
     if (tail01 < 0.f) tail01 = 0.f; else if (tail01 > 1.f) tail01 = 1.f;
-    reverb_extra_fb_gain_q8 = (int)(240.0f * powf(tail01, 0.8f) + 0.5f);
+    /* Tail -> native feedback. Measured in the sim: extra_fb 0..255 @ size 60 gives
+     * RT60 ~1.2..7 s (finite, no runaway; raising the base mix FEEDBACK does NOT
+     * lengthen it, so extra_fb is the only lever). ^0.7 curve for longer mid tails. */
+    reverb_extra_fb_gain_q8 = (int)(255.0f * powf(tail01, 0.7f) + 0.5f);
     reverb_extra_shimmer    = 0;
     /* do_reverb expects a SEND-level input (stock reverbsend ~= mono*reverb_send>>8,
      * ~1/10 full scale); feeding full-scale ±32767 slammed the ceiling. Attenuate
