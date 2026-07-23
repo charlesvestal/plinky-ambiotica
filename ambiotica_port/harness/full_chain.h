@@ -38,6 +38,8 @@ typedef struct {
     float bloom, drift_amt, spectra, ring;      /* spectra = harmony amount */
     float loop_length_bars, micro_bars, bpm;    /* micro_bars = Satellite micro-loop length */
     int   key, chord;                            /* Spectra chord: 0..4 = min/maj/sus4/5th/oct */
+    float gravity;                               /* 0..1 slow tremolo "collapse" throb (post-mix) */
+    float horizon;                               /* Event Horizon: 1 = full sustain, <1 drains loop/micro/wet */
 } full_params;
 
 /* Persistent + scratch state. Zero-init then set mixCur = params.mix. */
@@ -54,6 +56,7 @@ typedef struct {
     int have_pushed;
     float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
     float br_peak;             /* DEBUG: raw do_reverb wet peak (pre-clamp) this block */
+    float gravPhase;           /* Gravity tremolo LFO phase */
 } fc_state;
 
 /* 3-voice chord (reduced from the plugin's 5). The plugin's minor is
@@ -190,6 +193,18 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         st->have_pushed = 1;
     }
 
+    /* Event Horizon: horizon 1 = full sustain; lower actively DRAINS the loop + micro
+     * buffers to empty them (a global "let go"), gated to the lower ~40% so a partial
+     * setting gives a STABLE shorter wash, not a slow fade to silence. Mirrors the
+     * plugin; the wet tail is also ducked after harmony below. */
+    const float horizonClear = p->horizon >= 1.0f ? 0.0f : 1.0f - p->horizon;   /* 0..1 */
+    if (horizonClear > 0.60f) {
+        float leakClear = (horizonClear - 0.60f) * (1.0f / 0.40f);   /* 0..1 across the lower 40% */
+        float leak = expf(-leakClear * ((float) n / (float) sr) / 0.25f);   /* ~0.25 s tau at full clear */
+        looper_leak(l, leak);
+        microloop_leak(m, leak);
+    }
+
     for (int i = 0; i < n; i++) {                        /* DC block */
         st->dcL += dcIC * (in_l[i] - st->dcL); st->dcR += dcIC * (in_r[i] - st->dcR);
         st->dryL[i] = in_l[i] - st->dcL; st->dryR[i] = in_r[i] - st->dcR;
@@ -239,6 +254,10 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #if AMB_CHAIN_LEVEL >= 4
     harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* Spectra on reverb tail */
 #endif
+    if (horizonClear > 0.001f) {                 /* Event Horizon ducks the wet+chord wash (1..0.15) */
+        float wetTailGain = 1.0f - 0.85f * horizonClear;
+        for (int i = 0; i < n; i++) { st->wetL[i] *= wetTailGain; st->wetR[i] *= wetTailGain; }
+    }
     for (int i = 0; i < n; i++) { st->revFbL[i] = st->wetL[i]; st->revFbR[i] = st->wetR[i]; } st->revFbN = n;
     for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i];
                                   st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i]; }
@@ -247,9 +266,20 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #endif
 
     const float c = 0.9989f, ic = 1.0f - c; float mm = st->mixCur;
+    /* Gravity: a slow ~0.30 Hz tremolo throb (post-mix) so the "collapse into the
+     * drone" is felt, not just heard. depth 0..0.40 with Gravity. Mirrors plugin. */
+    const float gravAmt   = p->gravity < 0.f ? 0.f : (p->gravity > 1.f ? 1.f : p->gravity);
+    const float tremInc   = 6.2831853f * 0.30f / (float) sr;
+    const float tremDepth = 0.40f * gravAmt;
+    float gph = st->gravPhase;
     for (int i = 0; i < n; i++) {
         mm = c * mm + ic * p->mix; float dg = 1.0f - mm;
         float lv = dg * st->dryL[i] + mm * st->wbL[i], rv = dg * st->dryR[i] + mm * st->wbR[i];
+        if (gravAmt > 0.001f) {                          /* tremolo throb */
+            gph += tremInc; if (gph > 6.2831853f) gph -= 6.2831853f;
+            float trem = 1.0f - tremDepth * (0.5f - 0.5f * fast_cosf(gph));
+            lv *= trem; rv *= trem;
+        }
 #ifdef FC_SOFT_CLIP
         /* graceful saturation instead of harsh hard-clip — hot polyphonic input
          * (many Plinky synth voices) would otherwise slam the ±1 ceiling and
@@ -264,6 +294,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         out_l[i] = lv; out_r[i] = rv;
     }
     st->mixCur = mm;
+    st->gravPhase = gph;
 }
 
 /* Harness convenience: render `total` frames in FC_BLK chunks (one fc_state). */
