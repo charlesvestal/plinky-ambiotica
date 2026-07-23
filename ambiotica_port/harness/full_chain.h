@@ -88,11 +88,14 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
     double bpm = p->bpm > 0 ? p->bpm : 120.0;
     float bars = p->loop_length_bars; if (bars < 0.5f) bars = 0.5f; if (bars > 8) bars = 8;
     looper_set_loop_len(l, (int)(bars * FC_BEATS_PER_BAR * 60.0f / bpm * sr));
-    looper_set_layer(l, p->loop_layer);
+    /* Event Horizon cheap drain: pull loop + micro feedback down with horizon so the
+     * buffers decay (a "let go") without the plugin's per-block full-buffer scan. */
+    float sustain = p->horizon >= 1.0f ? 1.0f : (p->horizon < 0.f ? 0.f : p->horizon);
+    looper_set_layer(l, p->loop_layer * sustain);
     granular_set_grain_size(g, p->grain_size);
     granular_set_scatter(g, p->scatter);
     granular_set_mod_depth(g, 0.0f);
-    microloop_set_hold(m, p->micro_hold);
+    microloop_set_hold(m, p->micro_hold * sustain);
     { float mb = p->micro_bars > 0.01f ? p->micro_bars : 0.25f;      /* Satellite micro length */
       int mlen = (int)(mb * FC_BEATS_PER_BAR * 60.0f / bpm * sr); if (mlen < 1) mlen = 1;
       microloop_set_loop_len(m, mlen); }
@@ -193,17 +196,13 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         st->have_pushed = 1;
     }
 
-    /* Event Horizon: horizon 1 = full sustain; lower actively DRAINS the loop + micro
-     * buffers to empty them (a global "let go"), gated to the lower ~40% so a partial
-     * setting gives a STABLE shorter wash, not a slow fade to silence. Mirrors the
-     * plugin; the wet tail is also ducked after harmony below. */
+    /* Event Horizon: horizon 1 = full sustain; lower DRAINS the engine (a global "let
+     * go"). The plugin actively scales the whole loop buffer (looper_leak), but that
+     * scans the entire loop window every block — far too expensive on the RP2350 (it
+     * spiked the DSP budget and buzzed). Here the drain is done cheaply by pulling the
+     * loop + micro FEEDBACK down (see fc_push_params) so the buffers decay, plus the
+     * wet-tail duck below. */
     const float horizonClear = p->horizon >= 1.0f ? 0.0f : 1.0f - p->horizon;   /* 0..1 */
-    if (horizonClear > 0.60f) {
-        float leakClear = (horizonClear - 0.60f) * (1.0f / 0.40f);   /* 0..1 across the lower 40% */
-        float leak = expf(-leakClear * ((float) n / (float) sr) / 0.25f);   /* ~0.25 s tau at full clear */
-        looper_leak(l, leak);
-        microloop_leak(m, leak);
-    }
 
     for (int i = 0; i < n; i++) {                        /* DC block */
         st->dcL += dcIC * (in_l[i] - st->dcL); st->dcR += dcIC * (in_r[i] - st->dcR);
