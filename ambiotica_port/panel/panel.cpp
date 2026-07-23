@@ -199,6 +199,7 @@ struct ambiotica_panel : panel_t {
          * a shimmer, chord rings, grains thicken). Event Horizon lerps them back down
          * toward "clear", applied LAST so it overrides Gravity. grav_sm ramps ~2 s. */
         grav_sm += 0.010f * (fx.gravity - grav_sm);            /* ~2 s (plugin gravitySmooth) */
+        { float gd = fx.gravity - grav_sm; if (gd < 5e-4f && gd > -5e-4f) grav_sm = fx.gravity; }  /* settle so fc_push_params can gate off */
         const float gg = grav_sm < 0.f ? 0.f : (grav_sm > 1.f ? 1.f : grav_sm);
         #define AMB_LERP(a,b,t) ((a) + ((b) - (a)) * (t))
         fx.loop_layer = AMB_LERP(fx.loop_layer, 0.97f, gg);
