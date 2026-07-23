@@ -109,7 +109,9 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
     /* Tail -> room size + feedback/sustain; Spectra -> a little shimmer. TUNABLES. */
     int size_q7 = (int)(p->decay * 127.0f);   if (size_q7 < 0) size_q7 = 0; if (size_q7 > 127) size_q7 = 127;
     reverb_extra_fb_gain_q8 = (int)(p->ring * 255.0f);          /* sustain follows Tail's ring */
-    reverb_extra_shimmer    = (int)(p->spectra * 96.0f);         /* subtle shimmer, scaled by Spectra */
+    reverb_extra_shimmer    = 0;   /* native-reverb octave shimmer OFF. Spectra is the tuned-chord
+                                      resonator (harmony_process, below) — a separate thing; don't
+                                      conflate it with this reverb's shimmer effect. */
     const float kIn = 32767.0f, kOut = 1.0f / 32768.0f;
     for (int i = 0; i < n; i += 2) {
         float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
