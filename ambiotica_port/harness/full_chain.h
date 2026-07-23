@@ -90,14 +90,11 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
     double bpm = p->bpm > 0 ? p->bpm : 120.0;
     float bars = p->loop_length_bars; if (bars < 0.5f) bars = 0.5f; if (bars > 8) bars = 8;
     looper_set_loop_len(l, (int)(bars * FC_BEATS_PER_BAR * 60.0f / bpm * sr));
-    /* Event Horizon cheap drain: pull loop + micro feedback down with horizon so the
-     * buffers decay (a "let go") without the plugin's per-block full-buffer scan. */
-    float sustain = p->horizon >= 1.0f ? 1.0f : (p->horizon < 0.f ? 0.f : p->horizon);
-    looper_set_layer(l, p->loop_layer * sustain);
+    looper_set_layer(l, p->loop_layer);   /* Event Horizon drains via the deriveStages lerp (loopLayer->0.08) */
     granular_set_grain_size(g, p->grain_size);
     granular_set_scatter(g, p->scatter);
     granular_set_mod_depth(g, 0.0f);
-    microloop_set_hold(m, p->micro_hold * sustain);
+    microloop_set_hold(m, p->micro_hold);
     { float mb = p->micro_bars > 0.01f ? p->micro_bars : 0.25f;      /* Satellite micro length */
       int mlen = (int)(mb * FC_BEATS_PER_BAR * 60.0f / bpm * sr); if (mlen < 1) mlen = 1;
       microloop_set_loop_len(m, mlen); }
@@ -174,7 +171,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
                             harmony_t* h, bloom_t* b, drift_t* d, const full_params* p, double sr,
                             const float* in_l, const float* in_r, float* out_l, float* out_r, int n) {
     if (n > FC_BLK) n = FC_BLK;
-    const float kLoopBedMakeup = 2.6f;   /* loop bed presence (early loop ~= dry) */
+    const float kLoopBedMakeup = 1.9f;   /* plugin value (processBlock) */
     const float scatter  = p->scatter;
     const float cleanG   = (scatter <= 0.5f) ? 1.0f : (1.0f - 2.0f * (scatter - 0.5f));
     const float shimmerG = 0.55f + 0.30f * scatter;   /* 0.55..0.85 — plugin parity: a grain
@@ -240,11 +237,26 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #endif
 #if AMB_CHAIN_LEVEL >= 5
     microloop_process(m, st->blL, st->blR, st->micL, st->micR, n);
+    /* Satellite makeup (plugin processBlock): the microloop's own out-gain is
+     * 0.25*sqrt(hold), far quieter than the loop bed. Invert toward a flat ~1.1
+     * low/mid level (jlimit 1..14), taper to unity approaching freeze, then a -25%
+     * overall trim. Applied before the reverb send + wet sum. */
+    { float mh = p->micro_hold < 0.f ? 0.f : (p->micro_hold > 1.f ? 1.f : p->micro_hold);
+      float og = 0.25f * sqrtf(mh > 1.0e-4f ? mh : 1.0e-4f);
+      float mk = 1.1f / og; if (mk < 1.f) mk = 1.f; else if (mk > 14.f) mk = 14.f;
+      float tp = (mh - 0.7f) * (1.0f / 0.3f); if (tp < 0.f) tp = 0.f; else if (tp > 1.f) tp = 1.f;
+      mk += (1.0f - mk) * tp; mk *= 0.75f;
+      for (int i = 0; i < n; i++) { st->micL[i] *= mk; st->micR[i] *= mk; } }
 #else
     for (int i = 0; i < n; i++) { st->micL[i] = st->micR[i] = 0.f; }
 #endif
-    for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + st->micL[i];
-                                  st->rinR[i] = st->blR[i] + st->layR[i] + st->micR[i]; }
+    /* Micro reverb send: full for short/mid delays, reduced only in the held-pad zone
+     * (plugin). rin = bloom + layered + microRevSend*micro; the wet bus below uses the
+     * full micro. */
+    { float mp = (p->micro_hold - 0.80f) * (1.0f / 0.15f); if (mp < 0.f) mp = 0.f; else if (mp > 1.f) mp = 1.f;
+      float microRevSend = 1.0f - 0.45f * mp;
+      for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + microRevSend * st->micL[i];
+                                    st->rinR[i] = st->blR[i] + st->layR[i] + microRevSend * st->micR[i]; } }
 #if defined(AMB_DATTORRO)
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
       dattorro_set_decay(st->dat, t);                       /* Tail -> tail length (tracks the plugin) */
@@ -274,12 +286,6 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #endif
 
     const float c = 0.9989f, ic = 1.0f - c; float mm = st->mixCur;
-#ifdef FC_SOFT_CLIP
-    /* Master makeup: the input is trimmed to a safe nominal, so the chain runs quiet
-     * (out RMS ~0.17, peaks ~0.9 -> lots of headroom). Juice the whole thing up; the
-     * soft-clip below then acts as a gentle limiter/glue on the transient peaks. */
-    const float kOutMakeup = 2.0f;
-#endif
     /* Gravity: a slow ~0.30 Hz tremolo throb (post-mix) so the "collapse into the
      * drone" is felt, not just heard. depth 0..0.40 with Gravity. Mirrors plugin. */
     const float gravAmt   = p->gravity < 0.f ? 0.f : (p->gravity > 1.f ? 1.f : p->gravity);
@@ -287,8 +293,11 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     const float tremDepth = 0.40f * gravAmt;
     float gph = st->gravPhase;
     for (int i = 0; i < n; i++) {
-        mm = c * mm + ic * p->mix; float dg = 1.0f - mm;
-        float lv = dg * st->dryL[i] + mm * st->wbL[i], rv = dg * st->dryR[i] + mm * st->wbR[i];
+        mm = c * mm + ic * p->mix;
+        /* equal-power dry/wet crossfade (plugin): 50% keeps full loudness (each -3 dB)
+         * instead of the -6 dB dip of a linear blend. fast_cosf/sinf are exact enough. */
+        float dg = fast_cosf(mm * 1.5707963f), wg = fast_sinf(mm * 1.5707963f);
+        float lv = dg * st->dryL[i] + wg * st->wbL[i], rv = dg * st->dryR[i] + wg * st->wbR[i];
         if (gravAmt > 0.001f) {                          /* tremolo throb */
             gph += tremInc; if (gph > 6.2831853f) gph -= 6.2831853f;
             float trem = 1.0f - tremDepth * (0.5f - 0.5f * fast_cosf(gph));
@@ -301,7 +310,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
          * not, so the harness stays bit-faithful to the plugin's hard clamp.
          * With the input trimmed to plugin-nominal above, this should now only
          * catch transient peaks rather than being the sound. */
-        lv = fast_tanhf(kOutMakeup * lv); rv = fast_tanhf(kOutMakeup * rv);   /* juice + soft-limit */
+        lv = fast_tanhf(lv); rv = fast_tanhf(rv);   /* port soft-clip (hot poly); plugin hard-clips */
 #else
         lv = lv < -1 ? -1 : lv > 1 ? 1 : lv; rv = rv < -1 ? -1 : rv > 1 ? 1 : rv;
 #endif

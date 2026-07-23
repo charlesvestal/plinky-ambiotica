@@ -43,6 +43,8 @@ struct ambiotica_panel : panel_t {
     unsigned char  fx_val15 = 64;              /* 64 = centre / neutral */
     int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
     int            chord_type = 0;             /* 0..4 = min/maj/sus4/5th/oct (right buttons) */
+    bool           eh_flushed = false;         /* Event Horizon: buffers cleared at the bottom (edge) */
+    float          grav_sm = 0.f;              /* Gravity macro, ramped ~2 s (plugin gravitySmooth) */
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
     int            reverb_warmup = 0;   /* native-reverb: do_fx warmup blocks done */
@@ -190,6 +192,33 @@ struct ambiotica_panel : panel_t {
         fx.micro_hold       = sat;                             /* Satellite: hold -> Freeze at top */
         fx.micro_bars       = 0.125f + 1.875f * (1.f - sat);  /* Satellite: micro length, REVERSED */
         fx.mix              = fx_val[FX_MIX] / 127.f;          /* Mix: dry/wet */
+
+        /* Gravity + Event Horizon macros — deriveStages lines 92-118. Gravity is NOT
+         * a tremolo; it's the master "collapse to the drone" that lerps every stage
+         * toward its drone target (loop bed swells, reverb maxes, MICRO FREEZES into
+         * a shimmer, chord rings, grains thicken). Event Horizon lerps them back down
+         * toward "clear", applied LAST so it overrides Gravity. grav_sm ramps ~2 s. */
+        grav_sm += 0.010f * (fx.gravity - grav_sm);            /* ~2 s (plugin gravitySmooth) */
+        const float gg = grav_sm < 0.f ? 0.f : (grav_sm > 1.f ? 1.f : grav_sm);
+        #define AMB_LERP(a,b,t) ((a) + ((b) - (a)) * (t))
+        fx.loop_layer = AMB_LERP(fx.loop_layer, 0.97f, gg);
+        fx.decay      = AMB_LERP(fx.decay,      1.00f, gg);
+        fx.drift_amt  = AMB_LERP(fx.drift_amt,  0.85f, gg);
+        fx.micro_hold = AMB_LERP(fx.micro_hold, 1.00f, gg);
+        fx.spectra    = AMB_LERP(fx.spectra,    0.60f, gg);
+        fx.ring       = AMB_LERP(fx.ring,       1.00f, gg);
+        fx.grain_size = AMB_LERP(fx.grain_size, 0.70f, gg);
+        fx.scatter    = AMB_LERP(fx.scatter,    0.55f, gg);
+        fx.mod_depth  = AMB_LERP(fx.mod_depth,  0.55f, gg);
+        float clear = 1.0f - fx.horizon; if (clear < 0.f) clear = 0.f;
+        if (clear > 0.f) {
+            fx.loop_layer = AMB_LERP(fx.loop_layer, 0.08f, clear);
+            fx.micro_hold = AMB_LERP(fx.micro_hold, 0.00f, clear);
+            fx.ring       = AMB_LERP(fx.ring,       0.00f, clear);
+            fx.decay      = AMB_LERP(fx.decay,      0.00f, clear);
+            fx.drift_amt  = AMB_LERP(fx.drift_amt,  0.00f, clear);
+        }
+        #undef AMB_LERP
     }
 
     static void note_cb(void* user, int voice, int note, unsigned char vel, finger_t f) {
@@ -369,6 +398,24 @@ struct ambiotica_panel : panel_t {
         #undef AMB_SM
         fx_sm.loop_length_bars = fx.loop_length_bars; fx_sm.micro_bars = fx.micro_bars;
         fx_sm.bpm = fx.bpm; fx_sm.key = fx.key; fx_sm.chord = fx.chord;
+
+        /* Event Horizon: at the BOTTOM of col-15 the drain becomes a flush — clear all
+           buffers so bringing it back up starts empty. One-shot (edge-triggered), so
+           it's just a few memsets, not a per-block cost. */
+        if (fx.horizon < 0.04f) {
+            if (!eh_flushed) {
+                if (looper)    looper_reset(looper);
+                if (microloop) microloop_reset(microloop);
+                if (granular)  granular_reset(granular);
+                if (harmony)   harmony_reset(harmony);
+                if (bloom)     bloom_reset(bloom);
+                if (drift)     drift_reset(drift);
+                if (st.dat)    dattorro_reset(st.dat);
+                eh_flushed = true;
+            }
+        } else {
+            eh_flushed = false;
+        }
 
         fc_render_block(&st, looper, granular, microloop, reverb, harmony, bloom, drift,
                         &fx_sm, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
