@@ -102,8 +102,8 @@ struct ambiotica_panel : panel_t {
         if (ps) granular  = granular_create(sr);
 #endif
         g_amb_region = 0;   /* SRAM pool: fast-access modules */
-#if AMB_CHAIN_LEVEL >= 2
-        reverb  = reverb_create(sr);        /* moved here (was PSRAM -> too slow) */
+#if (AMB_CHAIN_LEVEL >= 2) && !defined(AMB_BUILTIN_REVERB)
+        reverb  = reverb_create(sr);        /* modal reverb (SRAM); skipped when AMB_BUILTIN_REVERB uses do_reverb */
 #endif
 #if AMB_CHAIN_LEVEL >= 3
         bloom   = bloom_create(sr);
@@ -117,7 +117,7 @@ struct ambiotica_panel : panel_t {
 #if AMB_CHAIN_LEVEL >= 1
         dsp_ok = dsp_ok && looper;
 #endif
-#if AMB_CHAIN_LEVEL >= 2
+#if (AMB_CHAIN_LEVEL >= 2) && !defined(AMB_BUILTIN_REVERB)
         dsp_ok = dsp_ok && reverb;
 #endif
 #if AMB_CHAIN_LEVEL >= 3
