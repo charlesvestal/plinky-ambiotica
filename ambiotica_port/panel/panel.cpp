@@ -44,6 +44,7 @@ struct ambiotica_panel : panel_t {
        so every column pulses across the full brightness range regardless of the
        absolute signal level (loopL, micL and granL differ ~10x in magnitude). */
     float        viz_out = 0.f;                                 /* output level (play-surface breathing) */
+    float        viz_outpk = 0.f;                               /* DEBUG: final-output peak-hold */
     float        viz_loop_env = 0.f,  viz_loop_pk = 0.f;       /* Orbit: main-loop emit meter */
     float        viz_micro_env = 0.f, viz_micro_pk = 0.f;      /* Satellite: micro-loop emit meter */
     float        viz_grain_env = 0.f, viz_grain_pk = 0.f;      /* Constellate: granular meter */
@@ -97,8 +98,8 @@ struct ambiotica_panel : panel_t {
         set_param_packed(VOICE_PARAM_DELAY_SEND,    0, &synth_presets[synth_preset]);
         set_param_packed(MIX_PARAM_REVERB_SHIMMER,  0, &synth_presets[MIX_PRESET_IDX]);   /* shimmer OFF */
         /* Gentle fixed feedback for a decaying ambient tail (packed = value in each of
-         * the 8 corner bytes). 28/127 ~ medium; default 96 self-oscillated. TUNABLE. */
-        set_param_packed(MIX_PARAM_REVERB_FEEDBACK, (unsigned long long)28 * 0x0101010101010101ULL, &synth_presets[MIX_PRESET_IDX]);
+         * the 8 corner bytes). Low: it builds up + adds to the mix. TUNABLE. */
+        set_param_packed(MIX_PARAM_REVERB_FEEDBACK, (unsigned long long)12 * 0x0101010101010101ULL, &synth_presets[MIX_PRESET_IDX]);
 
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
@@ -199,7 +200,7 @@ struct ambiotica_panel : panel_t {
         leds_clear();
         frame_ctr++;
         if ((frame_ctr % 60) == 0)   /* native-reverb wet level x1000 (calibrate kIn/kOut; want ~200-600, <1500) */
-            printf("REVLVL wet=%d\n", (int)(st.br_peak * 1000.f));
+            printf("REVLVL wet=%d out=%d\n", (int)(st.br_peak * 1000.f), (int)(viz_outpk * 1000.f));   /* out>=1000 = clipping */
 #ifdef AMB_DEBUG
         /* print per-stage metrics from core0 (~2x/sec). hf x1000: clean ~4-20;
          * the first stage that spikes is where the fizz is injected. */
@@ -343,6 +344,7 @@ struct ambiotica_panel : panel_t {
             float m = st.micL[i]  < 0.f ? -st.micL[i]  : st.micL[i];  if (m > mp) mp = m;
         }
         viz_out       = viz_out * 0.9f + op * 0.1f;
+        viz_outpk     = viz_outpk > op ? viz_outpk * 0.97f : op;    /* DEBUG: final output peak-hold */
         /* per-channel meter: fast envelope + slow-release peak-hold (see meter_bri) */
         viz_loop_env  = viz_loop_env  * 0.90f + lp * 0.10f;  viz_loop_pk  = lp > viz_loop_pk  ? lp : viz_loop_pk  * 0.9990f;
         viz_micro_env = viz_micro_env * 0.90f + mp * 0.10f;  viz_micro_pk = mp > viz_micro_pk ? mp : viz_micro_pk * 0.9990f;
