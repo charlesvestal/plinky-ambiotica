@@ -22,7 +22,7 @@ When turning a vague panel idea into working code, choose the highest-level publ
 from raw pads:
 
   - Start from `panel_t`. Keep persistent state as panel members, override only the lifecycle hooks you need, and keep
-    `on_ui(...)`, `on_sequence(...)`, and `on_dsp_voices(...)` responsibilities separate.
+    `on_ui(...)`, `on_sequence(...)`, and `on_dsp(...)` responsibilities separate.
   - For playable note areas, prefer `play_surface_t::do_play_surface(...)` plus `voice_allocator_t` and `play_synth(...)` or
     the level-triggered MIDI helpers. This gives you Plinky-style pressure, strings, scale mapping, and voice tracking.
   - For sequencers and arpeggiators, use `clock_divider_t` to turn transport phase into musical edges, then use `playhead_t`
@@ -39,8 +39,8 @@ from raw pads:
     derived tables after reads, and use `serialise_psram_binary_footer(...)` only for large PSRAM-backed buffers.
   - For custom visual/touch behaviours, use the raw LED and touch helpers in `blocks_ll.h` directly, but keep this below the
     higher-level widget/surface layer unless the panel concept really needs custom interaction.
-  - For custom audio, override `on_dsp_voices(...)` and fill `mix_buffers` for one 64-sample block. Use the built-in synth
-    helpers when possible; use PSRAM/audio-input helpers only when the panel is fundamentally an audio processor or sampler.
+  - For custom audio, override `on_dsp(...)`. Return `false` after filling `mix_buffers_out` when you want Plinky's standard
+    FX/output chain, or return `true` after writing final stereo samples directly to `audiobuf_out`.
 
 ### Pages And Navigation
 
@@ -71,10 +71,11 @@ Use `on_sequence(...)` for musical decisions: advancing playheads, sequencing no
 notes, and updating synth note state. It runs roughly 500-1000 fps in an interrupt context on core 0 and keeps running while the
 foreground thread is blocked on storage. Keep it short, deterministic, and free of SD-card or large-memory work.
 
-Use `on_dsp_voices(...)` for audio. It runs on core 1 and must prepare one 64-sample block. Most panels either let the built-in
-synth do this or fill the standard `mix_buffers` dry/delay-send/reverb-send paths so the normal Plinky mix and FX chain can run.
-`worm.cpp` is a useful advanced example: it replaces the usual synth voice generation with a PSRAM granular sampler, but still
-reuses the standard mix/FX path.
+Use `on_dsp(...)` for audio. It runs on core 1 and must prepare one 64-sample block. The default implementation renders the
+built-in synth and returns `false`, so the normal Plinky mix and FX chain runs after it. Custom panels should usually fill
+`mix_buffers_out->dry`, `mix_buffers_out->delaysend`, and `mix_buffers_out->reverbsend`, then return `false`. Return `true` only
+after writing final interleaved stereo samples directly to `audiobuf_out`, which bypasses the built-in FX/output chain for that
+block.
 
 Other common overrides:
 
@@ -83,7 +84,8 @@ Other common overrides:
   - `on_touch(...)` is a low-level pad edge callback; most panels use the per-frame touch/widget helpers instead.
   - `on_midi(...)` handles incoming packed MIDI messages; pair it with `voice_allocator_t` or level-triggered MIDI helpers.
   - `pump_usb_serial()` is for panels acting as USB CDC serial devices.
-  - `on_dsp_final_mix(...)`, `on_dsp_param_override(...)`, and `on_dsp_mix_state_override(...)` are specialised DSP hooks.
+  - `on_dsp_core0_final_mix_unsafe(...)`, `on_dsp_param_override(...)`, and `on_dsp_mix_state_override(...)` are specialised DSP
+    hooks. The core0 final-mix hook is for tiny bounded stock-panel work only.
   - `on_prepare_staged_load(...)`, `on_commit_staged_load_audio_thread(...)`, and `on_load_finished()` are staged-load hooks.
   - `get_version()` and `get_settings_version()` version saved song state and panel settings separately.
   - `get_num_tracks()` and `get_track_name(...)` describe panel tracks to host/control surfaces.
@@ -155,7 +157,7 @@ The runtime calls into your panel from three main execution contexts:
 
   - `on_ui(...)` for reading touches and drawing LEDs (main core, can stall during SD access)
   - `on_sequence(...)` for timing-sensitive musical logic (high-priority timer / interrupt, should stay light)
-  - `on_dsp_voices(...)` for audio generation (core 1, must fill `mix_buffers` for one 64-sample block)
+  - `on_dsp(...)` for audio generation (core 1, must finish one 64-sample block)
 
 Saving and loading panel state is system-managed. Your panel chooses what is persistent by implementing `on_serialise(...)` using
 the helpers in [`save_and_load.h`](#saveandloadh).
@@ -180,7 +182,8 @@ Useful first choices:
   - ordinary controls: `button(...)`, `shift_button(...)`, `checkbox_button(...)`, `slider_t`, and `xy_pad_t`
   - panel preferences: `on_serialise_settings(...)` plus a page from `draw_system_style_settings_page(...)`
   - custom raw grid behaviour: LED/touch helpers from `blocks_ll.h`
-  - custom audio processor or sampler: override `on_dsp_voices(...)` and fill `mix_buffers`
+  - custom audio: override `on_dsp(...)`; return `false` to run Plinky's standard FX/output chain on `mix_buffers_out`, or
+    return `true` after writing final stereo samples directly to `audiobuf_out`
 
 The bigger stock panels use the same public building blocks heavily. A typical structure is one main interaction surface, a
 bottom-row transport/control convention, optional synth-edit or save/load pages, and a small number of custom controls around the
@@ -229,10 +232,16 @@ claims, declaring MIDI notes, updating synth note state, and publishing current 
 interrupt context on core 0 and keeps running while the foreground thread is blocked on storage. Keep it short, deterministic, and
 free of SD-card work or large memory scans.
 
-`on_dsp_voices(...)` runs on core 1 and must prepare one 64-sample audio block. Most panels either rely on the built-in synth path
-or fill the standard `mix_buffers` dry/delay-send/reverb-send paths so the normal Plinky mix and FX chain can run after the hook.
-`worm.cpp` is a good advanced example: it replaces the usual synth voice generation with a PSRAM granular sampler, but still reuses
-the standard mix/FX path.
+`on_dsp(...)` runs on core 1 and owns one 64-sample audio block. The default implementation renders Plinky's built-in synth voices
+into `mix_buffers_out` and returns `false`, which tells the runtime to run the standard delay/reverb/final output chain. Custom
+panels normally also return `false` after filling `mix_buffers_out->dry`, `mix_buffers_out->delaysend`, and
+`mix_buffers_out->reverbsend`. Return `true` only when your panel has written final interleaved stereo `int16_t` samples directly
+to `audiobuf_out` and wants to bypass the built-in FX/output chain for that block.
+
+`mix_buffers_out` is cleared before `on_dsp(...)` is called. It currently points at the global `mix_buffers`, so existing helpers
+that write `mix_buffers` still work, but new panel code should prefer the parameter because it documents the handoff explicitly.
+`worm.cpp` is a good advanced example: it replaces the usual synth voice generation with a PSRAM granular sampler, but still
+reuses the standard mix/FX path by returning `false`.
 
 The other overrides are narrower:
 
@@ -241,7 +250,8 @@ The other overrides are narrower:
   - `on_touch(...)` is a low-level per-pad edge callback; most panels use widget/touch helpers instead
   - `on_midi(...)` handles incoming packed MIDI messages
   - `pump_usb_serial()` is for panels acting as USB CDC serial devices
-  - `on_dsp_final_mix(...)` lets a panel alter the full-rate dry block before the final mix stage
+  - `on_dsp_core0_final_mix_unsafe(...)` is an internal/advanced stock-panel hook that runs on core 0 from the high-priority
+    audio-footer doorbell; keep it tiny, bounded, and non-blocking
   - `on_dsp_param_override(...)` and `on_dsp_mix_state_override(...)` are specialised built-in-synth DSP hooks
   - `on_prepare_staged_load(...)`, `on_commit_staged_load_audio_thread(...)`, and `on_load_finished()` customise staged loads
   - `get_version()` and `get_settings_version()` version saved song state and panel settings separately
@@ -394,8 +404,16 @@ struct panel_t {
   virtual void on_dsp_mix_state_override(mix_state_t *mix) {
     (void)mix;
   }
-  virtual void on_dsp_voices(const int16_t *audiobuf_in); // core 1 audio callback. fill mix_buffers for one 64-sample block.
-  virtual void on_dsp_final_mix(const int16_t *audiobuf_in, int *dry_stereo);
+  /*
+  Core 1 audio callback. Return false after filling mix_buffers_out for Plinky's built-in FX/output chain. Return true after
+  writing final interleaved stereo int16 samples directly to audiobuf_out.
+  */
+  virtual bool on_dsp(const int16_t *audiobuf_in, int16_t *audiobuf_out, mix_buffers_t *mix_buffers_out);
+  /*
+  Advanced/internal: runs on core 0 from the high-priority audio-footer doorbell inside do_fx(). Use only for tiny, bounded final
+  dry-block tweaks in stock panels. User panels should prefer on_dsp(), which runs on core 1.
+  */
+  virtual void on_dsp_core0_final_mix_unsafe(const int16_t *audiobuf_in, int *dry_stereo);
   virtual int get_num_tracks(void) { return 8; }
   virtual const char *get_track_name(int i, char buf[16]) {
     if (!buf) return NULL;
@@ -906,6 +924,7 @@ bool get_pressure_and_pos_in_rect(int x1, int y1, int w, int h, bool from_bottom
 #define SYNTH_EDIT_CLEAR 262144
 #define SYNTH_EDIT_REROLL 524288
 #define SYNTH_EDIT_ACTION_MASK (SYNTH_EDIT_CLEAR | SYNTH_EDIT_REROLL)
+#define SYNTH_SLIDER_EXTRA_PARAMS 1048576
 static inline int mod_source_from_flags(int flags) {
   if (flags & FLAG_MOD_SRC_A) return MODULATION_SOURCE_A;
   if (flags & FLAG_MOD_SRC_B) return MODULATION_SOURCE_B;
@@ -2301,6 +2320,7 @@ enum {
   VOICE_PARAM_SAMPLE_START,  // Preset CC 34: playback start position within the slice
   VOICE_PARAM_SAMPLE_LENGTH, // Preset CC 35: playback length within the slice
   VOICE_PARAM_CHORUS,        // Preset CC 36: bipolar: pitch wobble below centre, chorus above
+  VOICE_PARAM_SIDECHAIN_AMOUNT, // Preset CC 37: bipolar: send above centre, duck below centre
   VOICE_PARAM_LAST,
 };
 
@@ -2332,6 +2352,9 @@ enum {
   MIX_PARAM_REVERB_RETURN,   // Mix CC 29: wet reverb return level
   MIX_PARAM_DELAY_RETURN,    // Mix CC 30: wet delay return level
   MIX_PARAM_OUTPUT_LEVEL,    // Mix CC 31: final output level
+  MIX_PARAM_AUDIO_IN_SIDECHAIN, // Mix CC 32: bipolar audio-input sidechain send/duck amount
+  MIX_PARAM_REVERB_SIDECHAIN, // Mix CC 33: bipolar wet reverb return sidechain duck amount
+  MIX_PARAM_DELAY_SIDECHAIN, // Mix CC 34: bipolar wet delay return sidechain duck amount
   MIX_PARAM_LAST,
 };
 
@@ -2693,8 +2716,8 @@ static inline void copy_corner_param_quadrant(int synth_param, int quadrant, con
 /*
 ## `mix_buffers_t`
 
-The global `mix_buffers` structure is the handoff between `panel_t::on_dsp_voices(...)` and the standard Plinky output chain.
-It is cleared before `on_dsp_voices(...)` is called.
+The global `mix_buffers` structure is the handoff between `panel_t::on_dsp(...)` and the standard Plinky output chain.
+It is passed to `on_dsp(...)` as `mix_buffers_out` and is cleared immediately before that hook is called.
 
 Most custom-audio panels fill `dry`, `delaysend`, and `reverbsend`, then let the standard chain run after the hook. That chain
 adds delay, reverb, three-band EQ/compression, and output level using parameters from the mix preset in
@@ -2731,10 +2754,12 @@ extern mix_buffers_t mix_buffers;
 /* 
 ### `do_mix`
 
-the system mix runs after `on_dsp_voices(...)` has filled dry, delay and reverb sends in `mix_buffers`.
+the system mix runs when `on_dsp(...)` returns `false`, after dry, delay and reverb sends have been filled in `mix_buffers_out`.
 The dry path is full-rate stereo. The delay and reverb send paths are lower-rate send buffers shaped by the struct below.
-Panels that need to alter the full-rate stereo dry block before the final multiband split/compressor can override
-`on_dsp_final_mix(...)`.
+
+Panels that need to own final audio output can override `on_dsp(...)`, write final interleaved stereo samples to `audiobuf_out`,
+and return `true`. The advanced `on_dsp_core0_final_mix_unsafe(...)` hook runs on core 0 from the high-priority audio-footer
+doorbell inside `do_fx()`; it is for tiny bounded stock-panel final tweaks only.
 */
 void do_mix(int16_t *inputbuf, int16_t *outputbuf); 
 
@@ -4884,7 +4909,7 @@ The shared transport can be stopped, armed, or playing. Arming queues playback s
 transport cleanly; with the internal clock source, arming triggers an immediate synthetic pulse.
 
 The runtime also publishes previous transport and seek snapshots for the current execution branch immediately before
-`on_sequence(...)`, `on_ui(...)`, or `on_dsp_voices(...)` runs. This makes edge helpers such as
+`on_sequence(...)`, `on_ui(...)`, or `on_dsp(...)` runs. This makes edge helpers such as
 `has_transport_just_started()` and `has_transport_just_seeked()` reliable inside those callbacks even though they run at different
 cadences.
 */
@@ -6464,14 +6489,14 @@ struct looper : panel_t {
   }
 
   // Processes one audio block from stereo input `in`, recording armed tracks and mixing loops.
-  void on_dsp_voices(const int16_t *in) override {
+  bool on_dsp(const int16_t *in, int16_t *out, mix_buffers_t *mix_buffers_out) override {
     if (loop_capacity < BINS) {
-      panel_t::on_dsp_voices(in);
-      return;
+      return panel_t::on_dsp(in, out, mix_buffers_out);
     }
-    for (int i = 0; i < BLOCK_SIZE * 2; ++i) mix_buffers.dry[i] = in[i];
-    memset(mix_buffers.delaysend, 0, sizeof(mix_buffers.delaysend));
-    memset(mix_buffers.reverbsend, 0, sizeof(mix_buffers.reverbsend));
+    (void)out;
+    for (int i = 0; i < BLOCK_SIZE * 2; ++i) mix_buffers_out->dry[i] = in[i];
+    memset(mix_buffers_out->delaysend, 0, sizeof(mix_buffers_out->delaysend));
+    memset(mix_buffers_out->reverbsend, 0, sizeof(mix_buffers_out->reverbsend));
     int in_peak = 0;
     for (int i = 0; i < BLOCK_SIZE; ++i)
       in_peak = maxi(in_peak, maxi(abs((int)in[i * 2]), abs((int)in[i * 2 + 1])));
@@ -6670,20 +6695,21 @@ struct looper : panel_t {
         int v1_l = clip((int)(filtered_l * out_gain));
         int v1_r = clip((int)(filtered_r * out_gain));
         int j = i - 1;
-        mix_buffers.dry[j * 2] += v0_l;
-        mix_buffers.dry[j * 2 + 1] += v0_r;
-        mix_buffers.dry[i * 2] += v1_l;
-        mix_buffers.dry[i * 2 + 1] += v1_r;
+        mix_buffers_out->dry[j * 2] += v0_l;
+        mix_buffers_out->dry[j * 2 + 1] += v0_r;
+        mix_buffers_out->dry[i * 2] += v1_l;
+        mix_buffers_out->dry[i * 2 + 1] += v1_r;
         int send0 = (v0_l + v0_r) >> 1;
         int send1 = (v1_l + v1_r) >> 1;
-        mix_buffers.delaysend[j] += (send0 * r.delay) >> 7;
-        mix_buffers.delaysend[i] += (send1 * r.delay) >> 7;
-        mix_buffers.reverbsend[j] += (send0 * r.reverb) >> 9;
-        mix_buffers.reverbsend[i] += (send1 * r.reverb) >> 9;
+        mix_buffers_out->delaysend[j] += (send0 * r.delay) >> 7;
+        mix_buffers_out->delaysend[i] += (send1 * r.delay) >> 7;
+        mix_buffers_out->reverbsend[j] += (send0 * r.reverb) >> 9;
+        mix_buffers_out->reverbsend[i] += (send1 * r.reverb) >> 9;
       }
       r.filter_coeff = target_coeff;
       r.gain_smoothed = gain_smoothed;
     }
+    return false;
   }
 };
 
@@ -7057,9 +7083,10 @@ struct mics : panel_t {
     codec_enable_mic(true);
   }
 
-  void on_dsp_voices(const int16_t *audiobuf_in) override {
+  bool on_dsp(const int16_t *audiobuf_in, int16_t *audiobuf_out, mix_buffers_t *mix_buffers_out) override {
+    (void)audiobuf_out;
     for (int i = 0; i < BLOCK_SIZE * 2; ++i)
-      mix_buffers.dry[i] = audiobuf_in[i];
+      mix_buffers_out->dry[i] = audiobuf_in[i];
 
     for (int i = 0; i < BLOCK_SIZE; ++i) {
       int left = audiobuf_in[i * 2 + 0];
@@ -7104,6 +7131,7 @@ struct mics : panel_t {
     peak_ratio += (5.f - peak_ratio) * 0.0001f; // kinda agc.
     
     spectrum_idx = next_spectrum_idx;
+    return false;
   }
 
   void on_ui(int delta_time_us) override {
@@ -7342,11 +7370,11 @@ struct worm : panel_t {
     return true;
   }
 
-  void mix_grain_sample(grain_t &g, int out, stereo16_t s) {
+  void mix_grain_sample(mix_buffers_t *mix_buffers_out, grain_t &g, int out, stereo16_t s) {
     int env = clampi(g.env_q15, 0, ALPHA_MAX);
     int gain = (env * (int)g.volume) >> 7;
-    mix_buffers.dry[out * 2 + 0] += ((int)s.l * gain) >> (15 + GRAIN_SUM_SHIFT);
-    mix_buffers.dry[out * 2 + 1] += ((int)s.r * gain) >> (15 + GRAIN_SUM_SHIFT);
+    mix_buffers_out->dry[out * 2 + 0] += ((int)s.l * gain) >> (15 + GRAIN_SUM_SHIFT);
+    mix_buffers_out->dry[out * 2 + 1] += ((int)s.r * gain) >> (15 + GRAIN_SUM_SHIFT);
     g.env_q15 += g.denv_q15;
     if (g.denv_q15 > 0 && g.env_q15 >= ALPHA_MAX) {
       g.env_q15 = ALPHA_MAX;
@@ -7357,7 +7385,7 @@ struct worm : panel_t {
     }
   }
 
-  void mix_grains() {
+  void mix_grains(mix_buffers_t *mix_buffers_out) {
     stereo16_t *psram = (stereo16_t *)get_psram_ptr();
     for (int gi = 0; gi < GRAINS; ++gi) {
       grain_t &g = grain[gi];
@@ -7390,21 +7418,21 @@ struct worm : panel_t {
             stereo16_t a, b;
             READ_GRAIN_SAMPLE(a);
             READ_GRAIN_SAMPLE(b);
-            mix_grain_sample(g, out++, make_stereo16(((int)a.l + b.l) >> 1, ((int)a.r + b.r) >> 1));
+            mix_grain_sample(mix_buffers_out, g, out++, make_stereo16(((int)a.l + b.l) >> 1, ((int)a.r + b.r) >> 1));
           }
         } else if (g.octave < 0) {
           while (out < BLOCK_SIZE && g.active) {
             stereo16_t s;
             READ_GRAIN_SAMPLE(s);
-            mix_grain_sample(g, out++, s);
+            mix_grain_sample(mix_buffers_out, g, out++, s);
             if (out < BLOCK_SIZE && g.active)
-              mix_grain_sample(g, out++, s);
+              mix_grain_sample(mix_buffers_out, g, out++, s);
           }
         } else {
           while (out < BLOCK_SIZE && g.active) {
             stereo16_t s;
             READ_GRAIN_SAMPLE(s);
-            mix_grain_sample(g, out++, s);
+            mix_grain_sample(mix_buffers_out, g, out++, s);
           }
         }
 
@@ -7516,11 +7544,11 @@ struct worm : panel_t {
     update_record_colour();
   }
 
-  void compress_grain_mix() {
+  void compress_grain_mix(mix_buffers_t *mix_buffers_out) {
     int peak = 0;
     for (int i = 0; i < BLOCK_SIZE; ++i) {
-      peak = maxi(peak, abs(mix_buffers.dry[i * 2 + 0]));
-      peak = maxi(peak, abs(mix_buffers.dry[i * 2 + 1]));
+      peak = maxi(peak, abs(mix_buffers_out->dry[i * 2 + 0]));
+      peak = maxi(peak, abs(mix_buffers_out->dry[i * 2 + 1]));
     }
     float target_peak = (float)peak;
     float peak_delta = target_peak - comp_peak;
@@ -7534,13 +7562,13 @@ struct worm : panel_t {
     int target_gain_q25 = clampi((int)(target_gain * 33554432.f), 0, 0x7fffffff);
     int gain_step_q25 = (target_gain_q25 - gain_q25) >> BLOCK_SIZE_SH;
     for (int i = 0; i < BLOCK_SIZE; ++i) {
-      int l = smmul(mix_buffers.dry[i * 2 + 0] << 7, gain_q25);
-      int r = smmul(mix_buffers.dry[i * 2 + 1] << 7, gain_q25);
+      int l = smmul(mix_buffers_out->dry[i * 2 + 0] << 7, gain_q25);
+      int r = smmul(mix_buffers_out->dry[i * 2 + 1] << 7, gain_q25);
       int mono = (l + r) >> 1;
-      mix_buffers.dry[i * 2 + 0] = soft_clip((l * (int)dry_send) >> 7);
-      mix_buffers.dry[i * 2 + 1] = soft_clip((r * (int)dry_send) >> 7);
-      mix_buffers.delaysend[i] = soft_clip((mono * (int)delay_send) >> 7);
-      mix_buffers.reverbsend[i] = soft_clip((mono * (int)reverb_send) >> 8);
+      mix_buffers_out->dry[i * 2 + 0] = soft_clip((l * (int)dry_send) >> 7);
+      mix_buffers_out->dry[i * 2 + 1] = soft_clip((r * (int)dry_send) >> 7);
+      mix_buffers_out->delaysend[i] = soft_clip((mono * (int)delay_send) >> 7);
+      mix_buffers_out->reverbsend[i] = soft_clip((mono * (int)reverb_send) >> 8);
       gain_q25 += gain_step_q25;
     }
     comp_gain = target_gain;
@@ -7555,18 +7583,21 @@ struct worm : panel_t {
     vu_peak = (uint16_t)mini(peak, 32768);
   }
 
-  void on_dsp_voices(const int16_t *in) override {
+  bool on_dsp(const int16_t *in, int16_t *out, mix_buffers_t *mix_buffers_out) override {
+    (void)out;
     update_input_vu_peak(in);
-    memset(mix_buffers.dry, 0, sizeof(mix_buffers.dry));
-    memset(mix_buffers.delaysend, 0, sizeof(mix_buffers.delaysend));
-    memset(mix_buffers.reverbsend, 0, sizeof(mix_buffers.reverbsend));
+    memset(mix_buffers_out->dry, 0, sizeof(mix_buffers_out->dry));
+    memset(mix_buffers_out->delaysend, 0, sizeof(mix_buffers_out->delaysend));
+    memset(mix_buffers_out->reverbsend, 0, sizeof(mix_buffers_out->reverbsend));
     if (!pad_capacity)
-      return;
+      return false;
 
     record_block(in);
     if (!recording)
-      mix_grains();
-    compress_grain_mix();
+      mix_grains(mix_buffers_out);
+    compress_grain_mix(mix_buffers_out);
+    // false means the dry/delay/reverb sends in mix_buffers_out should run through Plinky's built-in FX/output chain.
+    return false;
   }
 
   void draw_gain_page(int y) {
