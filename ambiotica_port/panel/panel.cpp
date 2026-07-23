@@ -42,6 +42,8 @@ struct ambiotica_panel : panel_t {
     slider_t       fxslider15;                 /* TEMP col-15: master output gain (to audition levels) */
     unsigned char  fx_val15 = 32;              /* 32 -> 1.0x */
     float          out_gain15 = 1.0f;          /* read in on_dsp (core1) */
+    int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
+    int            chord_type = 0;             /* 0..4 = min/maj/sus4/5th/oct (right buttons) */
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
     int            reverb_warmup = 0;   /* native-reverb: do_fx warmup blocks done */
@@ -223,11 +225,16 @@ struct ambiotica_panel : panel_t {
         }
 #endif
         voices_seen = 0;
+        /* Play-surface colour tracks the Spectra chord: hue = key (root semitone),
+           shade/brightness = chord type — so the left/right buttons visibly recolour
+           the surface as they move the key around the circle of fifths / change the
+           chord quality. */
+        uint32_t keycol = palette[(7 + chord_type * 2) & 15][fx.key & 15];
         /* play surface, now with an activity glow/sparkle via the brightness cb */
         /* 4-voice polyphony: the synth renders inside the same core1 2ms budget
          * as our FX; 8 voices' render time pushed us over. 4 leaves headroom for
          * the full chain and is plenty for an ambient wash. */
-        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(TEAL), TEAL, 48, 3, note_cb, this,
+        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(keycol), keycol, 48, 3, note_cb, this,
                              VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, 0, -1,
                              viz_brightness, this);
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
@@ -398,6 +405,24 @@ struct ambiotica_panel : panel_t {
         /* Freeze the micro-loop star when Satellite is at/near the top (held shimmer). */
         if (fx.micro_hold < 0.9f) { viz_micro += BLOCK_SIZE; if (viz_micro >= (unsigned)mlen) viz_micro -= (unsigned)mlen; }
         return true;
+    }
+
+    /* Physical side buttons: LEFT pair steps the Spectra KEY around the circle of
+       fifths (+1 = up a fifth = +7 semitones); RIGHT pair steps the CHORD TYPE
+       (min/maj/sus4/5th/oct). The play-surface colour follows (hue = key, shade =
+       chord). Unhandled buttons fall through to the system (BPM / pages). */
+    void on_click(uint8_t button_mask) override {
+        bool handled = false;
+        if ((button_mask & BTN_BIT_LUP)   && button_clicked(BUTTON_LUP))   { key_pos    = (key_pos + 1)  % 12; handled = true; }
+        if ((button_mask & BTN_BIT_LDOWN) && button_clicked(BUTTON_LDOWN)) { key_pos    = (key_pos + 11) % 12; handled = true; }
+        if ((button_mask & BTN_BIT_RUP)   && button_clicked(BUTTON_RUP))   { chord_type = (chord_type + 1) % 5; handled = true; }
+        if ((button_mask & BTN_BIT_RDOWN) && button_clicked(BUTTON_RDOWN)) { chord_type = (chord_type + 4) % 5; handled = true; }
+        if (handled) {
+            fx.key   = (key_pos * 7) % 12;   /* circle of fifths -> root semitone offset */
+            fx.chord = chord_type;
+        } else {
+            panel_t::on_click(button_mask);
+        }
     }
 
     bool on_serialise(serialiser_t& s, int version) override {
