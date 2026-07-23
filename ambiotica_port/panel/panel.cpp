@@ -13,8 +13,12 @@
 #define AMB_SR 32000.0
 #define FC_SOFT_CLIP            /* soft-limit the chain output (see full_chain.h) */
 /* Attenuate the Plinky synth before the chain: polyphonic voices sum hotter than
- * the plugin's single input, so headroom avoids slamming the ceiling. Tune to taste. */
-#define AMB_IN_GAIN 0.35f
+ * the plugin's single input, so headroom avoids slamming the ceiling. The WHOLE
+ * chain (loop x1.9 makeup, drift regen, layer sums) was tuned in the plugin around
+ * a host-nominal ~0.18 peak input (see ambiotica-plugin tools/buildup_test.cpp);
+ * at 0.35 the raw poly bus still lands well above that and pins the limiter. The
+ * REVLVL 'in=' readout (chain-input peak x1000) tells us where we sit vs ~180. */
+#define AMB_IN_GAIN 0.12f
 
 enum { FX_ORBIT, FX_CONSTELLATE, FX_SATELLITE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
@@ -45,6 +49,7 @@ struct ambiotica_panel : panel_t {
        absolute signal level (loopL, micL and granL differ ~10x in magnitude). */
     float        viz_out = 0.f;                                 /* output level (play-surface breathing) */
     float        viz_outpk = 0.f;                               /* DEBUG: final-output peak-hold */
+    float        viz_inpk = 0.f;                                /* DEBUG: chain-input peak-hold (vs ~0.18 nominal) */
     float        viz_loop_env = 0.f,  viz_loop_pk = 0.f;       /* Orbit: main-loop emit meter */
     float        viz_micro_env = 0.f, viz_micro_pk = 0.f;      /* Satellite: micro-loop emit meter */
     float        viz_grain_env = 0.f, viz_grain_pk = 0.f;      /* Constellate: granular meter */
@@ -200,7 +205,7 @@ struct ambiotica_panel : panel_t {
         leds_clear();
         frame_ctr++;
         if ((frame_ctr % 60) == 0)   /* native-reverb wet level x1000 (calibrate kIn/kOut; want ~200-600, <1500) */
-            printf("REVLVL wet=%d out=%d\n", (int)(st.br_peak * 1000.f), (int)(viz_outpk * 1000.f));   /* out>=1000 = clipping */
+            printf("REVLVL in=%d wet=%d out=%d\n", (int)(viz_inpk * 1000.f), (int)(st.br_peak * 1000.f), (int)(viz_outpk * 1000.f));   /* in vs ~180 nominal; out>=1000 = clipping */
 #ifdef AMB_DEBUG
         /* print per-stage metrics from core0 (~2x/sec). hf x1000: clean ~4-20;
          * the first stage that spikes is where the fizz is injected. */
@@ -336,15 +341,17 @@ struct ambiotica_panel : panel_t {
 
         /* cheap visualization taps: output level (breathing) + per-channel block
            peaks for the main loop, micro-loop and granular. */
-        float op = 0.f, gp = 0.f, lp = 0.f, mp = 0.f;
+        float op = 0.f, gp = 0.f, lp = 0.f, mp = 0.f, ip = 0.f;
         for (int i = 0; i < BLOCK_SIZE; i++) {
             float a = oL[i]       < 0.f ? -oL[i]       : oL[i];       if (a > op) op = a;
             float g = st.granL[i] < 0.f ? -st.granL[i] : st.granL[i]; if (g > gp) gp = g;
             float l = st.loopL[i] < 0.f ? -st.loopL[i] : st.loopL[i]; if (l > lp) lp = l;
             float m = st.micL[i]  < 0.f ? -st.micL[i]  : st.micL[i];  if (m > mp) mp = m;
+            float s = sL[i]       < 0.f ? -sL[i]       : sL[i];       if (s > ip) ip = s;   /* chain input, post AMB_IN_GAIN */
         }
         viz_out       = viz_out * 0.9f + op * 0.1f;
         viz_outpk     = viz_outpk > op ? viz_outpk * 0.97f : op;    /* DEBUG: final output peak-hold */
+        viz_inpk      = viz_inpk > ip ? viz_inpk * 0.97f : ip;      /* DEBUG: chain input peak-hold */
         /* per-channel meter: fast envelope + slow-release peak-hold (see meter_bri) */
         viz_loop_env  = viz_loop_env  * 0.90f + lp * 0.10f;  viz_loop_pk  = lp > viz_loop_pk  ? lp : viz_loop_pk  * 0.9990f;
         viz_micro_env = viz_micro_env * 0.90f + mp * 0.10f;  viz_micro_pk = mp > viz_micro_pk ? mp : viz_micro_pk * 0.9990f;
