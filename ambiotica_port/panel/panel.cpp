@@ -129,7 +129,7 @@ struct ambiotica_panel : panel_t {
         if (ps) granular  = granular_create(sr);
 #endif
         g_amb_region = 0;   /* SRAM pool: fast-access modules */
-#if (AMB_CHAIN_LEVEL >= 2) && !defined(AMB_BUILTIN_REVERB)
+#if (AMB_CHAIN_LEVEL >= 2) && !defined(AMB_BUILTIN_REVERB) && !defined(AMB_DATTORRO)
         reverb  = reverb_create(sr);        /* modal reverb (SRAM); skipped when AMB_BUILTIN_REVERB uses do_reverb */
 #endif
 #if AMB_CHAIN_LEVEL >= 3
@@ -144,7 +144,7 @@ struct ambiotica_panel : panel_t {
 #if AMB_CHAIN_LEVEL >= 1
         dsp_ok = dsp_ok && looper;
 #endif
-#if (AMB_CHAIN_LEVEL >= 2) && !defined(AMB_BUILTIN_REVERB)
+#if (AMB_CHAIN_LEVEL >= 2) && !defined(AMB_BUILTIN_REVERB) && !defined(AMB_DATTORRO)
         dsp_ok = dsp_ok && reverb;
 #endif
 #if AMB_CHAIN_LEVEL >= 3
@@ -160,6 +160,10 @@ struct ambiotica_panel : panel_t {
         dsp_ok = dsp_ok && granular;
 #endif
         fc_init(&st, 0.7f);
+#if defined(AMB_DATTORRO)
+        st.dat = dattorro_create(sr);   /* Dattorro plate (SRAM region); after fc_init zeroes st */
+        dsp_ok = dsp_ok && st.dat;
+#endif
     }
 
     void push_fx_from_ui() {

@@ -15,7 +15,7 @@ CC="clang -O2 -std=c11 -w -I$DSP"
 build_variant() {
     variant="$1"; extra="$2"
     od="obj_$variant"; rm -rf "$od"; mkdir -p "$od"
-    for f in looper granular microloop reverb harmony drift bloom lfo; do
+    for f in looper granular microloop reverb harmony drift bloom lfo dattorro; do
         $CC $REDIR $extra -c "$DSP/$f.c" -o "$od/$f.o"       # DSP (redirected alloc)
     done
     $CC $extra -c "$HN/main.c" -o "$od/main.o"               # driver (defines alloc)

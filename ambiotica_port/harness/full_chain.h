@@ -19,6 +19,7 @@
 #include "harmony.h"
 #include "bloom.h"
 #include "drift.h"
+#include "dattorro.h"
 #include <math.h>
 #include <string.h>
 
@@ -55,8 +56,9 @@ typedef struct {
     full_params last_pushed;   /* memoize: only re-push params when they change */
     int have_pushed;
     float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
-    float br_peak;             /* DEBUG: raw do_reverb wet peak (pre-clamp) this block */
+    float br_peak;             /* DEBUG: reverb wet peak this block */
     float gravPhase;           /* Gravity tremolo LFO phase */
+    dattorro_t* dat;           /* Dattorro plate (AMB_DATTORRO); created by the panel / fc_render */
 } fc_state;
 
 /* 3-voice chord (reduced from the plugin's 5). The plugin's minor is
@@ -243,7 +245,14 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #endif
     for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + st->micL[i];
                                   st->rinR[i] = st->blR[i] + st->layR[i] + st->micR[i]; }
-#if defined(AMB_BUILTIN_REVERB)
+#if defined(AMB_DATTORRO)
+    { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
+      dattorro_set_decay(st->dat, t);            /* Tail -> tail length (tracks the plugin) */
+      dattorro_set_mod(st->dat, p->mod_depth);   /* Flux modulates the tank allpasses */
+      dattorro_set_damp(st->dat, 0.35f); }
+    dattorro_process(st->dat, st->rinL, st->rinR, st->wetL, st->wetR, n);   /* Dattorro plate */
+    { float pk = 0.f; for (int i = 0; i < n; i++) { float a = st->wetL[i] < 0 ? -st->wetL[i] : st->wetL[i]; if (a > pk) pk = a; } st->br_peak = pk; }
+#elif defined(AMB_BUILTIN_REVERB)
     fc_builtin_reverb(st, st->rinL, st->rinR, st->wetL, st->wetR, n, p);   /* Plinky native reverb */
 #elif AMB_CHAIN_LEVEL >= 2
     reverb_process(r, st->rinL, st->rinR, st->wetL, st->wetR, n);
@@ -302,6 +311,9 @@ static void fc_render(looper_t* l, granular_t* g, microloop_t* m, reverb_t* r,
                       const float* in_l, const float* in_r, float* out_l, float* out_r, int total) {
     static fc_state st;                       /* static: keep ~22 KB off the stack */
     fc_init(&st, p->mix);
+#if defined(AMB_DATTORRO)
+    if (!st.dat) st.dat = dattorro_create(sr);
+#endif
     for (int start = 0; start < total; start += FC_BLK) {
         int n = (FC_BLK < total - start) ? FC_BLK : (total - start);
         fc_render_block(&st, l, g, m, r, h, b, d, p, sr, in_l + start, in_r + start, out_l + start, out_r + start, n);
