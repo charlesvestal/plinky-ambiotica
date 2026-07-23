@@ -53,6 +53,7 @@ typedef struct {
     full_params last_pushed;   /* memoize: only re-push params when they change */
     int have_pushed;
     float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
+    float br_peak;             /* DEBUG: raw do_reverb wet peak (pre-clamp) this block */
 } fc_state;
 
 static const int FC_CHORD_SEMIS[5][4] = {
@@ -106,15 +107,16 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
  * out, and stay in float [-1,1]. The *_q7/q8 mappings + shimmer are the tunables. */
 static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
                               float* outL, float* outR, int n, const full_params* p) {
-    /* Tail -> room size ONLY. reverb_extra_fb_gain_q8 BOOSTS the reverb's internal
-     * feedback; ring*255 (=max) drove it past self-oscillation → infinite-feedback
-     * overload that railed the buffer and killed audio. Keep the boost 0 (decay
-     * comes from size_q7); if the tail is too short we add a SMALL amount later. */
-    int size_q7 = 48 + (int)(p->decay * 72.0f);   /* ~48..120 room size (TUNABLE) */
-    if (size_q7 < 0) size_q7 = 0; if (size_q7 > 120) size_q7 = 120;
-    reverb_extra_fb_gain_q8 = 0;   /* NO extra feedback (was the runaway) */
-    reverb_extra_shimmer    = 0;   /* off — Spectra is the tuned chord (harmony_process), not this */
+    /* reverb_size_q7 IS the reverb's decay/feedback (device debug: with all fb
+     * params at 0, the tail still built to the ceiling — size was the culprit).
+     * ~100/127 = near-freeze. Keep it LOW so the tail decays; Tail scales it in a
+     * safe range. TUNABLE — raise the ceiling once we hear a clean decaying tail. */
+    int size_q7 = 8 + (int)(p->decay * 30.0f);   /* ~8..38 (was 48..120 = infinite) */
+    if (size_q7 < 0) size_q7 = 0; if (size_q7 > 127) size_q7 = 127;
+    reverb_extra_fb_gain_q8 = 0;
+    reverb_extra_shimmer    = 0;
     const float kIn = 32767.0f, kOut = 1.0f / 32768.0f;
+    float rawmax = 0.f;
     for (int i = 0; i < n; i += 2) {
         float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
         float dR = 0.5f * (inR[i] + (i + 1 < n ? inR[i + 1] : inR[i]));
@@ -123,15 +125,15 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
         int wl = 0, wr = 0;
         do_reverb((int)(cl * kIn), (int)(cr * kIn), size_q7, &wl, &wr);   /* accumulates */
         float wL = (float)wl * kOut, wR = (float)wr * kOut;
-        /* safety net: bound the wet so a hot native-reverb output can't run away
-         * through the downstream harmony + drift-regen feedback into the loop. */
-        if (wL > 1.5f) wL = 1.5f; else if (wL < -1.5f) wL = -1.5f;
+        { float a = wL < 0.f ? -wL : wL; if (a > rawmax) rawmax = a; }    /* DEBUG raw peak */
+        if (wL > 1.5f) wL = 1.5f; else if (wL < -1.5f) wL = -1.5f;        /* safety clamp */
         if (wR > 1.5f) wR = 1.5f; else if (wR < -1.5f) wR = -1.5f;
         outL[i] = 0.5f * (st->br_holdL + wL);   /* 16k -> 32k linear upsample */
         outR[i] = 0.5f * (st->br_holdR + wR);
         if (i + 1 < n) { outL[i + 1] = wL; outR[i + 1] = wR; }
         st->br_holdL = wL; st->br_holdR = wR;
     }
+    st->br_peak = rawmax;   /* DEBUG */
 }
 #endif
 
