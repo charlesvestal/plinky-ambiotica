@@ -25,6 +25,11 @@
 
 #define PANEL_PAD_COLOR TEAL
 #define AMB_SR 32000.0
+#define FC_SOFT_CLIP            /* soft-limit the chain output (see full_chain.h) */
+/* Attenuate the Plinky synth before the chain: up to 8 polyphonic voices sum far
+ * hotter than the plugin's single input, so without headroom multiple notes slam
+ * the ceiling and alias. Tune if too quiet/hot. */
+#define AMB_IN_GAIN 0.35f
 
 enum { FX_ORBIT, FX_CONSTELLATE, FX_SATELLITE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
@@ -244,7 +249,7 @@ struct ambiotica_panel : panel_t {
             return true;
         }
 
-        const float k = 1.0f / 32768.0f;
+        const float k = (1.0f / 32768.0f) * AMB_IN_GAIN;   /* headroom for polyphony */
         for (int i = 0; i < BLOCK_SIZE; i++) {
             sL[i] = mix_buffers_out->dry[2*i]   * k;
             sR[i] = mix_buffers_out->dry[2*i+1] * k;

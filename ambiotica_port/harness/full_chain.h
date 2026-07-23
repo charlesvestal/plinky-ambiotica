@@ -166,7 +166,15 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     for (int i = 0; i < n; i++) {
         mm = c * mm + ic * p->mix; float dg = 1.0f - mm;
         float lv = dg * st->dryL[i] + mm * st->wbL[i], rv = dg * st->dryR[i] + mm * st->wbR[i];
+#ifdef FC_SOFT_CLIP
+        /* graceful saturation instead of harsh hard-clip — hot polyphonic input
+         * (many Plinky synth voices) would otherwise slam the ±1 ceiling and
+         * alias ("sample-rate-mismatch" buzz). Panel defines this; harness does
+         * not, so the harness stays bit-faithful to the plugin's hard clamp. */
+        lv = fast_tanhf(lv); rv = fast_tanhf(rv);
+#else
         lv = lv < -1 ? -1 : lv > 1 ? 1 : lv; rv = rv < -1 ? -1 : rv > 1 ? 1 : rv;
+#endif
         out_l[i] = lv; out_r[i] = rv;
     }
     st->mixCur = mm;
