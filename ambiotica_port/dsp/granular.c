@@ -23,9 +23,10 @@
 #define G_BUF_SAMPLES       (5 * G_SAMPLE_RATE)       /* 5 s stereo capture */
 #define G_MAX_SCATTER_SAMP  G_SAMPLE_RATE             /* 1 s — fixed (was buf/2, =1s @2s buf) */
 #ifndef G_MAX_GRAINS
-#define G_MAX_GRAINS        4     /* Plinky: 12->4. Granular = scattered PSRAM reads
-                                     (the heaviest core1 cost); fewer grains ~= less
-                                     traffic, to fit the 2ms core1 budget. */
+#define G_MAX_GRAINS        3     /* Plinky: 12->3. Granular = scattered PSRAM reads,
+                                     the heaviest core1 stage (profiled ~470 us/block at
+                                     4 grains, ~3x the reverb). 3 grains fits the ~2 ms
+                                     core1 budget with Gravity up + a synth voice. */
 #endif
 #define G_GRAIN_MIN_SAMPLES 4410                  /* 100 ms — long, smooth (was 10 ms) */
 #define G_GRAIN_MAX_SAMPLES 66150                 /* 1.5 s — stretched pad (was 500 ms) */
