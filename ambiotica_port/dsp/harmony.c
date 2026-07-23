@@ -52,7 +52,16 @@ harmony_t* harmony_create(double sample_rate) {
     h->damp_a   = 1.0f - expf(-6.2831853f * 8000.0f / (float) h->sr);
     h->amount_a = 1.0f - expf(-1.0f / (0.020f * (float) h->sr));     /* ~20 ms */
     h->fb       = 0.995f;           /* default ring length (see harmony_set_ring) */
+#ifdef AMB_BUILTIN_REVERB
+    /* Port: the panel's mix has less headroom than the plugin's host chain, and the
+     * high-Q resonators ring near saturation, so at og=1.25 the chord slammed the
+     * output once Spectra passed ~0.37 ("clips above the 6th LED"). 0.45 keeps the
+     * whole Spectra range clip-free; the octave-up revoicing keeps it audible, and
+     * col-15 / Mix bring the level up. */
+    h->out_gain = 0.45f;
+#else
     h->out_gain = 1.25f;            /* chord level in the wash (louder, ring stays finite) */
+#endif
     return h;
 }
 
