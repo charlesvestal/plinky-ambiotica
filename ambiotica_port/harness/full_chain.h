@@ -52,6 +52,7 @@ typedef struct {
     float wetL[FC_BLK], wetR[FC_BLK], wbL[FC_BLK], wbR[FC_BLK];
     full_params last_pushed;   /* memoize: only re-push params when they change */
     int have_pushed;
+    float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
 } fc_state;
 
 static const int FC_CHORD_SEMIS[5][4] = {
@@ -95,6 +96,36 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
     granular_set_mod_rate_hz(g, hz);
     reverb_set_mod_rate_hz(r, hz);
 }
+
+#ifdef AMB_BUILTIN_REVERB
+/* Plinky NATIVE reverb via the firmware do_reverb() call, in place of our modal
+ * comb reverb. Fixes the sparse-3-comb "broken piano" under Flux AND frees the
+ * ~60 KB SRAM the modal reverb used (do_reverb uses the pre-allocated
+ * mix_buffers.reverbbuf). do_reverb runs at 16 kHz (half rate) and ACCUMULATES
+ * int wet in the ±32768 audio scale; we decimate 32->16k in, upsample 16->32k
+ * out, and stay in float [-1,1]. The *_q7/q8 mappings + shimmer are the tunables. */
+static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
+                              float* outL, float* outR, int n, const full_params* p) {
+    /* Tail -> room size + feedback/sustain; Spectra -> a little shimmer. TUNABLES. */
+    int size_q7 = (int)(p->decay * 127.0f);   if (size_q7 < 0) size_q7 = 0; if (size_q7 > 127) size_q7 = 127;
+    reverb_extra_fb_gain_q8 = (int)(p->ring * 255.0f);          /* sustain follows Tail's ring */
+    reverb_extra_shimmer    = (int)(p->spectra * 96.0f);         /* subtle shimmer, scaled by Spectra */
+    const float kIn = 32767.0f, kOut = 1.0f / 32768.0f;
+    for (int i = 0; i < n; i += 2) {
+        float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
+        float dR = 0.5f * (inR[i] + (i + 1 < n ? inR[i + 1] : inR[i]));
+        float cl = dL < -1.f ? -1.f : dL > 1.f ? 1.f : dL;
+        float cr = dR < -1.f ? -1.f : dR > 1.f ? 1.f : dR;
+        int wl = 0, wr = 0;
+        do_reverb((int)(cl * kIn), (int)(cr * kIn), size_q7, &wl, &wr);   /* accumulates */
+        float wL = (float)wl * kOut, wR = (float)wr * kOut;
+        outL[i] = 0.5f * (st->br_holdL + wL);   /* 16k -> 32k linear upsample */
+        outR[i] = 0.5f * (st->br_holdR + wR);
+        if (i + 1 < n) { outL[i + 1] = wL; outR[i + 1] = wR; }
+        st->br_holdL = wL; st->br_holdR = wR;
+    }
+}
+#endif
 
 /* Process ONE block of n (<= FC_BLK) frames. State persists in st across calls. */
 static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_t* m, reverb_t* r,
@@ -164,7 +195,9 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 #endif
     for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + st->micL[i];
                                   st->rinR[i] = st->blR[i] + st->layR[i] + st->micR[i]; }
-#if AMB_CHAIN_LEVEL >= 2
+#if defined(AMB_BUILTIN_REVERB)
+    fc_builtin_reverb(st, st->rinL, st->rinR, st->wetL, st->wetR, n, p);   /* Plinky native reverb */
+#elif AMB_CHAIN_LEVEL >= 2
     reverb_process(r, st->rinL, st->rinR, st->wetL, st->wetR, n);
 #else
     for (int i = 0; i < n; i++) { st->wetL[i] = st->rinL[i]; st->wetR[i] = st->rinR[i]; }
