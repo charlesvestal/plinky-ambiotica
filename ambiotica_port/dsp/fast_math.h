@@ -17,14 +17,22 @@ static inline float fast_tanhf(float x) {
     return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
 
-/* sin via range-reduction to [-pi,pi] + odd 5th-order minimax poly (~1e-3). */
+/* sin via range-reduction to [-pi,pi] + Bhaskara parabola with one correction.
+ * EXACT at 0, +/-pi/2, +/-pi and ~9e-4 max error elsewhere. The exactness at the
+ * endpoints matters: grain / crossfade windows are built as sin()/cos() and MUST
+ * reach 0 and 1 exactly at their edges — the old odd-5th-order poly overshot to
+ * ~-0.52 near +/-pi (true value 0), which warped every grain's window and clicked
+ * at the grain rate (audibly scaling with Constellate). Bhaskara is also cheaper. */
 static inline float fast_sinf(float x) {
-    const float TWO_PI = 6.28318530718f, INV_TWO_PI = 0.15915494309f;
+    const float TWO_PI = 6.28318530718f, INV_TWO_PI = 0.15915494309f, PI = 3.14159265359f;
     float k = x * INV_TWO_PI;
     k = k - (float)(int)(k + (k >= 0.0f ? 0.5f : -0.5f));   /* frac to [-0.5,0.5] */
     float t = k * TWO_PI;                                    /* t to [-pi,pi] */
-    float t2 = t * t;
-    return t * (0.9999966f + t2 * (-0.1666568f + t2 * 0.0083143f));
+    const float B = 4.0f / PI, C = -4.0f / (PI * PI);
+    float at = t < 0.0f ? -t : t;
+    float y = B * t + C * t * at;                           /* parabola: 0 at 0,+/-pi; +/-1 at +/-pi/2 */
+    float ay = y < 0.0f ? -y : y;
+    return 0.225f * (y * ay - y) + y;                       /* correction -> ~9e-4 err */
 }
 static inline float fast_cosf(float x) { return fast_sinf(x + 1.57079632679f); }
 
