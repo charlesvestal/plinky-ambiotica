@@ -66,16 +66,18 @@ struct ambiotica_panel : panel_t {
     unsigned int viz_loop = 0, frame_ctr = 0;      /* loop-cycle sample counter, UI frame */
 
 #ifdef AMB_DEBUG
-    int dbg_ctr = 0;
-    static void dbg_stage(const char* name, const float* b) {
+    /* Per-stage metrics computed on core1 (on_dsp), printed on core0 (on_ui) —
+     * printf only reaches the WebUSB debug pane from core0. */
+    volatile int dbg_pk[6], dbg_hf[6];
+    void dbg_measure(int idx, const float* b) {
         float pk = 0.f, sq = 0.f, dif = 0.f;
         for (int i = 0; i < BLOCK_SIZE; i++) {
             float x = b[i]; float a = x < 0 ? -x : x; if (a > pk) pk = a;
             sq += x * x;
             if (i) { float dd = b[i] - b[i-1]; dif += dd * dd; }
         }
-        int hf = (int)(1000.f * dif / (sq + 1e-9f));   /* HF metric x1000 */
-        printf("%s pk=%d/1000 hf=%d\n", name, (int)(pk * 1000.f), hf);
+        dbg_pk[idx] = (int)(pk * 1000.f);
+        dbg_hf[idx] = (int)(1000.f * dif / (sq + 1e-9f));   /* HF metric x1000 */
     }
 #endif
 #endif
@@ -213,6 +215,16 @@ struct ambiotica_panel : panel_t {
         for (int x = 0; x < 16; x++) set_led(x, 15, x < mb ? WHITE : DIMMEST(WHITE));
 #else   /* stages 4 and 5: real UI */
         frame_ctr++;
+#ifdef AMB_DEBUG
+        /* print per-stage metrics from core0 (~2x/sec). hf x1000: clean ~4-20;
+         * the first stage that spikes is where the fizz is injected. */
+        if ((frame_ctr % 120) == 0) {
+            static const char* nm6[6] = {"src","loop","gran","mic","wet","out"};
+            for (int s = 0; s < 6; s++)
+                printf("%s pk=%d hf=%d  ", nm6[s], dbg_pk[s], dbg_hf[s]);
+            printf("\n");
+        }
+#endif
         voices_seen = 0;
         /* play surface, now with an activity glow/sparkle via the brightness cb */
         play.do_play_surface(0, 0, 8, 16, 8, DIMMEST(TEAL), TEAL, 48, 3, note_cb, this,
@@ -284,20 +296,13 @@ struct ambiotica_panel : panel_t {
                         &fx, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
 
 #ifdef AMB_DEBUG
-        /* Per-stage probe: peak + HF metric (mean squared first-difference /
-         * mean square; higher = more HF/fizz). Printed ~2x/sec so we can see
-         * WHICH stage injects the fizz. Reads fc_state's intermediate buffers. */
-        dbg_ctr++;
-        if (dbg_ctr >= 250) {
-            dbg_ctr = 0;
-            dbg_stage("src ", st.srcL);   /* input + drift regen  */
-            dbg_stage("loop", st.loopL);  /* looper               */
-            dbg_stage("gran", st.granL);  /* granular             */
-            dbg_stage("mic ", st.micL);   /* micro-loop           */
-            dbg_stage("wet ", st.wetL);   /* reverb + Spectra      */
-            dbg_stage("out ", oL);        /* final                */
-            printf("----\n");
-        }
+        /* measure each stage on core1; on_ui prints them (core0) */
+        dbg_measure(0, st.srcL);   /* input + drift regen */
+        dbg_measure(1, st.loopL);  /* looper              */
+        dbg_measure(2, st.granL);  /* granular            */
+        dbg_measure(3, st.micL);   /* micro-loop          */
+        dbg_measure(4, st.wetL);   /* reverb + Spectra     */
+        dbg_measure(5, oL);        /* final               */
 #endif
         for (int i = 0; i < BLOCK_SIZE; i++) {
             int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);
