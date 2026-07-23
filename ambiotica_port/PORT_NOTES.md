@@ -3,6 +3,41 @@
 Private working area. Vendored proprietary DSP in `dsp/` (from
 `schwung-parent/ambiotica-plugin`). Harness in `harness/`.
 
+## STATUS: full chain runs clean on device ✅ (2026-07-23)
+
+The complete 7-module Ambiotica chain (looper · granular · micro-loop · reverb ·
+Spectra resonators · drift · bloom) runs on the Plinky via the core1 `on_dsp`
+API, driving the built-in synth. Shipping build = `panel/plinky_ambiotica.cpp`
+(regenerate via `panel/amalgamate.sh`; flash on `stage.plinky12.com`).
+
+### The whole saga was ONE root cause: the core1 2 ms DSP budget
+A 64-sample block @32 kHz = **2000 µs** on core1. Overrunning it crackles (sounds
+like a "sample/bitrate mismatch"). Every symptom — fizz on 1 note, "clipping",
+worse with polyphony, USB+analog both — was this. The device debug `printf`
+(`dsp MAX/AVG` line + per-stage HF probe, `AMB_DEBUG`) was what finally showed it.
+
+### Cuts that got us under budget (measured on device)
+1. **Reverb → fast SRAM** (was 8-comb 150 KB in PSRAM; scattered PSRAM access was
+   the original core0 killer). Now 4 combs (3 at L4+), ~62–79 KB in the arena.
+2. **Fast-math trig** (`dsp/fast_math.h`): software `sinf/cosf/tanhf` on the M33
+   cost hundreds of cycles; per-sample calls → polynomial approximations.
+3. **Param memoize**: `fc_push_params` ran every audio block recomputing a
+   *constant* chord (3× `powf` + `expf`); now skipped unless a slider moves.
+4. **4-voice polyphony**: the built-in synth renders inside the *same* core1
+   budget; 8 voices' render time was the playing-time overrun driver. 4 leaves
+   headroom for the full FX.
+5. Granular grains 12→4; harmony 6→3 voices (also for the 128 KB arena).
+
+Device timing at the fix: **idle dsp ~1522/1916 µs, playing ~1800 µs** (under 2000
+with margin). Overrun crackle gone.
+
+### Known caveats / follow-ups
+- 4-voice max (5th note steals oldest) — fine for pads; the tradeoff is the budget.
+- Reverb 3–4 comb / harmony 3-voice (vs plugin 8/6): slightly less dense, character intact.
+- Spectra chord fixed to C-minor; Gravity / Key-Chord / Event-Horizon / Dilate not yet exposed.
+- v1.1 TODO: route the synth's reverb/delay SENDS into the chain (currently dry-only).
+- `AMB_DEBUG` / `AMB_BYPASS` diagnostic builds documented in `panel/panel.cpp`.
+
 ## Milestone 1 — desktop fixed-arena harness ✅
 
 `harness/` compiles the vendored DSP with `calloc/malloc/free` redirected to an
