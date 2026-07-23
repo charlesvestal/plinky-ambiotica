@@ -52,9 +52,16 @@ typedef struct {
     int   reversed;       /* Dilate: 1 = backward read + reverse-swell envelope */
 } grain_t;
 
+/* Capture ring stored as INTERLEAVED int16 [L,R,L,R,...]: halves the PSRAM data vs
+ * float and puts each frame's L+R in one cache line, so a grain read touches one
+ * cache line instead of two separate arrays — cuts the PSRAM thrashing that made
+ * granular the heaviest core1 stage. Quantization is inaudible under a grain cloud. */
+static inline float   g_ld(short v) { return (float)v * (1.0f / 32768.0f); }
+static inline short   g_st(float v) { v = v > 1.f ? 1.f : (v < -1.f ? -1.f : v);
+                                      float s = v * 32767.f; return (short)(s < 0.f ? s - 0.5f : s + 0.5f); }
+
 struct granular_s {
-    float *buf_L;
-    float *buf_R;
+    short *buf;            /* interleaved int16 stereo: buf[pos*2]=L, buf[pos*2+1]=R */
     int    buf_len;
     int    write_pos;
 
@@ -197,9 +204,8 @@ granular_t* granular_create(double sample_rate) {
     g->grain_min   = amb_scale_samples(G_GRAIN_MIN_SAMPLES, sr);
     g->grain_max   = amb_scale_samples(G_GRAIN_MAX_SAMPLES, sr);
     g->max_scatter = amb_scale_samples(G_MAX_SCATTER_SAMP, sr);
-    g->buf_L = (float*)calloc((size_t)g->buf_len, sizeof(float));
-    g->buf_R = (float*)calloc((size_t)g->buf_len, sizeof(float));
-    if (!g->buf_L || !g->buf_R) { granular_destroy(g); return NULL; }
+    g->buf = (short*)calloc((size_t)g->buf_len * 2, sizeof(short));
+    if (!g->buf) { granular_destroy(g); return NULL; }
     g->grain_size_0_1 = 0.5f;
     g->scatter_0_1 = 0.0f;
     lfo_init(&g->mod_lfo, (int)sr);
@@ -212,16 +218,14 @@ granular_t* granular_create(double sample_rate) {
 
 void granular_destroy(granular_t *g) {
     if (!g) return;
-    free(g->buf_L);
-    free(g->buf_R);
+    free(g->buf);
     free(g);
 }
 
 /* Clear the capture ring + kill active grains (RT-safe). Keeps params. */
 void granular_reset(granular_t *g) {
     if (!g) return;
-    memset(g->buf_L, 0, (size_t)g->buf_len * sizeof(float));
-    memset(g->buf_R, 0, (size_t)g->buf_len * sizeof(float));
+    memset(g->buf, 0, (size_t)g->buf_len * 2 * sizeof(short));
     g->write_pos = 0;
     g->samples_to_next = 0;
     for (int i = 0; i < G_MAX_GRAINS; i++) g->grains[i].active = 0;
@@ -280,8 +284,8 @@ void granular_process(granular_t *g,
             ? fast_exp2f(lfo_val * mod_cents * (1.0f / 1200.0f))
             : 1.0f;
         /* 1. Write current input to capture buffer. */
-        g->buf_L[g->write_pos] = in_l[n];
-        g->buf_R[g->write_pos] = in_r[n];
+        g->buf[g->write_pos * 2]     = g_st(in_l[n]);
+        g->buf[g->write_pos * 2 + 1] = g_st(in_r[n]);
         g->write_pos++;
         if (g->write_pos >= buf_len) g->write_pos = 0;
 
@@ -303,8 +307,8 @@ void granular_process(granular_t *g,
             int pi = (int)gr->read_pos;
             float pf = gr->read_pos - (float)pi;
             int pi2 = pi + 1; if (pi2 >= buf_len) pi2 = 0;
-            float yl = g->buf_L[pi] * (1.0f - pf) + g->buf_L[pi2] * pf;
-            float yr = g->buf_R[pi] * (1.0f - pf) + g->buf_R[pi2] * pf;
+            float yl = g_ld(g->buf[pi * 2])     * (1.0f - pf) + g_ld(g->buf[pi2 * 2])     * pf;
+            float yr = g_ld(g->buf[pi * 2 + 1]) * (1.0f - pf) + g_ld(g->buf[pi2 * 2 + 1]) * pf;
 
             /* Envelope. Forward: Hann (smooth, overlap-adds to ~1.0). Reversed
              * (Dilate): a SWELL — amplitude rises across the grain then a quick
