@@ -37,9 +37,31 @@ struct ambiotica_panel : panel_t {
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
 
-    /* visualization taps — written in on_dsp (core1 audio), read in on_ui */
-    float        viz_out = 0.f, viz_grain = 0.f;   /* output level, grain-firing activity */
-    unsigned int viz_loop = 0, frame_ctr = 0;      /* loop-cycle sample counter, UI frame */
+    /* visualization taps — written in on_dsp (core1 audio), read in on_ui.
+       Each reactive slider is a SELF-CALIBRATING meter: env = fast envelope,
+       pk = slow-release peak-hold. on_ui maps env/pk -> brightness (meter_bri),
+       so every column pulses across the full brightness range regardless of the
+       absolute signal level (loopL, micL and granL differ ~10x in magnitude). */
+    float        viz_out = 0.f;                                 /* output level (play-surface breathing) */
+    float        viz_loop_env = 0.f,  viz_loop_pk = 0.f;       /* Orbit: main-loop emit meter */
+    float        viz_micro_env = 0.f, viz_micro_pk = 0.f;      /* Satellite: micro-loop emit meter */
+    float        viz_grain_env = 0.f, viz_grain_pk = 0.f;      /* Constellate: granular meter */
+    unsigned int viz_loop = 0, viz_micro = 0, frame_ctr = 0;   /* main-loop & micro-loop phase counters, UI frame */
+    unsigned int viz_loop_len = 1, viz_micro_len = 1;          /* their cycle lengths in samples (falling-star clocks) */
+    float        shimmer_phase = 0.f;              /* UI-side shimmer LFO shared by the Tail+Flux sliders */
+
+    /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
+       envelope against its own slow peak-hold: idle -> dim floor, emitting ->
+       bright, so it pulses at ANY absolute level. gate_ref = the per-channel
+       signal scale (its silence threshold). Verified in the desktop harness. */
+    static int meter_bri(float env, float pk, float gate_ref) {
+        float d = pk < 0.005f ? 0.005f : pk;
+        float n = env / d;        if (n > 1.f) n = 1.f;    /* 0..1 pulse (env vs recent peak) */
+        float g = pk / gate_ref;  if (g > 1.f) g = 1.f;    /* dim toward silence */
+        int b = 36 + (int)(n * g * 220.f);                 /* 36 (idle) .. 256 (peak) */
+        if (b < 0) b = 0; if (b > 256) b = 256;
+        return b;
+    }
 
 #ifdef AMB_DEBUG
     /* Per-stage metrics computed on core1 (on_dsp), printed on core0 (on_ui) —
@@ -149,23 +171,17 @@ struct ambiotica_panel : panel_t {
         (void)f;
     }
 
-    /* play-surface glow: breathes with the wash, sparkles as grains fire.
-       Signature matches do_play_surface's brightness callback (VERIFY). */
+    /* play-surface glow: breathes with the wash. (Grain activity now pulses the
+       Constellate slider instead of sparkling here — see on_ui.) */
     static unsigned char viz_brightness(void* user, int si, int sp, int x, int y, int note) {
-        (void)si; (void)sp; (void)note;
+        (void)si; (void)sp; (void)note; (void)x; (void)y;
         ambiotica_panel* self = (ambiotica_panel*)user;
         int b = (int)(self->viz_out * 28.f);                       /* breathing base glow */
-        if (self->viz_grain > 0.03f) {                             /* grain sparkles */
-            unsigned h = pcg_hash((unsigned)(x * 131 + y * 977 + (self->frame_ctr >> 2)));
-            if ((h & 31u) < (unsigned)(self->viz_grain * 44.f))
-                b += (int)(self->viz_grain * 150.f);
-        }
         if (b < 0) b = 0; if (b > 255) b = 255;
         return (unsigned char)b;
     }
 
     void on_ui(int dt_us) override {
-        (void)dt_us;
         leds_clear();
         frame_ctr++;
 #ifdef AMB_DEBUG
@@ -190,21 +206,43 @@ struct ambiotica_panel : panel_t {
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
         voices_active = voices_seen;
         static const char* nm[FX_N] = { "Orbit","Constellate","Satellite","Tail","Flux","Spectra","Mix" };
+        /* Flux drives a shared shimmer LFO for the Tail+Flux sliders so they move
+           together as one unit: rate follows Flux's mod rate, depth its amount. */
+        float flux = fx_val[FX_FLUX] / 127.f;
+        shimmer_phase += (float)dt_us * 1e-6f * (0.30f + fx.mod_rate * 2.0f);
+        shimmer_phase -= (float)(int)shimmer_phase;                /* wrap to [0,1) */
+        float tri = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
+        float shimmer = tri * tri * (3.f - 2.f * tri);             /* smoothstep, softer glow */
         for (int i = 0; i < FX_N; i++) {
+            /* Reactive sliders pulse their colour; Spectra & Mix stay steady.
+               (the *N.f gains below are the obvious brightness tuning knobs) */
+            int bri = 256;
+            switch (i) {
+                case FX_ORBIT:       bri = meter_bri(viz_loop_env,  viz_loop_pk,  0.02f); break;  /* pulse: main loop emitting */
+                case FX_SATELLITE:   bri = meter_bri(viz_micro_env, viz_micro_pk, 0.01f); break;  /* pulse: micro-loop emitting */
+                case FX_CONSTELLATE: bri = meter_bri(viz_grain_env, viz_grain_pk, 0.01f); break;  /* pulse: grains firing */
+                case FX_TAIL:
+                case FX_FLUX:        bri = 60 + (int)(flux * shimmer * 196.f); break;  /* shimmer together as one unit */
+            }
+            if (bri < 0) bri = 0; if (bri > 256) bri = 256;
             fxslider[i].simple_slider(8 + i, 0, 16, VERTICAL | SHOW_STEM,
-                                      palette[8][i], 0, 127, fx_val[i], nm[i]);
+                                      fade_col(palette[8][i], bri), 0, 127, fx_val[i], nm[i]);
             fx_val[i] = (unsigned char)last_widget_new_value();
+
+            /* Orbit & Satellite each carry a white "star" that falls down its own
+               column once per loop cycle (main loop / micro-loop) — a per-column
+               clock. Always visible; brighter as that loop emits. */
+            if (i == FX_ORBIT || i == FX_SATELLITE) {
+                unsigned int phase = (i == FX_ORBIT) ? viz_loop     : viz_micro;
+                unsigned int len   = (i == FX_ORBIT) ? viz_loop_len : viz_micro_len;
+                int row = len ? (int)(((float)phase / (float)len) * 15.f) : 0;
+                if (row < 0) row = 0; if (row > 15) row = 15;
+                int sb = 130 + (bri - 36) / 2;  if (sb > 256) sb = 256;
+                set_led(8 + i, row, fade_col(WHITE, sb));
+            }
         }
         push_fx_from_ui();
-        /* col 15 = loop clock: a dot that rises once per loop cycle, pulsing with level */
-        {
-            int llen = (int)(fx.loop_length_bars * 4.f * 60.f / (fx.bpm > 0.f ? fx.bpm : 120.f) * (float)AMB_SR);
-            if (llen < 1) llen = 1;
-            int row = (int)(((float)viz_loop / (float)llen) * 16.f); if (row > 15) row = 15;
-            for (int y = 0; y < 16; y++)
-                set_led(15, y, (y == row) ? fade_col(WHITE, 120 + (int)(viz_out * 130.f))
-                                          : (y == 0 ? DIMMEST(TEAL) : 0));
-        }
+        /* col 15 is intentionally blank for now (to be repurposed later). */
     }
 
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
@@ -264,17 +302,29 @@ struct ambiotica_panel : panel_t {
             audiobuf_out[2*i+1] = (int16_t)(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
         }
 
-        /* cheap visualization taps: output level, grain activity, loop phase */
-        float op = 0.f, gp = 0.f;
+        /* cheap visualization taps: output level (breathing) + per-channel block
+           peaks for the main loop, micro-loop and granular. */
+        float op = 0.f, gp = 0.f, lp = 0.f, mp = 0.f;
         for (int i = 0; i < BLOCK_SIZE; i++) {
-            float a = oL[i] < 0.f ? -oL[i] : oL[i];                   if (a > op) op = a;
+            float a = oL[i]       < 0.f ? -oL[i]       : oL[i];       if (a > op) op = a;
             float g = st.granL[i] < 0.f ? -st.granL[i] : st.granL[i]; if (g > gp) gp = g;
+            float l = st.loopL[i] < 0.f ? -st.loopL[i] : st.loopL[i]; if (l > lp) lp = l;
+            float m = st.micL[i]  < 0.f ? -st.micL[i]  : st.micL[i];  if (m > mp) mp = m;
         }
-        viz_out   = viz_out * 0.9f + op * 0.1f;
-        viz_grain = viz_grain > gp ? viz_grain * 0.85f : gp;
+        viz_out       = viz_out * 0.9f + op * 0.1f;
+        /* per-channel meter: fast envelope + slow-release peak-hold (see meter_bri) */
+        viz_loop_env  = viz_loop_env  * 0.90f + lp * 0.10f;  viz_loop_pk  = lp > viz_loop_pk  ? lp : viz_loop_pk  * 0.9990f;
+        viz_micro_env = viz_micro_env * 0.90f + mp * 0.10f;  viz_micro_pk = mp > viz_micro_pk ? mp : viz_micro_pk * 0.9990f;
+        viz_grain_env = viz_grain_env * 0.90f + gp * 0.10f;  viz_grain_pk = gp > viz_grain_pk ? gp : viz_grain_pk * 0.9990f;
         int llen = (int)(fx.loop_length_bars * 4.f * 60.f / (fx.bpm > 0.f ? fx.bpm : 120.f) * (float)AMB_SR);
         if (llen < 1) llen = 1;
+        viz_loop_len = (unsigned)llen;
         viz_loop += BLOCK_SIZE; if (viz_loop >= (unsigned)llen) viz_loop -= (unsigned)llen;
+        int mlen = (int)(fx.micro_bars * 4.f * 60.f / (fx.bpm > 0.f ? fx.bpm : 120.f) * (float)AMB_SR);
+        if (mlen < 1) mlen = 1;
+        viz_micro_len = (unsigned)mlen;
+        /* Freeze the micro-loop star when Satellite is at/near the top (held shimmer). */
+        if (fx.micro_hold < 0.9f) { viz_micro += BLOCK_SIZE; if (viz_micro >= (unsigned)mlen) viz_micro -= (unsigned)mlen; }
         return true;
     }
 
