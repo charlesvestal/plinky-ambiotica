@@ -241,6 +241,18 @@ struct ambiotica_panel : panel_t {
                 mix_buffers_t* mix_buffers_out) override {
         panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);   /* render synth -> dry */
 
+#ifdef AMB_BYPASS
+        /* DIAGNOSTIC: skip the entire Ambiotica chain — just pass the synth's dry
+         * bus through my I/O path (in-gain + clip) and own the output. If this
+         * fizzes, the artifact is the synth/I-O, NOT the FX chain. */
+        const float kb = (1.0f / 32768.0f) * AMB_IN_GAIN;
+        for (int i = 0; i < BLOCK_SIZE * 2; i++) {
+            int v = (int)(mix_buffers_out->dry[i] * kb * 32767.0f);
+            audiobuf_out[i] = (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
+        }
+        return true;
+#endif
+
         if (!dsp_ok) {                                   /* passthrough (alloc failed) */
             for (int i = 0; i < BLOCK_SIZE * 2; i++) {
                 int v = mix_buffers_out->dry[i];
