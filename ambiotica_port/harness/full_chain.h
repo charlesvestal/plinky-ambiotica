@@ -106,12 +106,14 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
  * out, and stay in float [-1,1]. The *_q7/q8 mappings + shimmer are the tunables. */
 static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
                               float* outL, float* outR, int n, const full_params* p) {
-    /* Tail -> room size + feedback/sustain; Spectra -> a little shimmer. TUNABLES. */
-    int size_q7 = (int)(p->decay * 127.0f);   if (size_q7 < 0) size_q7 = 0; if (size_q7 > 127) size_q7 = 127;
-    reverb_extra_fb_gain_q8 = (int)(p->ring * 255.0f);          /* sustain follows Tail's ring */
-    reverb_extra_shimmer    = 0;   /* native-reverb octave shimmer OFF. Spectra is the tuned-chord
-                                      resonator (harmony_process, below) — a separate thing; don't
-                                      conflate it with this reverb's shimmer effect. */
+    /* Tail -> room size ONLY. reverb_extra_fb_gain_q8 BOOSTS the reverb's internal
+     * feedback; ring*255 (=max) drove it past self-oscillation → infinite-feedback
+     * overload that railed the buffer and killed audio. Keep the boost 0 (decay
+     * comes from size_q7); if the tail is too short we add a SMALL amount later. */
+    int size_q7 = 48 + (int)(p->decay * 72.0f);   /* ~48..120 room size (TUNABLE) */
+    if (size_q7 < 0) size_q7 = 0; if (size_q7 > 120) size_q7 = 120;
+    reverb_extra_fb_gain_q8 = 0;   /* NO extra feedback (was the runaway) */
+    reverb_extra_shimmer    = 0;   /* off — Spectra is the tuned chord (harmony_process), not this */
     const float kIn = 32767.0f, kOut = 1.0f / 32768.0f;
     for (int i = 0; i < n; i += 2) {
         float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
@@ -121,6 +123,10 @@ static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
         int wl = 0, wr = 0;
         do_reverb((int)(cl * kIn), (int)(cr * kIn), size_q7, &wl, &wr);   /* accumulates */
         float wL = (float)wl * kOut, wR = (float)wr * kOut;
+        /* safety net: bound the wet so a hot native-reverb output can't run away
+         * through the downstream harmony + drift-regen feedback into the loop. */
+        if (wL > 1.5f) wL = 1.5f; else if (wL < -1.5f) wL = -1.5f;
+        if (wR > 1.5f) wR = 1.5f; else if (wR < -1.5f) wR = -1.5f;
         outL[i] = 0.5f * (st->br_holdL + wL);   /* 16k -> 32k linear upsample */
         outR[i] = 0.5f * (st->br_holdR + wR);
         if (i + 1 < n) { outL[i + 1] = wL; outR[i + 1] = wR; }
