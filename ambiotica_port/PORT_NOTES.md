@@ -1,7 +1,7 @@
 # Ambiotica → Plinky port notes
 
-Private working area. Vendored proprietary DSP in `dsp/` (from
-`schwung-parent/ambiotica-plugin`). Harness in `harness/`.
+Working area. Vendored DSP in `dsp/` from `ambiotica-plugin` (same author,
+MIT — see LICENSE). Harness in `harness/`.
 
 ## STATUS: full chain runs clean on device ✅ (2026-07-23)
 
