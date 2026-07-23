@@ -22,7 +22,11 @@
  * click). 2*1.5s + 1s = 4s, so 5s leaves margin. (Was 2 s, which lapped.) */
 #define G_BUF_SAMPLES       (5 * G_SAMPLE_RATE)       /* 5 s stereo capture */
 #define G_MAX_SCATTER_SAMP  G_SAMPLE_RATE             /* 1 s — fixed (was buf/2, =1s @2s buf) */
-#define G_MAX_GRAINS        12                    /* headroom for denser overlap */
+#ifndef G_MAX_GRAINS
+#define G_MAX_GRAINS        6     /* Plinky: 12->6. Granular = scattered PSRAM reads
+                                     (the heaviest core1 cost); halving grain count
+                                     ~halves that traffic to fit the 2ms budget. */
+#endif
 #define G_GRAIN_MIN_SAMPLES 4410                  /* 100 ms — long, smooth (was 10 ms) */
 #define G_GRAIN_MAX_SAMPLES 66150                 /* 1.5 s — stretched pad (was 500 ms) */
 
