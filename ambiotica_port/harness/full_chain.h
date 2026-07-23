@@ -104,7 +104,9 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     const float kLoopBedMakeup = 1.9f;
     const float scatter  = p->scatter;
     const float cleanG   = (scatter <= 0.5f) ? 1.0f : (1.0f - 2.0f * (scatter - 0.5f));
-    const float shimmerG = scatter;
+    const float shimmerG = 0.55f + 0.30f * scatter;   /* 0.55..0.85 — plugin parity: a grain
+                                                         floor so the pitched (oct/5th) grains
+                                                         blend as an in-key bed, not exposed blips */
     const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
     const float dcIC = 0.005f, fbIC = 0.02f;
 

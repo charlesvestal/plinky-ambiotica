@@ -67,6 +67,7 @@ void harmony_reset(harmony_t *h) {
 void harmony_set_chord(harmony_t *h, const float *freqs, int n) {
     if (!h || !freqs) return;
     if (n < 0) n = 0; if (n > HARMONY_MAX_VOICES) n = HARMONY_MAX_VOICES;
+    const int prev = h->n_voices;      /* voices already ringing at a pitch */
     h->n_voices = n;
     for (int v = 0; v < n; v++) {
         float f = freqs[v];
@@ -75,6 +76,11 @@ void harmony_set_chord(harmony_t *h, const float *freqs, int n) {
         if (d > (float)(h->buflen - 2)) d = (float)(h->buflen - 2);
         if (d < 2.0f) d = 2.0f;
         h->delay_target[v] = d;
+        /* Newly-voiced note: SNAP the delay to pitch instead of gliding from the
+         * A3 create-time default — that glide was an audible downward swoop each
+         * time the chord first engaged. Voices already ringing still glide (so a
+         * future key change bends smoothly rather than clicks). */
+        if (v >= prev) h->delay[v] = d;
     }
 }
 
