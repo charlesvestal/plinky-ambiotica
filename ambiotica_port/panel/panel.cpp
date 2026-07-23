@@ -196,6 +196,8 @@ struct ambiotica_panel : panel_t {
     void on_ui(int dt_us) override {
         leds_clear();
         frame_ctr++;
+        if ((frame_ctr % 60) == 0)   /* native-reverb wet level x1000 (calibrate kIn/kOut; want ~200-600, <1500) */
+            printf("REVLVL wet=%d\n", (int)(st.br_peak * 1000.f));
 #ifdef AMB_DEBUG
         /* print per-stage metrics from core0 (~2x/sec). hf x1000: clean ~4-20;
          * the first stage that spikes is where the fizz is injected. */
