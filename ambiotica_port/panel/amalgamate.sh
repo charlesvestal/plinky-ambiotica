@@ -32,6 +32,7 @@ MODULES="looper granular microloop reverb harmony bloom drift lfo dattorro"
     [ -n "$LEVEL" ] && echo "#define AMB_CHAIN_LEVEL $LEVEL"
     echo "#define LOOPER_I16"
     echo "#define AMB_DATTORRO   // Dattorro plate reverb (lush, long, ~48KB half-rate)"
+    echo "#define AMB_STAGE_TIMING   // TEMP: per-stage core1 us profiling (STG printf)"
     strip "$HN/alloc_prelude.h"
     for h in $MODULES; do strip "$DSP/$h.h"; done
     strip "$DSP/rate_util.h"
