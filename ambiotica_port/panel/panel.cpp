@@ -57,6 +57,10 @@ struct ambiotica_panel : panel_t {
     unsigned int viz_loop_len = 1, viz_micro_len = 1;          /* their cycle lengths in samples (falling-star clocks) */
     float        shimmer_phase = 0.f;              /* UI-side shimmer LFO shared by the Tail+Flux sliders */
     float        ghost_phase = 0.f;                /* ~2 Hz flash for the Gravity-ghost column extensions */
+    /* Gravity starfield particles (over the play surface): stream inward + respawn. */
+    float        gstar_x[18] = {0}, gstar_y[18] = {0};
+    unsigned     gstar_rng = 0x2468ace1u;
+    bool         gstar_ready = false;
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
        envelope against its own slow peak-hold: idle -> dim floor, emitting ->
@@ -294,28 +298,49 @@ struct ambiotica_panel : panel_t {
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
         fx.horizon = gd < 0 ? (float)fx_val15 / 64.f : 1.f;    /* down -> horizon 1..0 (drain) */
 
-        /* Gravity starfield: a dust of stars over the play surface collapses toward a
-           central well as Gravity engages (echoing the plugin's lensed starfield) and
-           converges into a bright core at full pull. Drawn last (overlays the surface)
-           and only while Gravity is engaged, so it doesn't clutter normal playing. */
+        /* Gravity starfield: a live particle stream over the play surface. Stars fall
+           inward toward a central well, accelerate as they near it, get swallowed at the
+           core and respawn at a random rim edge — a continuous collapse echoing the
+           plugin's gravitational lens. Infall speed scales with Gravity. Pure core0 (no
+           audio cost); overlaid last and only while Gravity is engaged. */
         if (gg > 0.02f) {
-            static const unsigned char stX[14] = { 1,6,3,0,7,2,5,1,6,4,0,7,3,5 };
-            static const unsigned char stY[14] = { 1,2,4,6,7,9,11,13,14,0,10,3,15,6 };
+            const int   GSTAR_N = 18;
             const float wx = 3.5f, wy = 7.5f;      /* well = play-surface centre */
-            const float t = gg * gg;               /* ease-in: stars hang, then rush in */
-            for (int s = 0; s < 14; s++) {
-                float sx = (float)stX[s] + (wx - (float)stX[s]) * t;
-                float sy = (float)stY[s] + (wy - (float)stY[s]) * t;
-                int ix = (int)(sx + 0.5f), iy = (int)(sy + 0.5f);
+            #define GSTAR_RND ((gstar_rng = gstar_rng * 1664525u + 1013904223u) >> 8)
+            if (!gstar_ready) {                    /* first engage: scatter across the surface */
+                for (int s = 0; s < GSTAR_N; s++) { gstar_x[s] = (float)(GSTAR_RND & 7);
+                                                    gstar_y[s] = (float)(GSTAR_RND & 15); }
+                gstar_ready = true;
+            }
+            float dt = (float)dt_us * 1e-6f; if (dt > 0.1f) dt = 0.1f;
+            const float speed = 2.0f + 11.0f * gg;                 /* cells/s, faster as Gravity deepens */
+            for (int s = 0; s < GSTAR_N; s++) {
+                float dx = wx - gstar_x[s], dy = wy - gstar_y[s];
+                float dist = sqrtf(dx * dx + dy * dy);
+                if (dist < 0.6f) {                                 /* swallowed -> respawn at a rim edge */
+                    int edge = GSTAR_RND & 3; float u = (float)(GSTAR_RND & 1023) / 1023.f;
+                    if      (edge == 0) { gstar_x[s] = u * 7.f; gstar_y[s] = 0.f;  }
+                    else if (edge == 1) { gstar_x[s] = u * 7.f; gstar_y[s] = 15.f; }
+                    else if (edge == 2) { gstar_x[s] = 0.f;  gstar_y[s] = u * 15.f; }
+                    else                { gstar_x[s] = 7.f;  gstar_y[s] = u * 15.f; }
+                    continue;
+                }
+                float step = speed * dt * (1.0f + 1.5f / (dist + 0.5f));   /* accelerate near the core */
+                if (step > dist) step = dist;
+                gstar_x[s] += dx / dist * step; gstar_y[s] += dy / dist * step;
+                int ix = (int)(gstar_x[s] + 0.5f), iy = (int)(gstar_y[s] + 0.5f);
                 if (ix < 0) ix = 0; else if (ix > 7) ix = 7;
                 if (iy < 0) iy = 0; else if (iy > 15) iy = 15;
-                float tw = 0.5f + 0.5f * ((s & 1) ? gtri : (1.f - gtri));   /* alternating twinkle */
-                int b = (int)((50.f + 170.f * t) * tw); if (b > 256) b = 256;
+                int b = 60 + (int)(190.f * (1.f - dist / 9.f));    /* brighter as they near the core */
+                if (b < 40) b = 40; if (b > 256) b = 256;
                 set_led(ix, iy, fade_col(WHITE, b));
             }
-            int cb = (int)(60.f + 195.f * t); if (cb > 256) cb = 256;   /* the core they fall into */
+            int cb = (int)(70.f + 185.f * gg); if (cb > 256) cb = 256;   /* the core they fall into */
             set_led(3, 7, fade_col(WHITE, cb)); set_led(4, 7, fade_col(WHITE, cb));
             set_led(3, 8, fade_col(WHITE, cb)); set_led(4, 8, fade_col(WHITE, cb));
+            #undef GSTAR_RND
+        } else {
+            gstar_ready = false;   /* re-scatter fresh next time Gravity engages */
         }
     }
 
