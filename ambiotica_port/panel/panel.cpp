@@ -282,25 +282,29 @@ struct ambiotica_panel : panel_t {
                                  fade_col(gd >= 0 ? GREEN : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
+        /* Deadzone around centre: a band near the middle reads as neutral (white, no
+           Gravity/drain) so you don't have to land exactly on centre. geff = how far past
+           the deadzone you are; 0 inside it. */
+        const int DZ = 10;
+        int geff = (gd > DZ) ? (gd - DZ) : (gd < -DZ ? (gd + DZ) : 0);
         /* Bipolar fill that GROWS from the centre (rows 7,8, the true middle of 0..15):
-           GREEN filling up as it's scrolled up (Gravity), RED filling down as scrolled down
-           (Event Horizon). All lit pads are coloured. Only at the exact centre position do
-           the two middle LEDs show WHITE, to mark neutral. */
+           GREEN up (Gravity), RED down (Event Horizon). All lit pads coloured; the two
+           middle LEDs show WHITE only inside the neutral deadzone. */
         for (int y = 0; y < 16; y++) {
             uint32_t c = 0;                                       /* off */
-            if (gd == 0) {
+            if (geff == 0) {
                 if (y == 7 || y == 8) c = LED_RGB(20, 20, 20);   /* neutral: white centre marker */
-            } else if (gd > 0) {                                 /* Gravity: green fill, rows 7..0 */
-                int topRow = 7 - (gd * 7) / 63;
+            } else if (geff > 0) {                               /* Gravity: green fill, rows 7..0 */
+                int topRow = 7 - (geff * 7) / (63 - DZ);
                 if (y >= topRow && y <= 7) c = fade_col(GREEN, 256);
             } else {                                             /* drain: red fill, rows 8..15 */
-                int botRow = 8 + ((-gd) * 7) / 64;
+                int botRow = 8 + ((-geff) * 7) / (64 - DZ);
                 if (y >= 8 && y <= botRow) c = fade_col(RED, 256);
             }
             set_led(15, y, c);
         }
-        fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
-        fx.horizon = gd < 0 ? (float)fx_val15 / 64.f : 1.f;    /* down -> horizon 1..0 (drain) */
+        fx.gravity = geff > 0 ? (float)geff / (float)(63 - DZ) : 0.f;              /* up   -> gravity 0..1 */
+        fx.horizon = geff < 0 ? 1.f - (float)(-geff) / (float)(64 - DZ) : 1.f;     /* down -> horizon 1..0 */
     }
 
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
