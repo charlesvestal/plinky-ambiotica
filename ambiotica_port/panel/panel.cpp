@@ -56,6 +56,7 @@ struct ambiotica_panel : panel_t {
     unsigned int viz_loop = 0, viz_micro = 0;                  /* main-loop & micro-loop phase counters */
     unsigned int viz_loop_len = 1, viz_micro_len = 1;          /* their cycle lengths in samples (falling-star clocks) */
     float        shimmer_phase = 0.f;              /* UI-side shimmer LFO shared by the Tail+Flux sliders */
+    float        ghost_phase = 0.f;                /* ~2 Hz flash for the Gravity-ghost column extensions */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
        envelope against its own slow peak-hold: idle -> dim floor, emitting ->
@@ -228,6 +229,14 @@ struct ambiotica_panel : panel_t {
         shimmer_phase += (float)dt_us * 1e-6f * (0.30f + fx.mod_rate * 2.0f);
         shimmer_phase -= (float)(int)shimmer_phase;                /* wrap to [0,1) */
         float tri = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
+        /* Gravity-ghost flash: ~2.2 Hz triangle, 40..255 white. */
+        ghost_phase += (float)dt_us * 1e-6f * 2.2f; ghost_phase -= (float)(int)ghost_phase;
+        float gtri = ghost_phase < 0.5f ? ghost_phase * 2.f : 2.f - ghost_phase * 2.f;
+        int ghostFlash = 40 + (int)(215.f * gtri);
+        /* How far Gravity is currently pulling each macro (0..1 targets mirror the
+           deriveStages lerp in push_fx_from_ui); -1 = Gravity doesn't touch it (Mix). */
+        static const float kGravTgt[FX_N] = { 0.97f, 0.55f, 1.0f, 1.0f, 0.85f, 0.60f, -1.f };
+        float gg = grav_sm < 0.f ? 0.f : (grav_sm > 1.f ? 1.f : grav_sm);
         float shimmer = tri * tri * (3.f - 2.f * tri);             /* smoothstep, softer glow */
         for (int i = 0; i < FX_N; i++) {
             /* Reactive sliders pulse their colour; Spectra & Mix stay steady.
@@ -256,6 +265,20 @@ struct ambiotica_panel : panel_t {
                 int sb = 130 + (bri - 36) / 2;  if (sb > 256) sb = 256;
                 set_led(8 + i, row, fade_col(WHITE, sb));
             }
+
+            /* Gravity ghost: while Gravity is engaged it pulls this macro above its
+               slider setting — flash white LEDs in that "extension" gap (from the set
+               level up to where Gravity has pulled it) so the collapse is visible. */
+            if (kGravTgt[i] >= 0.f && gg > 0.02f) {
+                float set01    = fx_val[i] / 127.f;
+                float pulled01 = set01 + (kGravTgt[i] - set01) * gg;
+                if (pulled01 > set01) {
+                    int setTop  = 16 - (int)(set01    * 16.f + 0.5f);   /* row above the set fill */
+                    int pullTop = 16 - (int)(pulled01 * 16.f + 0.5f);   /* row Gravity has reached (higher up) */
+                    if (pullTop < 0) pullTop = 0;
+                    for (int y = pullTop; y < setTop; y++) set_led(8 + i, y, fade_col(WHITE, ghostFlash));
+                }
+            }
         }
         push_fx_from_ui();
 
@@ -270,6 +293,30 @@ struct ambiotica_panel : panel_t {
         gd = (int)fx_val15 - 64;
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
         fx.horizon = gd < 0 ? (float)fx_val15 / 64.f : 1.f;    /* down -> horizon 1..0 (drain) */
+
+        /* Gravity starfield: a dust of stars over the play surface collapses toward a
+           central well as Gravity engages (echoing the plugin's lensed starfield) and
+           converges into a bright core at full pull. Drawn last (overlays the surface)
+           and only while Gravity is engaged, so it doesn't clutter normal playing. */
+        if (gg > 0.02f) {
+            static const unsigned char stX[14] = { 1,6,3,0,7,2,5,1,6,4,0,7,3,5 };
+            static const unsigned char stY[14] = { 1,2,4,6,7,9,11,13,14,0,10,3,15,6 };
+            const float wx = 3.5f, wy = 7.5f;      /* well = play-surface centre */
+            const float t = gg * gg;               /* ease-in: stars hang, then rush in */
+            for (int s = 0; s < 14; s++) {
+                float sx = (float)stX[s] + (wx - (float)stX[s]) * t;
+                float sy = (float)stY[s] + (wy - (float)stY[s]) * t;
+                int ix = (int)(sx + 0.5f), iy = (int)(sy + 0.5f);
+                if (ix < 0) ix = 0; else if (ix > 7) ix = 7;
+                if (iy < 0) iy = 0; else if (iy > 15) iy = 15;
+                float tw = 0.5f + 0.5f * ((s & 1) ? gtri : (1.f - gtri));   /* alternating twinkle */
+                int b = (int)((50.f + 170.f * t) * tw); if (b > 256) b = 256;
+                set_led(ix, iy, fade_col(WHITE, b));
+            }
+            int cb = (int)(60.f + 195.f * t); if (cb > 256) cb = 256;   /* the core they fall into */
+            set_led(3, 7, fade_col(WHITE, cb)); set_led(4, 7, fade_col(WHITE, cb));
+            set_led(3, 8, fade_col(WHITE, cb)); set_led(4, 8, fade_col(WHITE, cb));
+        }
     }
 
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
