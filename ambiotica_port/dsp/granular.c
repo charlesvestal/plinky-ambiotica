@@ -287,7 +287,7 @@ void granular_set_mod_rate_hz(granular_t *g, float hz) {
     lfo_set_rate_hz(&g->mod_lfo, hz);
 }
 
-void granular_process(granular_t *g,
+void PLINKY_DSP_RAM_FUNC(granular_process)(granular_t *g,
                       const float *in_l, const float *in_r,
                       float *out_l, float *out_r,
                       int frames) {

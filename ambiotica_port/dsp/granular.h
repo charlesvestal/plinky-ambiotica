@@ -13,6 +13,15 @@
 #ifndef AMBIOTICA_GRANULAR_H
 #define AMBIOTICA_GRANULAR_H
 
+/* granular_process is the heaviest core1 stage; mmalex's PLINKY_DSP_RAM_FUNC un-inlines
+ * it and copies it into SRAM so its code is exempt from the shared XIP cache (which core0's
+ * USB code otherwise hogs). Only defined by his newer firmware — no-op fallback here so the
+ * current IDE (and the desktop harness) still build. NOTE: SRAM is very tight (~1.8 KB
+ * free); if this ever fails to LINK on the new firmware, drop the wrapper. */
+#ifndef PLINKY_DSP_RAM_FUNC
+#define PLINKY_DSP_RAM_FUNC(f) f
+#endif
+
 typedef struct granular_s granular_t;
 
 /* sample_rate scales the capture buffer, grain-length bounds, and mod LFO. */
@@ -40,7 +49,7 @@ void        granular_set_mod_depth(granular_t *g, float depth_0_1);
  * grain pitch wobble and reverb breathing share a tempo. */
 void        granular_set_mod_rate_hz(granular_t *g, float hz);
 
-void        granular_process(granular_t *g,
+void        PLINKY_DSP_RAM_FUNC(granular_process)(granular_t *g,
                              const float *in_l, const float *in_r,
                              float *out_l, float *out_r,
                              int frames);
