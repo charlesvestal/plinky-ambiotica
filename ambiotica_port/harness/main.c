@@ -14,6 +14,7 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <stdlib.h>
 
 #include "full_chain.h"        /* all 7 modules + full_params + fc_render */
 
@@ -114,6 +115,8 @@ int main(void) {
     p.bloom = 0.5f; p.drift_amt = 0.3f; p.spectra = 0.6f; p.ring = 0.5f;
     p.loop_length_bars = 2.0f; p.micro_bars = 1.0f; p.bpm = 120.f; p.key = 0; p.chord = 0;   /* C minor */
     p.gravity = 0.0f; p.horizon = 1.0f;   /* horizon 1 = full sustain (0 would drain the loop) */
+    { const char *e; if ((e=getenv("MH"))) p.micro_hold=atof(e);
+      if ((e=getenv("GRAV"))) p.gravity=atof(e); if ((e=getenv("DIL"))) p.mod_depth=atof(e); }
 
     clock_t t0 = clock();
     fc_render(l, g, m, r, h, b, d, &p, SR, inL, inR, outL, outR, TOTAL);

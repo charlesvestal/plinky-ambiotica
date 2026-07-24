@@ -212,7 +212,7 @@ granular_t* granular_create(double sample_rate) {
     lfo_set_rate_hz(&g->mod_lfo, 0.3f);
     g->mod_depth_cents = 0.0f;
     g->rng = 0x12345678u;
-    g->samples_to_next = current_grain_length(g) / 3;   /* ~3x overlap = smoother */
+    g->samples_to_next = current_grain_length(g) / 2;   /* 2x = Hann COLA (constant amp, one fewer PSRAM read stream) */
     return g;
 }
 
@@ -293,7 +293,7 @@ void granular_process(granular_t *g,
         g->samples_to_next--;
         if (g->samples_to_next <= 0) {
             spawn_grain(g);
-            g->samples_to_next = current_grain_length(g) / 3;   /* ~3x overlap = smoother */
+            g->samples_to_next = current_grain_length(g) / 2;   /* 2x = Hann COLA (constant amp, one fewer PSRAM read stream) */
             if (g->samples_to_next < 1) g->samples_to_next = 1;
         }
 
