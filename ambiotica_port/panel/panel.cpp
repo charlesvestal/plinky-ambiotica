@@ -191,7 +191,10 @@ struct ambiotica_panel : panel_t {
            shade/brightness = chord type — so the left/right buttons visibly recolour
            the surface as they move the key around the circle of fifths / change the
            chord quality. */
-        uint32_t keycol = palette[(7 + chord_type * 2) & 15][fx.key & 15];
+        /* Play-surface hue is reserved to 8..15 so it can never collide with a macro
+           slider (those use hues 0..6, Orbit = 0) — the two halves must stay tellable
+           apart. Brightness still tracks the chord, hue still tracks the key. */
+        uint32_t keycol = palette[(7 + chord_type * 2) & 15][8 + (fx.key & 7)];
         /* play surface, now with an activity glow/sparkle via the brightness cb */
         /* 4-voice polyphony: the synth renders inside the same core1 2ms budget
          * as our FX; 8 voices' render time pushed us over. 4 leaves headroom for
