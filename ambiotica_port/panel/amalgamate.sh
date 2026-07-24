@@ -26,6 +26,7 @@ MODULES="looper granular microloop harmony bloom drift lfo dattorro"
     echo "// build ${STAMP_HASH}  generated ${STAMP_TIME}"
     echo "// Ambiotica-on-Plinky. Vendored DSP from ambiotica-plugin, (c) Charles Vestal — MIT (see LICENSE)."
     strip "$HN/amb_config.h"          # build config (LOOPER_I16); per-module flags live in their .c files
+    [ -n "$AMB_PROFILE" ] && echo "#define AMB_PROFILE   // per-stage core1 timing (STG printf); set AMB_PROFILE=1 to build"
     strip "$HN/alloc_prelude.h"
     for h in $MODULES; do strip "$DSP/$h.h"; done
     strip "$DSP/rate_util.h"

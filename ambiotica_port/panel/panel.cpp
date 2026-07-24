@@ -186,6 +186,18 @@ struct ambiotica_panel : panel_t {
 
     void on_ui(int dt_us) override {
         leds_clear();
+#ifdef AMB_PROFILE
+        /* Per-stage core1 timing (avg us/block), ~4x/sec. Enable with AMB_PROFILE. */
+        static unsigned prof_ctr = 0;
+        if ((++prof_ctr % 60) == 0 && g_stage_n) {
+            printf("STG loop=%u gran=%u mic=%u rev=%u harm=%u mix=%u push=%u  (n=%u)\n",
+                   g_stage_us[0]/g_stage_n, g_stage_us[1]/g_stage_n, g_stage_us[2]/g_stage_n,
+                   g_stage_us[3]/g_stage_n, g_stage_us[4]/g_stage_n, g_stage_us[5]/g_stage_n,
+                   g_stage_us[6]/g_stage_n, g_stage_n);
+            for (int s = 0; s < 7; s++) g_stage_us[s] = 0;
+            g_stage_n = 0;
+        }
+#endif
         voices_seen = 0;
         /* Play-surface colour: hue = key (root), shade/brightness = mode — so the
            left/right buttons visibly recolour the surface as they move the key around
