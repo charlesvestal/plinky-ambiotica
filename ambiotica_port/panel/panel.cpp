@@ -60,8 +60,7 @@ struct ambiotica_panel : panel_t {
     unsigned int viz_loop = 0, viz_micro = 0;                  /* main-loop & micro-loop phase counters */
     unsigned int viz_loop_len = 1, viz_micro_len = 1;          /* their cycle lengths in samples (falling-star clocks) */
     float        shimmer_phase = 0.f;              /* slow LFO for the Tail slider's shimmer */
-    float        ghost_phase = 0.f;                /* rising-spark phase for the Gravity-ghost cascade */
-    float        flux_phase  = 0.f;                /* Flux slider's own (faster) modulation flash */
+    float        ghost_phase = 0.f;                /* rising-spark phase for the Gravity-ghost emission */
     float        freeze_phase = 0.f;               /* Satellite freeze indicator: fast 3-spot bounce */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
@@ -229,19 +228,16 @@ struct ambiotica_panel : panel_t {
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
         voices_active = voices_seen;
         static const char* nm[FX_N] = { "Orbit","Satellite","Constellate","Tail","Flux","Spectra","Mix" };
-        /* Tail shimmers on a slow LFO; Flux gets its OWN, distinctly faster flash (tracks
-           its mod rate) so the modulator reads as moving and doesn't sync with the rest. */
+        /* Tail + Flux flash IN SYNC on one LFO whose rate tracks the Flux mod rate — the
+           modulation pair, at a speed distinct from the ghost cascade and the loop meters. */
         float tail = fx_val[FX_TAIL] / 127.f, flux = fx_val[FX_FLUX] / 127.f;
-        shimmer_phase += (float)dt_us * 1e-6f * 0.45f;                      shimmer_phase -= (float)(int)shimmer_phase;
-        flux_phase    += (float)dt_us * 1e-6f * (1.2f + fx.mod_rate * 3.f); flux_phase    -= (float)(int)flux_phase;
-        float tailTri = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
-        float fluxTri = flux_phase    < 0.5f ? flux_phase    * 2.f : 2.f - flux_phase    * 2.f;
-        float tailShim = tailTri * tailTri * (3.f - 2.f * tailTri);
-        float fluxShim = fluxTri * fluxTri * (3.f - 2.f * fluxTri);
-        /* Gravity-ghost cascade: a 0..1 sawtooth (~1.6 Hz) sweeps a bright purple head up
-           each pulled column. Satellite freeze bounce: a faster phase for the 3-spot hold. */
-        ghost_phase  += (float)dt_us * 1e-6f * 1.6f; ghost_phase  -= (float)(int)ghost_phase;
-        freeze_phase += (float)dt_us * 1e-6f * 2.5f; freeze_phase -= (float)(int)freeze_phase;
+        shimmer_phase += (float)dt_us * 1e-6f * (0.35f + fx.mod_rate * 2.2f); shimmer_phase -= (float)(int)shimmer_phase;
+        float shTri   = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
+        float shimmer = shTri * shTri * (3.f - 2.f * shTri);
+        /* Gravity ghost: a purple spark is EMITTED at the bottom of each pulled column and
+           shoots up while fading out (an emission, not a looping band). ~0.8 Hz. */
+        ghost_phase  += (float)dt_us * 1e-6f * 0.8f; ghost_phase  -= (float)(int)ghost_phase;
+        freeze_phase += (float)dt_us * 1e-6f * 2.5f; freeze_phase -= (float)(int)freeze_phase;   /* Satellite freeze bounce */
         /* How far Gravity is currently pulling each macro (targets mirror the deriveStages
            lerp), indexed by the reordered columns; -1 = Gravity doesn't touch it (Mix). */
         static const float kGravTgt[FX_N] = { 0.97f, 1.0f, 0.55f, 1.0f, 0.85f, 0.60f, -1.f };
@@ -254,8 +250,8 @@ struct ambiotica_panel : panel_t {
                 case FX_ORBIT:       bri = meter_bri(viz_loop_env,  viz_loop_pk,  0.02f); break;  /* pulse: main loop emitting */
                 case FX_SATELLITE:   bri = meter_bri(viz_micro_env, viz_micro_pk, 0.01f); break;  /* pulse: micro-loop emitting */
                 case FX_CONSTELLATE: bri = meter_bri(viz_grain_env, viz_grain_pk, 0.01f); break;  /* pulse: grains firing */
-                case FX_TAIL:        bri = 60 + (int)(tail * tailShim * 196.f); break;  /* slow reverb shimmer */
-                case FX_FLUX:        bri = 60 + (int)(flux * fluxShim * 196.f); break;  /* fast modulation flash */
+                case FX_TAIL:        bri = 60 + (int)(tail * shimmer * 196.f); break;  /* Tail + Flux shimmer in sync */
+                case FX_FLUX:        bri = 60 + (int)(flux * shimmer * 196.f); break;
             }
             if (bri < 0) bri = 0; if (bri > 256) bri = 256;
             fxslider[i].simple_slider(8 + i, 0, 16, VERTICAL | SHOW_STEM,
@@ -292,13 +288,15 @@ struct ambiotica_panel : panel_t {
                     int pullTop = 16 - (int)(pulled01 * 16.f + 0.5f);   /* row Gravity has reached (extension top) */
                     if (pullTop < 0) pullTop = 0;
                     int hgt = setTop - pullTop;
-                    const float trail = 0.5f;                          /* trail length, fraction of the gap */
+                    const float head = ghost_phase;        /* 0 = bottom of gap .. 1 = top */
+                    const float life = 1.f - ghost_phase;  /* the spark fades as it climbs -> emission, not loop */
+                    const float trail = 0.40f;             /* trail length below the head, fraction of the gap */
                     for (int y = pullTop; y < setTop; y++) {
-                        float frac = (hgt > 1) ? (float)(setTop - 1 - y) / (float)(hgt - 1) : 1.f;  /* 0 bottom..1 top */
-                        float dd = ghost_phase - frac;                 /* >=0: row is at/below the rising head */
-                        if (dd >= 0.f && dd < trail) {
-                            int b = 30 + (int)(225.f * (1.f - dd / trail));   /* bright head, fade the trail below */
-                            set_led(8 + i, y, fade_col(AMB_PURPLE, b > 256 ? 256 : b));
+                        float frac  = (hgt > 1) ? (float)(setTop - 1 - y) / (float)(hgt - 1) : 0.f;  /* 0 bottom..1 top */
+                        float below = head - frac;         /* >=0: this row is below the rising head */
+                        if (below >= 0.f && below < trail) {
+                            int b = (int)(255.f * life * (1.f - below / trail));   /* bright head, fade down + fade as it rises */
+                            if (b > 8) set_led(8 + i, y, fade_col(AMB_PURPLE, b > 256 ? 256 : b));
                         }
                     }
                 }
