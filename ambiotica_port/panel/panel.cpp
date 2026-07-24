@@ -278,8 +278,32 @@ struct ambiotica_panel : panel_t {
         /* 4-voice polyphony: the synth renders inside the same core1 2ms budget
          * as our FX; 8 voices' render time pushed us over. 4 leaves headroom for
          * the full chain and is plenty for an ambient wash. */
-        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(keycol), keycol, 48, 3, note_cb, this,
-                             VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, 0, -1,
+        /* Chord-tone string layout: each string's ROOT is a chord tone, stacked up in
+           octaves — so playing ACROSS strings voices the selected Spectra chord, and
+           sliding ALONG a string moves through the key's scale (scale_root = fx.key).
+           Root follows the circle-of-fifths key. Semitone intervals above the key root:
+           min 0-3-7, maj 0-4-7, sus4 0-5-7, 5th 0-7, oct = octaves. */
+        static const struct { unsigned char n; unsigned char iv[3]; } kChordTones[5] = {
+            { 3, { 0, 3, 7 } },   /* min  */
+            { 3, { 0, 4, 7 } },   /* maj  */
+            { 3, { 0, 5, 7 } },   /* sus4 */
+            { 2, { 0, 7, 0 } },   /* 5th  */
+            { 1, { 0, 0, 0 } },   /* oct  (root octaves) */
+        };
+        int ci = (chord_type < 0 || chord_type > 4) ? 1 : chord_type;
+        unsigned char cn = kChordTones[ci].n;
+        int cbase = 48 + fx.key;                          /* key root, ~C3 register */
+        unsigned char string_roots[8];
+        for (int i = 0; i < 8; i++) {
+            int r = cbase + kChordTones[ci].iv[i % cn] + 12 * (i / cn);
+            string_roots[i] = (unsigned char)(r < 0 ? 0 : (r > 127 ? 127 : r));
+        }
+        /* Along-string scale follows the chord tonality so slides stay in-key. */
+        uint16_t surf_scale = (chord_type == 0) ? 1453      /* natural minor 0,2,3,5,7,8,10 */
+                            : (chord_type == 3) ? 661       /* major pentatonic 0,2,4,7,9   */
+                            :                     2741;     /* major         0,2,4,5,7,9,11 */
+        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(keycol), keycol, string_roots, note_cb, this,
+                             VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, surf_scale, fx.key,
                              viz_brightness, this);
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
