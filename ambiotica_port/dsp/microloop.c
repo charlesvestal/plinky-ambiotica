@@ -413,11 +413,13 @@ void microloop_process(microloop_t *m,
         m->lp_R += m->lp_a1 * (oR - m->lp_R);
         oL += (m->lp_L - oL) * pad_amt;
         oR += (m->lp_R - oR) * pad_amt;
+#ifndef AMB_NO_SHIMMER
         if (m->shimmer_amt > 0.0f) {
             float sh = micro_shimmer (m, (oL + oR) * 0.5f);
             oL += m->shimmer_amt * sh;
             oR += m->shimmer_amt * sh;
         }
+#endif
         out_l[n] = oL;
         out_r[n] = oR;
 
