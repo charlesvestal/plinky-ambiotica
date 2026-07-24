@@ -82,6 +82,8 @@ struct granular_s {
     grain_t grains[G_MAX_GRAINS];
     int     samples_to_next;     /* countdown to next grain spawn */
     unsigned spawn_count;        /* monotonic # of grains spawned (GUI tap, read-only) */
+    int     hr_tick;             /* half-rate render toggle (grains rendered every 2nd sample) */
+    float   hr_l, hr_r;          /* held grain-sum output between half-rate renders */
 
     /* Rate-scaled grain-length bounds (equal G_GRAIN_*_SAMPLES at 44.1 kHz). */
     int     grain_min;
@@ -244,6 +246,7 @@ void granular_reset(granular_t *g) {
     memset(g->buf, 0, (size_t)g->buf_len * 2 * sizeof(short));
     g->write_pos = 0;
     g->samples_to_next = 0;
+    g->hr_tick = 0; g->hr_l = g->hr_r = 0.f;
     for (int i = 0; i < G_MAX_GRAINS; i++) g->grains[i].active = 0;
 }
 
@@ -313,7 +316,11 @@ void granular_process(granular_t *g,
             if (g->samples_to_next < 1) g->samples_to_next = 1;
         }
 
-        /* 3. Render active grains. */
+        /* 3. Render active grains at HALF RATE. The scattered PSRAM grain reads are the
+         *    XIP-cache hog, so render every 2nd sample (grains advance 2x to keep pitch &
+         *    length) and hold the sum between — halves the cache footprint; the reverb
+         *    wash smears the 16 kHz. */
+        if ((g->hr_tick ^= 1)) {
         float sum_l = 0.0f, sum_r = 0.0f;
         for (int i = 0; i < G_MAX_GRAINS; i++) {
             grain_t *gr = &g->grains[i];
@@ -346,15 +353,16 @@ void granular_process(granular_t *g,
             sum_l += yl * env;
             sum_r += yr * env;
 
-            /* Advance grain with shared LFO pitch wobble applied. */
-            gr->read_pos += gr->read_step * pitch_mod;
+            /* Advance grain 2x (half-rate) with shared LFO pitch wobble applied. */
+            gr->read_pos += 2.0f * gr->read_step * pitch_mod;
             if (gr->read_pos >= (float)buf_len) gr->read_pos -= (float)buf_len;
             else if (gr->read_pos < 0.0f) gr->read_pos += (float)buf_len;
-            gr->age++;
+            gr->age += 2;
             if (gr->age >= gr->length) gr->active = 0;
         }
-
-        out_l[n] = sum_l;
-        out_r[n] = sum_r;
+            g->hr_l = sum_l; g->hr_r = sum_r;
+        }
+        out_l[n] = g->hr_l;
+        out_r[n] = g->hr_r;
     }
 }
