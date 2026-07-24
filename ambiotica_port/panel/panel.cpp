@@ -282,19 +282,22 @@ struct ambiotica_panel : panel_t {
                                  fade_col(gd >= 0 ? GREEN : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
-        /* The middle two LEDs (rows 7,8 — the true centre of a 0..15 column) stay WHITE so
-           neutral is always visible. The WHOLE column tints from white toward GREEN as it's
-           scrolled up (Gravity) / RED as it's scrolled down (Event Horizon); the tint depth
-           tracks how far from centre. */
-        float amt = (gd >= 0) ? (float)gd / 63.f : (float)(-gd) / 64.f;   /* 0..1 magnitude */
-        if (amt > 1.f) amt = 1.f;
+        /* Bipolar fill that GROWS from the centre (rows 7,8, the true middle of 0..15):
+           GREEN filling up as it's scrolled up (Gravity), RED filling down as scrolled down
+           (Event Horizon). All lit pads are coloured. Only at the exact centre position do
+           the two middle LEDs show WHITE, to mark neutral. */
         for (int y = 0; y < 16; y++) {
-            int r, g, b;
-            if (y == 7 || y == 8) { r = g = b = 24; }                                              /* white centre */
-            else if (gd > 0) { r = (int)(18.f - 18.f*amt); g = (int)(18.f + 13.f*amt); b = (int)(18.f - 18.f*amt); }  /* white->green */
-            else if (gd < 0) { r = (int)(18.f + 13.f*amt); g = (int)(18.f - 18.f*amt); b = (int)(18.f - 18.f*amt); }  /* white->red */
-            else             { r = g = b = 18; }                                                   /* neutral white */
-            set_led(15, y, LED_RGB(r, g, b));
+            uint32_t c = 0;                                       /* off */
+            if (gd == 0) {
+                if (y == 7 || y == 8) c = LED_RGB(20, 20, 20);   /* neutral: white centre marker */
+            } else if (gd > 0) {                                 /* Gravity: green fill, rows 7..0 */
+                int topRow = 7 - (gd * 7) / 63;
+                if (y >= topRow && y <= 7) c = fade_col(GREEN, 256);
+            } else {                                             /* drain: red fill, rows 8..15 */
+                int botRow = 8 + ((-gd) * 7) / 64;
+                if (y >= 8 && y <= botRow) c = fade_col(RED, 256);
+            }
+            set_led(15, y, c);
         }
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
         fx.horizon = gd < 0 ? (float)fx_val15 / 64.f : 1.f;    /* down -> horizon 1..0 (drain) */
