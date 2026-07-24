@@ -7,7 +7,7 @@
  * Runs at HALF the host rate (16 kHz for the Plinky's 32 kHz) so the delay lines
  * fit SRAM (~48 KB float vs ~96 KB at full rate); reverb tails are dark so the
  * bandwidth loss is inaudible. dattorro_process() decimates 32->16k in and linearly
- * upsamples 16->32k out (same scheme the native do_reverb path used).
+ * upsamples 16->32k out.
  *
  * The two decay-diffusion-1 allpasses are modulated by slow ~1 Hz LFOs (interpolated
  * reads) to break the tank's metallic ringing — cheap in CPU, free in memory. */

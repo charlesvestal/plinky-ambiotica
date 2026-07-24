@@ -3,8 +3,9 @@
  * Play surface (left half) drives the built-in synth; its dry bus feeds the Ambiotica
  * chain (full_chain.h), which runs on core1 in on_dsp() and owns the output (the
  * built-in FX are silenced — Ambiotica IS the FX). See PORT_NOTES.md for the
- * core1-budget story. Reverb / module selection comes from the amalgamate.sh defines
- * (AMB_DATTORRO, AMB_NO_SHIMMER, AMB_NO_CLOUD, LOOPER_I16).
+ * core1-budget story. Build config: amb_config.h (LOOPER_I16) concatenated by
+ * amalgamate.sh; per-module flags live in their own files (shimmer/cloud off in
+ * microloop.c). Reverb is always the Dattorro plate.
  */
 #define PANEL_PAD_COLOR TEAL
 #define AMB_SR 32000.0
@@ -18,16 +19,16 @@
 enum { FX_ORBIT, FX_CONSTELLATE, FX_SATELLITE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
 struct ambiotica_panel : panel_t {
-    looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0; reverb_t* reverb = 0;
+    looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0;
     harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
     bool dsp_ok = false;
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
     full_params fx_sm;   /* per-block-smoothed macros actually fed to the chain (de-click) */
     fc_state    st;
-    /* Reverb + harmony + drift + bloom live here (fast SRAM) — the reverb's
-     * scattered delay-line access was too slow in PSRAM. ~82 KB used; fits the
-     * 128 KB panel arena. Looper/micro-loop/granular stay in PSRAM. */
+    /* Dattorro reverb + harmony + drift + bloom live here (fast SRAM) — their
+     * scattered delay-line access is too slow in PSRAM. Fits the 128 KB panel arena.
+     * Looper/micro-loop/granular (big, sequential-ish) stay in PSRAM. */
     unsigned char sram_pool[88 * 1024];
 
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
@@ -42,7 +43,6 @@ struct ambiotica_panel : panel_t {
     float          grav_sm = 0.f;              /* Gravity macro, ramped ~2 s (plugin gravitySmooth) */
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
-    int            reverb_warmup = 0;   /* native-reverb: do_fx warmup blocks done */
 
     /* visualization taps — written in on_dsp (core1 audio), read in on_ui.
        Each reactive slider is a SELF-CALIBRATING meter: env = fast envelope,
@@ -79,18 +79,11 @@ struct ambiotica_panel : panel_t {
         push_fx_from_ui();
         fx_sm = fx;   /* start the smoother at the target so nothing ramps up from 0 on boot */
 
-        /* Ambiotica IS the FX. Silence the Plinky built-in reverb/delay so it can't
-         * run in parallel with our chain: (1) the stock synth preset ships
-         * reverb_send=24, and (2) the MIX preset's REVERB_SHIMMER/FEEDBACK drive
-         * the native reverb do_reverb() reads — the octave-shimmer cascade.
-         * set_param_packed(...,0,...) clears every corner. (Mix-param addressing:
-         * raw MIX_PARAM_* — if it needs +128, this is the one line to flip.) */
-        set_param_packed(VOICE_PARAM_REVERB_SEND,   0, &synth_presets[synth_preset]);
-        set_param_packed(VOICE_PARAM_DELAY_SEND,    0, &synth_presets[synth_preset]);
-        set_param_packed(MIX_PARAM_REVERB_SHIMMER,  0, &synth_presets[MIX_PRESET_IDX]);   /* shimmer OFF */
-        /* Gentle fixed feedback for a decaying ambient tail (packed = value in each of
-         * the 8 corner bytes). Low: it builds up + adds to the mix. TUNABLE. */
-        set_param_packed(MIX_PARAM_REVERB_FEEDBACK, (unsigned long long)12 * 0x0101010101010101ULL, &synth_presets[MIX_PRESET_IDX]);
+        /* Ambiotica IS the FX and owns the output (on_dsp returns true), so do_fx never
+         * runs — but zero the synth voices' reverb/delay sends defensively so nothing can
+         * bleed into a native bus. */
+        set_param_packed(VOICE_PARAM_REVERB_SEND, 0, &synth_presets[synth_preset]);
+        set_param_packed(VOICE_PARAM_DELAY_SEND,  0, &synth_presets[synth_preset]);
 
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
@@ -101,22 +94,14 @@ struct ambiotica_panel : panel_t {
         if (ps) looper    = looper_create(loopcap, sr);
         if (ps) microloop = microloop_create(sr);
         if (ps) granular  = granular_create(sr);
-        g_amb_region = 0;   /* SRAM pool: fast-access modules (reverb/harmony/drift/bloom) */
-#if !defined(AMB_BUILTIN_REVERB) && !defined(AMB_DATTORRO)
-        reverb  = reverb_create(sr);        /* modal reverb — only when neither Dattorro nor native is selected */
-#endif
+        g_amb_region = 0;   /* SRAM pool: fast-access modules (dattorro/harmony/drift/bloom) */
         bloom   = bloom_create(sr);
         drift   = drift_create(sr);
         harmony = harmony_create(sr);
         dsp_ok = looper && microloop && granular && bloom && drift && harmony;
-#if !defined(AMB_BUILTIN_REVERB) && !defined(AMB_DATTORRO)
-        dsp_ok = dsp_ok && reverb;
-#endif
         fc_init(&st, 0.7f);
-#if defined(AMB_DATTORRO)
         st.dat = dattorro_create(sr);   /* Dattorro plate (SRAM region); after fc_init zeroes st */
         dsp_ok = dsp_ok && st.dat;
-#endif
     }
 
     void push_fx_from_ui() {
@@ -301,21 +286,6 @@ struct ambiotica_panel : panel_t {
                 mix_buffers_t* mix_buffers_out) override {
         panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);   /* render synth -> dry */
 
-#ifdef AMB_BUILTIN_REVERB
-        /* Native-reverb warmup (no symbols needed): for the first blocks, return
-         * false so the standard chain (do_fx) runs and RESOLVES our zeroed mix
-         * preset (REVERB_SHIMMER=0) into the reverb's internal static config that
-         * do_reverb() reads. Silence the buses so it's inaudible. Then own the
-         * output and drive do_reverb ourselves — with (hopefully) shimmer off. */
-        if (reverb_warmup < 96) {
-            reverb_warmup++;
-            memset(mix_buffers_out->dry,        0, sizeof(mix_buffers_out->dry));
-            memset(mix_buffers_out->reverbsend, 0, sizeof(mix_buffers_out->reverbsend));
-            memset(mix_buffers_out->delaysend,  0, sizeof(mix_buffers_out->delaysend));
-            return false;   /* run do_fx -> resolves reverb config from the zeroed mix preset */
-        }
-#endif
-
         if (!dsp_ok) {                                   /* passthrough (alloc failed) */
             for (int i = 0; i < BLOCK_SIZE * 2; i++) {
                 int v = mix_buffers_out->dry[i];
@@ -372,7 +342,7 @@ struct ambiotica_panel : panel_t {
             eh_flushed = false;
         }
 
-        fc_render_block(&st, looper, granular, microloop, reverb, harmony, bloom, drift,
+        fc_render_block(&st, looper, granular, microloop, harmony, bloom, drift,
                         &fx_sm, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
 
         for (int i = 0; i < BLOCK_SIZE; i++) {

@@ -7,6 +7,14 @@
 #include <string.h>
 #include <math.h>
 
+/* The octave shimmer and the freeze granular cloud are compiled out on this target:
+ * both random-access their buffers, so on the RP2350 they are dominated by scattered-
+ * PSRAM cache-miss latency, and both are inaudible under the reverb wash. The code is
+ * kept behind these guards for reference / a future cache-friendly freeze — comment a
+ * line to re-enable that piece. */
+#define AMB_NO_SHIMMER
+#define AMB_NO_CLOUD
+
 #define M_SAMPLE_RATE       44100
 #define M_MIN_LEN_SAMPLES   4410     /* 100 ms @ 44.1 kHz — above phasing range */
 #define M_MAX_LEN_SAMPLES   264600   /* 6 s @ 44.1 kHz — fits 2 bars down to 80 BPM */
