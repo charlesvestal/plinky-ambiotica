@@ -116,16 +116,29 @@ settings page) · `mics` (DSP analysis/FFT display).
 
 ---
 
-## 9. Spike log
+## 9. Performance findings (DSP-heavy panels)
 
-- **DOOM-on-16×16 (scrapped 2026-07-22).** Ran real DOOM (doomgeneric + shareware
-  `DOOM1.WAD`) headless, box-averaged 320×200 → 16×16, played back as a baked
-  panel. **Conclusion: 256 pixels can't render textured 3D legibly** — it's a
-  color-field stunt, not readable DOOM. The Discord answers above confirmed a
-  *live* engine port is technically feasible (FatFs WAD reads, 8 MB PSRAM heap,
-  core0 compute), but the display ceiling makes it a novelty, so we pivoted.
-  Key reusable insight: `get_psram_ptr` + FatFs + core0 make heavy live compute
-  viable; PSRAM's sequential-only preference is the main performance constraint.
+Learned building the Ambiotica ambient engine (a full effects chain in the ~2 ms
+core1 block). Reusable for any DSP-heavy panel:
+
+- **PSRAM is reached through a tiny (~8 KB) XIP cache.** Section 3 already notes PSRAM
+  loves sequential and hates scattered access — the sharper truth is that even a *few
+  concurrent scattered read streams* (e.g. several granular grains each reading a random
+  spot in a big buffer, plus a write head) evict each other, so *every* access re-misses.
+  A stage can be arithmetically trivial and still cost 100+ µs purely in miss latency.
+- **The desktop can't see this.** A native harness (fast DDR, no XIP cache) is great for
+  correctness and for finding arithmetic hotspots, but its render time is **not predictive
+  of on-device CPU**. Profile the real budget on hardware (`time_us()` around each stage;
+  watch `dsp MAX` and dropped blocks).
+- **Levers that worked, all measured on-device:** store big audio buffers as **interleaved
+  int16** (halves bytes and puts L+R in one cache line); minimize **concurrent scattered
+  read streams** (fewer overlapping grains — 50 % Hann overlap is constant-amplitude, so it
+  drops a stream for free); **half-rate** slow textures (reverbs, wash clouds); use a
+  **window LUT** instead of per-sample trig; and **throttle coefficient re-pushes** during
+  slow macro ramps (recomputing ~18 setters every 2 ms block is invisible to per-stage
+  timers but spikes the total).
+- Reliability: a smeared wash hides a lot — if a scattered-read stage is inaudible under
+  the reverb, cutting it is free CPU.
 
 ---
 
