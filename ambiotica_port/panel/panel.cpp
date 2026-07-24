@@ -10,13 +10,17 @@
 #define PANEL_PAD_COLOR TEAL
 #define AMB_SR 32000.0
 #define FC_SOFT_CLIP            /* soft-limit the chain output (see full_chain.h) */
+#define AMB_PURPLE LED_RGB(20, 0, 31)   /* Gravity's colour: the col-15 up-slider + the ghost cascade */
 /* Attenuate the Plinky synth before the chain: its polyphonic bus sums much hotter
  * than the plugin's single host input, and the whole chain (loop x1.9 makeup, drift
  * regen, layer sums) is tuned around a ~0.18 peak input (see ambiotica-plugin
  * tools/buildup_test.cpp). 0.12 lands the raw poly bus near that nominal level. */
 #define AMB_IN_GAIN 0.12f
 
-enum { FX_ORBIT, FX_CONSTELLATE, FX_SATELLITE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
+/* Slider column order (col 8..14). The two loopers sit together (Orbit = main loop,
+   Satellite = micro-loop) with the granular scatter after them — grouped for legibility
+   rather than strict signal-chain order (looper -> granular -> microloop). */
+enum { FX_ORBIT, FX_SATELLITE, FX_CONSTELLATE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
 struct ambiotica_panel : panel_t {
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0;
@@ -55,8 +59,10 @@ struct ambiotica_panel : panel_t {
     float        viz_grain_env = 0.f, viz_grain_pk = 0.f;      /* Constellate: granular meter */
     unsigned int viz_loop = 0, viz_micro = 0;                  /* main-loop & micro-loop phase counters */
     unsigned int viz_loop_len = 1, viz_micro_len = 1;          /* their cycle lengths in samples (falling-star clocks) */
-    float        shimmer_phase = 0.f;              /* UI-side shimmer LFO shared by the Tail+Flux sliders */
-    float        ghost_phase = 0.f;                /* ~2 Hz flash for the Gravity-ghost column extensions */
+    float        shimmer_phase = 0.f;              /* slow LFO for the Tail slider's shimmer */
+    float        ghost_phase = 0.f;                /* rising-spark phase for the Gravity-ghost cascade */
+    float        flux_phase  = 0.f;                /* Flux slider's own (faster) modulation flash */
+    float        freeze_phase = 0.f;               /* Satellite freeze indicator: fast 3-spot bounce */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
        envelope against its own slow peak-hold: idle -> dim floor, emitting ->
@@ -222,22 +228,24 @@ struct ambiotica_panel : panel_t {
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
         voices_active = voices_seen;
-        static const char* nm[FX_N] = { "Orbit","Constellate","Satellite","Tail","Flux","Spectra","Mix" };
-        /* Flux drives a shared shimmer LFO for the Tail+Flux sliders so they move
-           together as one unit: rate follows Flux's mod rate, depth its amount. */
-        float flux = fx_val[FX_FLUX] / 127.f;
-        shimmer_phase += (float)dt_us * 1e-6f * (0.30f + fx.mod_rate * 2.0f);
-        shimmer_phase -= (float)(int)shimmer_phase;                /* wrap to [0,1) */
-        float tri = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
-        /* Gravity-ghost flash: ~2.2 Hz triangle, 40..255 white. */
-        ghost_phase += (float)dt_us * 1e-6f * 2.2f; ghost_phase -= (float)(int)ghost_phase;
-        float gtri = ghost_phase < 0.5f ? ghost_phase * 2.f : 2.f - ghost_phase * 2.f;
-        int ghostFlash = 40 + (int)(215.f * gtri);
-        /* How far Gravity is currently pulling each macro (0..1 targets mirror the
-           deriveStages lerp in push_fx_from_ui); -1 = Gravity doesn't touch it (Mix). */
-        static const float kGravTgt[FX_N] = { 0.97f, 0.55f, 1.0f, 1.0f, 0.85f, 0.60f, -1.f };
+        static const char* nm[FX_N] = { "Orbit","Satellite","Constellate","Tail","Flux","Spectra","Mix" };
+        /* Tail shimmers on a slow LFO; Flux gets its OWN, distinctly faster flash (tracks
+           its mod rate) so the modulator reads as moving and doesn't sync with the rest. */
+        float tail = fx_val[FX_TAIL] / 127.f, flux = fx_val[FX_FLUX] / 127.f;
+        shimmer_phase += (float)dt_us * 1e-6f * 0.45f;                      shimmer_phase -= (float)(int)shimmer_phase;
+        flux_phase    += (float)dt_us * 1e-6f * (1.2f + fx.mod_rate * 3.f); flux_phase    -= (float)(int)flux_phase;
+        float tailTri = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
+        float fluxTri = flux_phase    < 0.5f ? flux_phase    * 2.f : 2.f - flux_phase    * 2.f;
+        float tailShim = tailTri * tailTri * (3.f - 2.f * tailTri);
+        float fluxShim = fluxTri * fluxTri * (3.f - 2.f * fluxTri);
+        /* Gravity-ghost cascade: a 0..1 sawtooth (~1.6 Hz) sweeps a bright purple head up
+           each pulled column. Satellite freeze bounce: a faster phase for the 3-spot hold. */
+        ghost_phase  += (float)dt_us * 1e-6f * 1.6f; ghost_phase  -= (float)(int)ghost_phase;
+        freeze_phase += (float)dt_us * 1e-6f * 2.5f; freeze_phase -= (float)(int)freeze_phase;
+        /* How far Gravity is currently pulling each macro (targets mirror the deriveStages
+           lerp), indexed by the reordered columns; -1 = Gravity doesn't touch it (Mix). */
+        static const float kGravTgt[FX_N] = { 0.97f, 1.0f, 0.55f, 1.0f, 0.85f, 0.60f, -1.f };
         float gg = grav_sm < 0.f ? 0.f : (grav_sm > 1.f ? 1.f : grav_sm);
-        float shimmer = tri * tri * (3.f - 2.f * tri);             /* smoothstep, softer glow */
         for (int i = 0; i < FX_N; i++) {
             /* Reactive sliders pulse their colour; Spectra & Mix stay steady.
                (the *N.f gains below are the obvious brightness tuning knobs) */
@@ -246,18 +254,23 @@ struct ambiotica_panel : panel_t {
                 case FX_ORBIT:       bri = meter_bri(viz_loop_env,  viz_loop_pk,  0.02f); break;  /* pulse: main loop emitting */
                 case FX_SATELLITE:   bri = meter_bri(viz_micro_env, viz_micro_pk, 0.01f); break;  /* pulse: micro-loop emitting */
                 case FX_CONSTELLATE: bri = meter_bri(viz_grain_env, viz_grain_pk, 0.01f); break;  /* pulse: grains firing */
-                case FX_TAIL:
-                case FX_FLUX:        bri = 60 + (int)(flux * shimmer * 196.f); break;  /* shimmer together as one unit */
+                case FX_TAIL:        bri = 60 + (int)(tail * tailShim * 196.f); break;  /* slow reverb shimmer */
+                case FX_FLUX:        bri = 60 + (int)(flux * fluxShim * 196.f); break;  /* fast modulation flash */
             }
             if (bri < 0) bri = 0; if (bri > 256) bri = 256;
             fxslider[i].simple_slider(8 + i, 0, 16, VERTICAL | SHOW_STEM,
                                       fade_col(palette[8][i], bri), 0, 127, fx_val[i], nm[i]);
             fx_val[i] = (unsigned char)last_widget_new_value();
 
-            /* Orbit & Satellite each carry a white "star" that falls down its own
-               column once per loop cycle (main loop / micro-loop) — a per-column
-               clock. Always visible; brighter as that loop emits. */
-            if (i == FX_ORBIT || i == FX_SATELLITE) {
+            /* Orbit & Satellite each carry a white "star" that falls down its own column
+               once per loop cycle — a per-column clock. When Satellite is at FREEZE the
+               micro-loop isn't cycling, so the star stops falling and instead bounces
+               fast up/down between three rows (held in place) to read as "frozen". */
+            if (i == FX_SATELLITE && fx.micro_hold >= 0.9f) {
+                int step = (int)(freeze_phase * 4.f) & 3;                 /* 0..3 */
+                int off  = (step == 1) ? -1 : (step == 3) ? 1 : 0;        /* centre, up, centre, down */
+                set_led(8 + i, 7 + off, fade_col(WHITE, 240));
+            } else if (i == FX_ORBIT || i == FX_SATELLITE) {
                 unsigned int phase = (i == FX_ORBIT) ? viz_loop     : viz_micro;
                 unsigned int len   = (i == FX_ORBIT) ? viz_loop_len : viz_micro_len;
                 int row = len ? (int)(((float)phase / (float)len) * 15.f) : 0;
@@ -266,29 +279,39 @@ struct ambiotica_panel : panel_t {
                 set_led(8 + i, row, fade_col(WHITE, sb));
             }
 
-            /* Gravity ghost: while Gravity is engaged it pulls this macro above its
-               slider setting — flash white LEDs in that "extension" gap (from the set
-               level up to where Gravity has pulled it) so the collapse is visible. */
+            /* Gravity ghost: while Gravity is engaged it pulls this macro above its slider
+               setting. Visualise the pull as a purple spark shooting UP the extension gap
+               (from the set level to where Gravity has reached) — a bright rising head with
+               a fading trail, synced across every pulled column so they read as one gesture.
+               Same purple as the col-15 Gravity slider to tie them together. */
             if (kGravTgt[i] >= 0.f && gg > 0.02f) {
                 float set01    = fx_val[i] / 127.f;
                 float pulled01 = set01 + (kGravTgt[i] - set01) * gg;
                 if (pulled01 > set01) {
-                    int setTop  = 16 - (int)(set01    * 16.f + 0.5f);   /* row above the set fill */
-                    int pullTop = 16 - (int)(pulled01 * 16.f + 0.5f);   /* row Gravity has reached (higher up) */
+                    int setTop  = 16 - (int)(set01    * 16.f + 0.5f);   /* just above the set fill (extension bottom) */
+                    int pullTop = 16 - (int)(pulled01 * 16.f + 0.5f);   /* row Gravity has reached (extension top) */
                     if (pullTop < 0) pullTop = 0;
-                    for (int y = pullTop; y < setTop; y++) set_led(8 + i, y, fade_col(WHITE, ghostFlash));
+                    int hgt = setTop - pullTop;
+                    const float trail = 0.5f;                          /* trail length, fraction of the gap */
+                    for (int y = pullTop; y < setTop; y++) {
+                        float frac = (hgt > 1) ? (float)(setTop - 1 - y) / (float)(hgt - 1) : 1.f;  /* 0 bottom..1 top */
+                        float dd = ghost_phase - frac;                 /* >=0: row is at/below the rising head */
+                        if (dd >= 0.f && dd < trail) {
+                            int b = 30 + (int)(225.f * (1.f - dd / trail));   /* bright head, fade the trail below */
+                            set_led(8 + i, y, fade_col(AMB_PURPLE, b > 256 ? 256 : b));
+                        }
+                    }
                 }
             }
         }
         push_fx_from_ui();
 
         /* col-15: bipolar Gravity / Event-Horizon. Centre (64) = neutral; UP engages
-           Gravity (a slow tremolo "collapse into the drone"); DOWN drains the engine
-           via Event Horizon (empties the loop/micro buffers + ducks the wet). Colour
-           reads GREEN above centre (gravity) / RED below (drain). */
+           Gravity (collapse into the drone); DOWN drains via Event Horizon. Colour reads
+           PURPLE above centre (Gravity — matches the ghost cascade) / RED below (drain). */
         int gd = (int)fx_val15 - 64;
         fxslider15.simple_slider(15, 0, 16, VERTICAL | SHOW_STEM,
-                                 fade_col(gd >= 0 ? GREEN : RED, 256), 0, 127, fx_val15, "Grav/Drain");
+                                 fade_col(gd >= 0 ? AMB_PURPLE : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
