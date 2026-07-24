@@ -32,6 +32,14 @@
 #define FC_BLK 64            /* = Plinky BLOCK_SIZE; keeps fc_state small (~5.5 KB) */
 #define FC_BEATS_PER_BAR 4
 
+/* AMB_PROFILE (set by amalgamate.sh via `AMB_PROFILE=1 sh amalgamate.sh`) turns on
+ * per-stage core1 timing using the SDK's time_us(); the panel prints the averages. Never
+ * defined for the desktop harness (no time_us there). */
+#ifdef AMB_PROFILE
+static unsigned int g_stage_us[7];   /* 0 loop 1 gran 2 mic 3 rev 4 harm 5 mix 6 push */
+static unsigned int g_stage_n;
+#endif
+
 typedef struct {
     float mix, loop_layer, grain_size, scatter, micro_hold, decay, mod_depth, mod_rate;
     float bloom, drift_amt, spectra, ring;      /* spectra = harmony amount */
@@ -128,6 +136,9 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
      * (Gravity/Flux) change a param every 2 ms block for ~2 s — throttle continuous
      * changes to every 4th block (~8 ms; inaudible, and each module smooths its own
      * target per-sample). Key/chord changes are discrete, so they push immediately. */
+#ifdef AMB_PROFILE
+    unsigned int _tp = time_us();
+#endif
     {
         int keyChord = !st->have_pushed || p->key != st->last_pushed.key || p->chord != st->last_pushed.chord;
         int changed  = !st->have_pushed || memcmp(p, &st->last_pushed, sizeof(full_params)) != 0;
@@ -142,6 +153,13 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         }
         st->push_ctr++;
     }
+#ifdef AMB_PROFILE
+    g_stage_us[6] += time_us() - _tp;   /* push (incl. its re-fire cost during a ramp) */
+    unsigned int _tl = time_us();
+    #define STG(k) do { unsigned int _tn = time_us(); g_stage_us[k] += _tn - _tl; _tl = _tn; } while (0)
+#else
+    #define STG(k)
+#endif
 
     /* Event Horizon (horizon 1 = full sustain, lower = drain). The drain is done cheaply
      * by the macro lerp pulling the loop + micro feedback down (so the buffers decay) plus
@@ -164,10 +182,12 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 
     looper_process(l, st->srcL, st->srcR, st->loopL, st->loopR, n);
     for (int i = 0; i < n; i++) { st->loopL[i] *= kLoopBedMakeup; st->loopR[i] *= kLoopBedMakeup; }
+    STG(0);   /* looper + drift regen */
 
     granular_process(g, st->loopL, st->loopR, st->granL, st->granR, n);
     for (int i = 0; i < n; i++) { st->layL[i] = cleanG * st->loopL[i] + shimmerG * st->granL[i];
                                   st->layR[i] = cleanG * st->loopR[i] + shimmerG * st->granR[i]; }
+    STG(1);   /* granular */
 
     bloom_process(b, st->srcL, st->srcR, st->blL, st->blR, n);
 
@@ -187,12 +207,14 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
       float microRevSend = 1.0f - 0.45f * mp;
       for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + microRevSend * st->micL[i];
                                     st->rinR[i] = st->blR[i] + st->layR[i] + microRevSend * st->micR[i]; } }
+    STG(2);   /* bloom + microloop + makeup */
 
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
       dattorro_set_decay(st->dat, t);                       /* Tail -> tail length (tracks the plugin) */
       dattorro_set_mod(st->dat, 0.25f + 0.75f * p->mod_depth); /* Flux + a floor so the tank always shimmers */
       dattorro_set_damp(st->dat, 0.22f); }                  /* bright, lush tail */
     dattorro_process(st->dat, st->rinL, st->rinR, st->wetL, st->wetR, n);
+    STG(3);   /* reverb (Dattorro) */
 
     if (horizonClear > 0.001f) {                 /* Event Horizon ducks the reverb wash (1..0.15) */
         float wetTailGain = 1.0f - 0.85f * horizonClear;
@@ -206,6 +228,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* add the Spectra chord */
     for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i];
                                   st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i]; }
+    STG(4);   /* harmony (Spectra) */
     drift_process(d, st->wbL, st->wbR, st->wbL, st->wbR, n);                /* wet-bus detune */
 
     /* Equal-power dry/wet crossfade (plugin): 50% keeps full loudness vs a linear blend's
@@ -234,6 +257,11 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         out_l[i] = lv; out_r[i] = rv;
     }
     st->gravPhase = gph;
+    STG(5);   /* drift + mix/output */
+#ifdef AMB_PROFILE
+    g_stage_n++;
+#endif
+    #undef STG
 }
 
 /* Harness convenience: render `total` frames in FC_BLK chunks (one fc_state). */
