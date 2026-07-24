@@ -14,7 +14,6 @@
 #include <string.h>
 #include <math.h>
 #include <time.h>
-#include <stdlib.h>
 
 #include "full_chain.h"        /* all 7 modules + full_params + fc_render */
 
@@ -70,12 +69,6 @@ static void write_wav(const char* path, const float* L, const float* R, int fram
 /* ------------- test input: four decaying-sine "plucks" (the synth) -------- */
 static void make_input(float* L, float* R, int frames, int sr) {
     for (int i = 0; i < frames; i++) { L[i] = R[i] = 0.f; }
-    if (getenv("SUSTAIN")) {   /* continuous chord — test drained-while-playing */
-        const double f[3] = { 130.81, 196.00, 261.63 };  /* C3 G3 C4 drone */
-        for (int i = 0; i < frames; i++) { double t=(double)i/sr, s=0;
-            for (int k=0;k<3;k++) s += sin(2.0*M_PI*f[k]*t); L[i]=R[i]=(float)(s*0.12); }
-        return;
-    }
     const double notes[4] = { 261.63, 329.63, 392.00, 523.25 };  /* C4 E4 G4 C5 */
     for (int n = 0; n < 4; n++) {
         int start = (int)(n * 0.9 * sr);
@@ -121,26 +114,12 @@ int main(void) {
     p.bloom = 0.5f; p.drift_amt = 0.3f; p.spectra = 0.6f; p.ring = 0.5f;
     p.loop_length_bars = 2.0f; p.micro_bars = 1.0f; p.bpm = 120.f; p.key = 0; p.chord = 0;   /* C minor */
     p.gravity = 0.0f; p.horizon = 1.0f;   /* horizon 1 = full sustain (0 would drain the loop) */
-    { const char *e; if ((e=getenv("MH"))) p.micro_hold=atof(e);
-      if ((e=getenv("GRAV"))) p.gravity=atof(e); if ((e=getenv("DIL"))) p.mod_depth=atof(e); }
-    /* DRAIN=1: force the Event-Horizon-at-0 clear-lerp target state (MacroMap clear=1)
-     * so we can hear whether the drained-but-running chain buzzes instead of silencing. */
-    if (getenv("DRAIN")) {
-        p.loop_layer = 0.08f; p.micro_hold = 0.0f; p.ring = 0.0f;
-        p.decay = 0.0f; p.drift_amt = 0.0f; p.horizon = 0.0f;
-    }
 
     clock_t t0 = clock();
     fc_render(l, g, m, r, h, b, d, &p, SR, inL, inR, outL, outR, TOTAL);
     double cpu = (double)(clock() - t0) / CLOCKS_PER_SEC;
     printf("\nrender: %.1fs audio in %.3fs CPU  => %.0fx realtime (desktop, not RP2350)\n",
            (double)SECS, cpu, SECS / cpu);
-    /* Tail energy: last 2 s should be ~silent after the input notes decay. A buzz shows
-     * up as sustained RMS / a hard peak here. */
-    { double sum = 0; float pk = 0; int t0i = TOTAL - 2 * SR;
-      for (int i = t0i; i < TOTAL; i++) { float a = outL[i]*outL[i] + outR[i]*outR[i];
-        sum += a; float m2 = outL[i] > 0 ? outL[i] : -outL[i]; if (m2 > pk) pk = m2; }
-      printf("tail(last 2s): RMS=%.6f  peak=%.6f\n", sqrt(sum / (2.0 * SR)), pk); }
 
     write_wav(WAVNAME, outL, outR, TOTAL, SR);
     printf("wrote %s (%ds, %d Hz stereo)\n", WAVNAME, SECS, SR);

@@ -269,10 +269,9 @@ void microloop_set_hold(microloop_t *m, float hold_0_1) {
         og = base + (0.34f - base) * f;                       /* gentle swell, not dominant */
     }
     m->out_gain_target = og;
-    /* Feedback curve: a moderate floor so even a short delay gives a few
-     * musical repeats (not a bare slapback), rising smoothly to long sustain
-     * near the top. The old hold*5 slammed to max by hold 0.2, which made short
-     * delays a dense reverb-like comb — this stays a delay across the range. */
+    /* Feedback curve: a moderate floor so even a short delay gives a few musical
+     * repeats (not a bare slapback), rising smoothly to long sustain near the top.
+     * Linear (not steep) so short delays stay discrete echoes, not a dense comb. */
     m->fb_target = 0.55f + 0.40f * hold_0_1;     /* 0.55 .. 0.95 */
 
     /* Octave shimmer ramps in over the upper range (crystallize zone). */

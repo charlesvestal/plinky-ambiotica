@@ -18,16 +18,10 @@
 #endif
 #define TWO_PI (2.0f * (float)M_PI)
 
-/* Plinky port: reverb lives in fast SRAM now (PSRAM scatter was too slow). 4
- * combs by default; drop to 3 at chain level >=4 so reverb + Spectra(harmony)
- * both fit the 128 KB panel arena. Arrays are sized to R_COMB_MAX; loops and
- * allocation use the active R_COMB count. */
+/* Modal comb reverb. The shipping panel uses the Dattorro plate (AMB_DATTORRO); this
+ * is the harness fallback. Lives in fast SRAM (PSRAM scatter was too slow); 4 combs. */
 #define R_COMB_MAX       4
-#if defined(AMB_CHAIN_LEVEL) && (AMB_CHAIN_LEVEL >= 4)
-#define R_COMB           3
-#else
 #define R_COMB           4
-#endif
 #define R_AP             4
 #define R_STEREO_SPREAD  37
 #define R_MOD_HEADROOM   256   /* extra samples per comb buffer for mod range */
