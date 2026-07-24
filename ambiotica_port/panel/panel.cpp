@@ -350,10 +350,15 @@ struct ambiotica_panel : panel_t {
         fx_sm.loop_length_bars = fx.loop_length_bars; fx_sm.micro_bars = fx.micro_bars;
         fx_sm.bpm = fx.bpm; fx_sm.key = fx.key; fx_sm.chord = fx.chord;
 
-        /* Event Horizon: at the BOTTOM of col-15 the drain becomes a flush — clear all
-           buffers so bringing it back up starts empty. One-shot (edge-triggered), so
-           it's just a few memsets, not a per-block cost. */
-        if (fx.horizon < 0.04f) {
+        /* Event Horizon: at the BOTTOM of col-15 the drain ends in a one-shot flush that
+           clears the content buffers, so bringing the slider back up starts empty.
+           Gate on the SMOOTHED horizon, not the raw tap: by the time it settles to the
+           bottom the drain has already silenced the loop and micro-loop (micro hold has
+           reached 0), so the flush clears quiet buffers. Flushing on the raw tap instead
+           cleared them mid-drain, into a still-live signal that instantly refilled — the
+           short frozen-loop "buzz". Hysteresis so it can't re-fire on the edge; the
+           reverb is left out so its tail decays gracefully rather than being cut. */
+        if (fx_sm.horizon < 0.04f) {
             if (!eh_flushed) {
                 if (looper)    looper_reset(looper);
                 if (microloop) microloop_reset(microloop);
@@ -361,10 +366,9 @@ struct ambiotica_panel : panel_t {
                 if (harmony)   harmony_reset(harmony);
                 if (bloom)     bloom_reset(bloom);
                 if (drift)     drift_reset(drift);
-                if (st.dat)    dattorro_reset(st.dat);
                 eh_flushed = true;
             }
-        } else {
+        } else if (fx_sm.horizon > 0.10f) {
             eh_flushed = false;
         }
 
