@@ -288,16 +288,22 @@ struct ambiotica_panel : panel_t {
                     int pullTop = 16 - (int)(pulled01 * 16.f + 0.5f);   /* row Gravity has reached (extension top) */
                     if (pullTop < 0) pullTop = 0;
                     int hgt = setTop - pullTop;
-                    const float head = ghost_phase;        /* 0 = bottom of gap .. 1 = top */
-                    const float life = 1.f - ghost_phase;  /* the spark fades as it climbs -> emission, not loop */
-                    const float trail = 0.40f;             /* trail length below the head, fraction of the gap */
+                    const float trail = 0.40f;             /* trail length below a head, fraction of the gap */
+                    /* Two sparks per column, offset half a cycle, so one is always mid-flight
+                       (continuous emission rather than one-at-a-time pings). Each is born
+                       bright at the bottom and fades out as it climbs. */
                     for (int y = pullTop; y < setTop; y++) {
-                        float frac  = (hgt > 1) ? (float)(setTop - 1 - y) / (float)(hgt - 1) : 0.f;  /* 0 bottom..1 top */
-                        float below = head - frac;         /* >=0: this row is below the rising head */
-                        if (below >= 0.f && below < trail) {
-                            int b = (int)(255.f * life * (1.f - below / trail));   /* bright head, fade down + fade as it rises */
-                            if (b > 8) set_led(8 + i, y, fade_col(AMB_PURPLE, b > 256 ? 256 : b));
+                        float frac = (hgt > 1) ? (float)(setTop - 1 - y) / (float)(hgt - 1) : 0.f;  /* 0 bottom..1 top */
+                        int b = 0;
+                        for (int k = 0; k < 2; k++) {
+                            float ph = ghost_phase + 0.5f * (float)k; if (ph >= 1.f) ph -= 1.f;
+                            float below = ph - frac;       /* >=0: this row is below the k-th rising head */
+                            if (below >= 0.f && below < trail) {
+                                int bb = (int)(255.f * (1.f - ph) * (1.f - below / trail));   /* bright head, fade down + fade as it rises */
+                                if (bb > b) b = bb;
+                            }
                         }
+                        if (b > 8) set_led(8 + i, y, fade_col(AMB_PURPLE, b > 256 ? 256 : b));
                     }
                 }
             }
