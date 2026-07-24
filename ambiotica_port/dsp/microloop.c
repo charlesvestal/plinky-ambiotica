@@ -113,8 +113,10 @@ static void micro_spawn_grain(microloop_t *m, int write_pos) {
     m->grain[gi].gL = fast_cosf(theta);
     m->grain[gi].gR = fast_sinf(theta);
 
-    /* Schedule next spawn so ~3 grains overlap (smooth overlap-add). */
-    m->spawn_timer = len / 3; if (m->spawn_timer < 1) m->spawn_timer = 1;
+    /* Schedule next spawn so ~2 grains overlap: Hann at 50% overlap is COLA (constant
+     * amplitude, no ripple) and drops a whole scattered-PSRAM read stream vs 3x — the
+     * same cache win as the main granular. */
+    m->spawn_timer = len / 2; if (m->spawn_timer < 1) m->spawn_timer = 1;
 }
 
 /* Advance + sum the grain cloud for one sample. `active` keeps spawning new
@@ -390,6 +392,7 @@ void microloop_process(microloop_t *m,
             if (s > cloud_target) cloud_target = s;
         }
         m->freeze_mix += m->freeze_mix_a * (cloud_target - m->freeze_mix);
+#ifndef AMB_NO_CLOUD
         if (m->freeze_mix > 0.0001f) {
             /* Half-rate: the cloud is a smeared granular wash, so recompute it every
              * other sample (advancing grains by 2) and hold between — halves its
@@ -402,6 +405,7 @@ void microloop_process(microloop_t *m,
         } else {
             m->cloud_tick = 0;         /* start next freeze on a compute sample */
         }
+#endif
 
         /* Output: ONLY the loop content. Caller mixes in dry passthrough.
          * Held-pad smoothing: a one-pole low-pass blended in by `hold` so the

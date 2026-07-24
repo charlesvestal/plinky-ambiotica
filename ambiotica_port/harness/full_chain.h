@@ -60,6 +60,7 @@ typedef struct {
     float wetL[FC_BLK], wetR[FC_BLK], wbL[FC_BLK], wbR[FC_BLK];
     full_params last_pushed;   /* memoize: only re-push params when they change */
     int have_pushed;
+    unsigned push_ctr;         /* throttles the coefficient re-push during slow macro ramps */
     float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
     float br_peak;             /* DEBUG: reverb wet peak this block */
     float gravPhase;           /* Gravity tremolo LFO phase */
@@ -195,15 +196,32 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     /* Only re-push params (incl. the powf chord build + expf mod rate) when they
      * actually change — otherwise the audio thread wastes transcendentals every
      * block on constant values. */
-    if (!st->have_pushed || memcmp(p, &st->last_pushed, sizeof(full_params)) != 0) {
-        fc_push_params(l, g, m, r, h, b, d, p, sr);
-        if (!st->have_pushed || p->key != st->last_pushed.key || p->chord != st->last_pushed.chord) {
-            float f[HARMONY_MAX_VOICES]; int nv = fc_build_chord(p->key, p->chord, f);   /* powf per voice — key/chord only */
-            harmony_set_chord(h, f, nv);
+#ifdef AMB_STAGE_TIMING
+    unsigned int _tp = time_us();
+#endif
+    {
+        int keyChord = !st->have_pushed || p->key != st->last_pushed.key || p->chord != st->last_pushed.chord;
+        int changed  = !st->have_pushed || memcmp(p, &st->last_pushed, sizeof(full_params)) != 0;
+        /* fc_push_params re-runs ~18 setters (~70us). The macro ramps (Gravity/Flux)
+         * change a param every 2ms block for ~2s, stacking that push onto an already
+         * tight budget every block -> the "G! only while Gravity morphs" glitch. Throttle
+         * continuous changes to every 4th block (~8ms — inaudible for these slow morphs,
+         * and each module smooths its target per-sample anyway). Key/chord changes are
+         * discrete and user-triggered, so those still push immediately (no chord lag). */
+        if (changed && (keyChord || (st->push_ctr & 3u) == 0u)) {
+            fc_push_params(l, g, m, r, h, b, d, p, sr);
+            if (keyChord) {
+                float f[HARMONY_MAX_VOICES]; int nv = fc_build_chord(p->key, p->chord, f);   /* powf per voice — key/chord only */
+                harmony_set_chord(h, f, nv);
+            }
+            st->last_pushed = *p;
+            st->have_pushed = 1;
         }
-        st->last_pushed = *p;
-        st->have_pushed = 1;
+        st->push_ctr++;
     }
+#ifdef AMB_STAGE_TIMING
+    g_stage_us[6] += time_us() - _tp;   /* push (incl. re-fire cost during a Gravity ramp) */
+#endif
 
 #ifdef AMB_STAGE_TIMING
     unsigned int _tl = time_us();

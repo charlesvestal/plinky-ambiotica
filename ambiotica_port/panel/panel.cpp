@@ -250,9 +250,10 @@ struct ambiotica_panel : panel_t {
             printf("REVLVL in=%d wet=%d out=%d\n", (int)(viz_inpk * 1000.f), (int)(st.br_peak * 1000.f), (int)(viz_outpk * 1000.f));   /* in vs ~180 nominal; out>=1000 = clipping */
 #ifdef AMB_STAGE_TIMING
         if ((frame_ctr % 60) == 0 && g_stage_n) {   /* avg us/block per stage (of ~2000 budget) */
-            printf("STG loop=%u gran=%u mic=%u rev=%u harm=%u mix=%u  (n=%u)\n",
+            printf("STG loop=%u gran=%u mic=%u rev=%u harm=%u mix=%u push=%u  (n=%u)\n",
                    g_stage_us[0] / g_stage_n, g_stage_us[1] / g_stage_n, g_stage_us[2] / g_stage_n,
-                   g_stage_us[3] / g_stage_n, g_stage_us[4] / g_stage_n, g_stage_us[5] / g_stage_n, g_stage_n);
+                   g_stage_us[3] / g_stage_n, g_stage_us[4] / g_stage_n, g_stage_us[5] / g_stage_n,
+                   g_stage_us[6] / g_stage_n, g_stage_n);
             for (int s = 0; s < 7; s++) g_stage_us[s] = 0;
             g_stage_n = 0;
         }
