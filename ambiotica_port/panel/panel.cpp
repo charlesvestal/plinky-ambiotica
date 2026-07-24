@@ -10,7 +10,6 @@
 #define PANEL_PAD_COLOR TEAL
 #define AMB_SR 32000.0
 #define FC_SOFT_CLIP            /* soft-limit the chain output (see full_chain.h) */
-#define AMB_PURPLE LED_RGB(20, 0, 31)   /* Gravity's colour: the col-15 up-slider + the ghost cascade */
 /* Attenuate the Plinky synth before the chain: its polyphonic bus sums much hotter
  * than the plugin's single host input, and the whole chain (loop x1.9 makeup, drift
  * regen, layer sums) is tuned around a ~0.18 peak input (see ambiotica-plugin
@@ -276,14 +275,30 @@ struct ambiotica_panel : panel_t {
         }
         push_fx_from_ui();
 
-        /* col-15: bipolar Gravity / Event-Horizon. Centre (64) = neutral; UP engages
-           Gravity (collapse into the drone); DOWN drains via Event Horizon. Colour reads
-           PURPLE above centre (Gravity — matches the ghost cascade) / RED below (drain). */
+        /* col-15: bipolar Gravity (up) / Event Horizon (down). Neutral = centre. Call
+           simple_slider for the touch/value, then draw our own bipolar column over it. */
         int gd = (int)fx_val15 - 64;
         fxslider15.simple_slider(15, 0, 16, VERTICAL | SHOW_STEM,
-                                 fade_col(gd >= 0 ? AMB_PURPLE : RED, 256), 0, 127, fx_val15, "Grav/Drain");
+                                 fade_col(gd >= 0 ? GREEN : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
+        /* The middle two LEDs (rows 8,9) stay WHITE so the centre is always visible (a
+           16-row column has no natural middle). The fill runs from the centre toward the
+           value, fading white -> GREEN going up (Gravity) / white -> RED going down (drain). */
+        for (int y = 0; y < 16; y++) {
+            int r = 0, g = 0, b = 0;
+            if (y == 8 || y == 9) { r = g = b = 18; }                        /* white centre marker */
+            else if (gd > 0 && y <= 7) {                                     /* Gravity fill, rows 7..0 */
+                int lit = (gd * 8) / 63; if (lit < 1) lit = 1;
+                if (y >= 8 - lit) { float f = (float)(7 - y) / 7.f;          /* 0 near centre .. 1 at top */
+                    r = (int)(18.f - 18.f * f); g = (int)(18.f + 13.f * f); b = (int)(18.f - 18.f * f); }
+            } else if (gd < 0 && y >= 10) {                                  /* Drain fill, rows 10..15 */
+                int lit = ((-gd) * 6) / 64; if (lit < 1) lit = 1;
+                if (y <= 9 + lit) { float f = (float)(y - 10) / 5.f;         /* 0 near centre .. 1 at bottom */
+                    r = (int)(18.f + 13.f * f); g = (int)(18.f - 18.f * f); b = (int)(18.f - 18.f * f); }
+            }
+            set_led(15, y, LED_RGB(r, g, b));
+        }
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
         fx.horizon = gd < 0 ? (float)fx_val15 / 64.f : 1.f;    /* down -> horizon 1..0 (drain) */
     }
