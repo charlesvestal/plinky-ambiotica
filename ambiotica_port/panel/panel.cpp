@@ -187,13 +187,15 @@ struct ambiotica_panel : panel_t {
     void on_ui(int dt_us) override {
         leds_clear();
 #ifdef AMB_PROFILE
-        /* Per-stage core1 timing (avg us/block), ~4x/sec. Enable with AMB_PROFILE. */
+        /* Per-stage core1 timing (avg us/block). Prints UNCONDITIONALLY ~8x/sec so it's a
+         * heartbeat too: if this never appears, printf/on_ui isn't reaching the console;
+         * if it shows (n=0) the DSP block isn't completing; otherwise it's the breakdown. */
         static unsigned prof_ctr = 0;
-        if ((++prof_ctr % 60) == 0 && g_stage_n) {
+        if ((++prof_ctr % 30) == 0) {
+            unsigned nn = g_stage_n ? g_stage_n : 1;
             printf("STG loop=%u gran=%u mic=%u rev=%u harm=%u mix=%u push=%u  (n=%u)\n",
-                   g_stage_us[0]/g_stage_n, g_stage_us[1]/g_stage_n, g_stage_us[2]/g_stage_n,
-                   g_stage_us[3]/g_stage_n, g_stage_us[4]/g_stage_n, g_stage_us[5]/g_stage_n,
-                   g_stage_us[6]/g_stage_n, g_stage_n);
+                   g_stage_us[0]/nn, g_stage_us[1]/nn, g_stage_us[2]/nn, g_stage_us[3]/nn,
+                   g_stage_us[4]/nn, g_stage_us[5]/nn, g_stage_us[6]/nn, g_stage_n);
             for (int s = 0; s < 7; s++) g_stage_us[s] = 0;
             g_stage_n = 0;
         }
