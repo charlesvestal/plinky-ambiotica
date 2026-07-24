@@ -282,21 +282,18 @@ struct ambiotica_panel : panel_t {
                                  fade_col(gd >= 0 ? GREEN : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
-        /* The middle two LEDs (rows 8,9) stay WHITE so the centre is always visible (a
-           16-row column has no natural middle). The fill runs from the centre toward the
-           value, fading white -> GREEN going up (Gravity) / white -> RED going down (drain). */
+        /* The middle two LEDs (rows 7,8 — the true centre of a 0..15 column) stay WHITE so
+           neutral is always visible. The WHOLE column tints from white toward GREEN as it's
+           scrolled up (Gravity) / RED as it's scrolled down (Event Horizon); the tint depth
+           tracks how far from centre. */
+        float amt = (gd >= 0) ? (float)gd / 63.f : (float)(-gd) / 64.f;   /* 0..1 magnitude */
+        if (amt > 1.f) amt = 1.f;
         for (int y = 0; y < 16; y++) {
-            int r = 0, g = 0, b = 0;
-            if (y == 8 || y == 9) { r = g = b = 18; }                        /* white centre marker */
-            else if (gd > 0 && y <= 7) {                                     /* Gravity fill, rows 7..0 */
-                int lit = (gd * 8) / 63; if (lit < 1) lit = 1;
-                if (y >= 8 - lit) { float f = (float)(7 - y) / 7.f;          /* 0 near centre .. 1 at top */
-                    r = (int)(18.f - 18.f * f); g = (int)(18.f + 13.f * f); b = (int)(18.f - 18.f * f); }
-            } else if (gd < 0 && y >= 10) {                                  /* Drain fill, rows 10..15 */
-                int lit = ((-gd) * 6) / 64; if (lit < 1) lit = 1;
-                if (y <= 9 + lit) { float f = (float)(y - 10) / 5.f;         /* 0 near centre .. 1 at bottom */
-                    r = (int)(18.f + 13.f * f); g = (int)(18.f - 18.f * f); b = (int)(18.f - 18.f * f); }
-            }
+            int r, g, b;
+            if (y == 7 || y == 8) { r = g = b = 24; }                                              /* white centre */
+            else if (gd > 0) { r = (int)(18.f - 18.f*amt); g = (int)(18.f + 13.f*amt); b = (int)(18.f - 18.f*amt); }  /* white->green */
+            else if (gd < 0) { r = (int)(18.f + 13.f*amt); g = (int)(18.f - 18.f*amt); b = (int)(18.f - 18.f*amt); }  /* white->red */
+            else             { r = g = b = 18; }                                                   /* neutral white */
             set_led(15, y, LED_RGB(r, g, b));
         }
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
