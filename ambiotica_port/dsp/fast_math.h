@@ -18,11 +18,10 @@ static inline float fast_tanhf(float x) {
 }
 
 /* sin via range-reduction to [-pi,pi] + Bhaskara parabola with one correction.
- * EXACT at 0, +/-pi/2, +/-pi and ~9e-4 max error elsewhere. The exactness at the
- * endpoints matters: grain / crossfade windows are built as sin()/cos() and MUST
- * reach 0 and 1 exactly at their edges — the old odd-5th-order poly overshot to
- * ~-0.52 near +/-pi (true value 0), which warped every grain's window and clicked
- * at the grain rate (audibly scaling with Constellate). Bhaskara is also cheaper. */
+ * EXACT at 0, +/-pi/2, +/-pi and ~9e-4 max error elsewhere. The endpoint exactness is
+ * REQUIRED, not incidental: grain / crossfade windows are built from sin()/cos() and
+ * must reach 0 and 1 exactly at their edges, or every window is warped and clicks at
+ * the grain rate. Don't swap in a cheaper polynomial that overshoots near +/-pi. */
 static inline float fast_sinf(float x) {
     const float TWO_PI = 6.28318530718f, INV_TWO_PI = 0.15915494309f, PI = 3.14159265359f;
     float k = x * INV_TWO_PI;

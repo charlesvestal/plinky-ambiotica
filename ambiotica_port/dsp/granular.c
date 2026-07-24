@@ -19,17 +19,17 @@
  * (reads backward `len` while write advances `len` = 2*len of travel, plus the
  * scatter offset) cannot lap the ring and meet the write head mid-grain — that
  * crossing reads a full-buffer content jump at high envelope gain (an audible
- * click). 2*1.5s + 1s = 4s, so 5s leaves margin. (Was 2 s, which lapped.) */
+ * click). 2*1.5s + 1s = 4s of travel, so 5s leaves margin. */
 #define G_BUF_SAMPLES       (5 * G_SAMPLE_RATE)       /* 5 s stereo capture */
-#define G_MAX_SCATTER_SAMP  G_SAMPLE_RATE             /* 1 s — fixed (was buf/2, =1s @2s buf) */
+#define G_MAX_SCATTER_SAMP  G_SAMPLE_RATE             /* 1 s max scatter offset into the past */
 #ifndef G_MAX_GRAINS
-#define G_MAX_GRAINS        3     /* Plinky: 12->3. Granular = scattered PSRAM reads,
-                                     the heaviest core1 stage (profiled ~470 us/block at
-                                     4 grains, ~3x the reverb). 3 grains fits the ~2 ms
-                                     core1 budget with Gravity up + a synth voice. */
+#define G_MAX_GRAINS        3     /* Granular is the heaviest core1 stage — each grain is a
+                                     scattered PSRAM read stream, and the RP2350's small XIP
+                                     cache thrashes on more than a few. 3 fits the ~2 ms budget
+                                     with Gravity up + a synth voice. */
 #endif
-#define G_GRAIN_MIN_SAMPLES 4410                  /* 100 ms — long, smooth (was 10 ms) */
-#define G_GRAIN_MAX_SAMPLES 66150                 /* 1.5 s — stretched pad (was 500 ms) */
+#define G_GRAIN_MIN_SAMPLES 4410                  /* 100 ms — long, smooth grains */
+#define G_GRAIN_MAX_SAMPLES 66150                 /* 1.5 s — stretched pad grains */
 
 /* Pitch quantization set — universally consonant intervals.
  * Octaves and perfect fifths are tonally neutral (work in major, minor,
