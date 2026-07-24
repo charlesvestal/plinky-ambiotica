@@ -49,8 +49,22 @@ typedef struct {
     float read_step;      /* per-sample increment = pitch ratio (negative = reversed) */
     int   age;            /* samples since spawn */
     int   length;         /* total samples in this grain */
+    float inv_length;     /* 1/length — precomputed so the window is a LUT read, not a divide */
     int   reversed;       /* Dilate: 1 = backward read + reverse-swell envelope */
 } grain_t;
+
+/* Hann window LUT: the forward grain envelope 0.5*(1-cos(2*pi*phase)) is read from a
+ * table instead of a per-grain per-sample fast_cosf. Exact Hann (more accurate than
+ * the trig approximation), and it reaches 0 at both edges so grains never click. */
+#define G_HANN_N 2048
+static float g_hann_lut[G_HANN_N + 1];
+static int   g_hann_ready = 0;
+static void g_hann_init(void) {
+    if (g_hann_ready) return;
+    for (int i = 0; i <= G_HANN_N; i++)
+        g_hann_lut[i] = 0.5f * (1.0f - cosf(TWO_PI * (float)i / (float)G_HANN_N));
+    g_hann_ready = 1;
+}
 
 /* Capture ring stored as INTERLEAVED int16 [L,R,L,R,...]: halves the PSRAM data vs
  * float and puts each frame's L+R in one cache line, so a grain read touches one
@@ -118,6 +132,7 @@ static void spawn_grain(granular_t *g) {
 
     int len = current_grain_length(g);
     gr->length = len;
+    gr->inv_length = len > 0 ? 1.0f / (float)len : 1.0f;
     gr->age = 0;
 
     /* Pitch — quantize to unison / ±octave / ±fifth (G_PITCH_STEPS).
@@ -199,6 +214,7 @@ granular_t* granular_create(double sample_rate) {
     const double sr = sample_rate > 0.0 ? sample_rate : AMB_REF_SAMPLE_RATE;
     granular_t *g = (granular_t*)calloc(1, sizeof(granular_t));
     if (!g) return NULL;
+    g_hann_init();
     /* 5 s capture ring + grain bounds scaled to the host rate. */
     g->buf_len     = amb_scale_samples(G_BUF_SAMPLES, sr);
     g->grain_min   = amb_scale_samples(G_GRAIN_MIN_SAMPLES, sr);
@@ -314,14 +330,18 @@ void granular_process(granular_t *g,
              * (Dilate): a SWELL — amplitude rises across the grain then a quick
              * fade at the end, so it audibly blooms backward instead of just a
              * time-reversed Hann (which sounds barely reversed). */
-            float phase = (float)gr->age / (float)gr->length;
+            float phase = (float)gr->age * gr->inv_length;
             float env;
-            if (gr->reversed)
+            if (gr->reversed) {
                 env = (phase < 0.85f) ? fast_sinf(1.5707963f * (phase / 0.85f))
                                       : fast_cosf(1.5707963f * ((phase - 0.85f) / 0.15f));
-            else
-                env = 0.5f * (1.0f - fast_cosf(TWO_PI * phase));
-            if (env < 0.f) env = 0.f;   /* fast-trig can dip <0 at grain edges -> click */
+                if (env < 0.f) env = 0.f;   /* fast-trig can dip <0 at grain edges -> click */
+            } else {
+                /* Forward Hann from the LUT — no per-grain fast_cosf, exact 0 at edges. */
+                int hi = (int)(phase * (float)G_HANN_N);
+                if (hi < 0) hi = 0; else if (hi > G_HANN_N) hi = G_HANN_N;
+                env = g_hann_lut[hi];
+            }
 
             sum_l += yl * env;
             sum_r += yr * env;
