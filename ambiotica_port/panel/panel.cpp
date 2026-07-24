@@ -60,7 +60,6 @@ struct ambiotica_panel : panel_t {
     unsigned int viz_loop = 0, viz_micro = 0;                  /* main-loop & micro-loop phase counters */
     unsigned int viz_loop_len = 1, viz_micro_len = 1;          /* their cycle lengths in samples (falling-star clocks) */
     float        shimmer_phase = 0.f;              /* slow LFO for the Tail slider's shimmer */
-    float        ghost_phase = 0.f;                /* rising-spark phase for the Gravity-ghost emission */
     float        freeze_phase = 0.f;               /* Satellite freeze indicator: fast 3-spot bounce */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
@@ -229,22 +228,12 @@ struct ambiotica_panel : panel_t {
         voices_active = voices_seen;
         static const char* nm[FX_N] = { "Orbit","Satellite","Constellate","Tail","Flux","Spectra","Mix" };
         /* Tail + Flux flash IN SYNC on one LFO whose rate tracks the Flux mod rate — the
-           modulation pair, at a speed distinct from the ghost cascade and the loop meters. */
+           modulation pair, at a speed distinct from the loop meters. */
         float tail = fx_val[FX_TAIL] / 127.f, flux = fx_val[FX_FLUX] / 127.f;
         shimmer_phase += (float)dt_us * 1e-6f * (0.35f + fx.mod_rate * 2.2f); shimmer_phase -= (float)(int)shimmer_phase;
         float shTri   = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
         float shimmer = shTri * shTri * (3.f - 2.f * shTri);
-        /* Gravity pulse: a slow, gentle breath (~0.6 Hz, its own rate) shared by the col-15
-           Gravity slider AND the ghost extensions, so they pulse in unison. Stays clearly
-           lit (150..256) — a legible breath, not the old hard-to-read rising sparks. */
-        ghost_phase += (float)dt_us * 1e-6f * 0.6f; ghost_phase -= (float)(int)ghost_phase;
-        float gpTri = ghost_phase < 0.5f ? ghost_phase * 2.f : 2.f - ghost_phase * 2.f;
-        int gravPulse = 150 + (int)(106.f * gpTri * gpTri * (3.f - 2.f * gpTri));   /* 150..256 */
         freeze_phase += (float)dt_us * 1e-6f * 2.5f; freeze_phase -= (float)(int)freeze_phase;   /* Satellite freeze bounce */
-        /* How far Gravity is currently pulling each macro (targets mirror the deriveStages
-           lerp), indexed by the reordered columns; -1 = Gravity doesn't touch it (Mix). */
-        static const float kGravTgt[FX_N] = { 0.97f, 1.0f, 0.55f, 1.0f, 0.85f, 0.60f, -1.f };
-        float gg = grav_sm < 0.f ? 0.f : (grav_sm > 1.f ? 1.f : grav_sm);
         for (int i = 0; i < FX_N; i++) {
             /* Reactive sliders pulse their colour; Spectra & Mix stay steady.
                (the *N.f gains below are the obvious brightness tuning knobs) */
@@ -278,20 +267,6 @@ struct ambiotica_panel : panel_t {
                 set_led(8 + i, row, fade_col(WHITE, sb));
             }
 
-            /* Gravity ghost: while Gravity is engaged it pulls this macro above its slider
-               setting. Show that pull as a steadily-lit purple "extension" filling the gap
-               from the set level up to where Gravity has reached — same purple as the col-15
-               Gravity slider, and breathing on the shared gravPulse so they pulse together. */
-            if (kGravTgt[i] >= 0.f && gg > 0.02f) {
-                float set01    = fx_val[i] / 127.f;
-                float pulled01 = set01 + (kGravTgt[i] - set01) * gg;
-                if (pulled01 > set01) {
-                    int setTop  = 16 - (int)(set01    * 16.f + 0.5f);   /* just above the set fill (extension bottom) */
-                    int pullTop = 16 - (int)(pulled01 * 16.f + 0.5f);   /* row Gravity has reached (extension top) */
-                    if (pullTop < 0) pullTop = 0;
-                    for (int y = pullTop; y < setTop; y++) set_led(8 + i, y, fade_col(AMB_PURPLE, gravPulse));
-                }
-            }
         }
         push_fx_from_ui();
 
@@ -299,9 +274,8 @@ struct ambiotica_panel : panel_t {
            Gravity (collapse into the drone); DOWN drains via Event Horizon. Colour reads
            PURPLE above centre (Gravity — matches the ghost cascade) / RED below (drain). */
         int gd = (int)fx_val15 - 64;
-        int g15bri = (gd > 0) ? gravPulse : 256;   /* Gravity up: breathe with the ghosts; drain/neutral: steady */
         fxslider15.simple_slider(15, 0, 16, VERTICAL | SHOW_STEM,
-                                 fade_col(gd >= 0 ? AMB_PURPLE : RED, g15bri), 0, 127, fx_val15, "Grav/Drain");
+                                 fade_col(gd >= 0 ? AMB_PURPLE : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
