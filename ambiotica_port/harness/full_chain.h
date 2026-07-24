@@ -22,7 +22,6 @@
 #include "fast_math.h"
 #include "granular.h"
 #include "microloop.h"
-#include "reverb.h"
 #include "harmony.h"
 #include "bloom.h"
 #include "drift.h"
@@ -55,7 +54,6 @@ typedef struct {
     full_params last_pushed;   /* memoize: only re-push params when they change */
     int have_pushed;
     unsigned push_ctr;         /* throttles the coefficient re-push during slow macro ramps */
-    float br_holdL, br_holdR;  /* built-in reverb: last 16 kHz wet, for 32 kHz upsample */
     float gravPhase;           /* Gravity tremolo LFO phase */
     dattorro_t* dat;           /* Dattorro plate; created by the panel / fc_render */
 } fc_state;
@@ -83,8 +81,9 @@ static int fc_build_chord(int key, int chord, float* out) {
 static void fc_init(fc_state* st, float mix) { memset(st, 0, sizeof(*st)); st->mixCur = mix; }
 
 /* Push all param-derived coefficients into the modules. Called only when params change
- * (and throttled during ramps — see fc_render_block), since it runs ~18 setters. */
-static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t* r,
+ * (and throttled during ramps — see fc_render_block), since it runs many setters. The
+ * reverb (Dattorro) is configured in the reverb stage itself, not here. */
+static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m,
                            harmony_t* h, bloom_t* b, drift_t* d, const full_params* p, double sr) {
     double bpm = p->bpm > 0 ? p->bpm : 120.0;
     float bars = p->loop_length_bars; if (bars < 0.5f) bars = 0.5f; if (bars > 8) bars = 8;
@@ -103,56 +102,11 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m, reverb_t*
     harmony_set_ring(h, p->ring);
     /* The chord itself (powf per voice) is rebuilt in fc_render_block only on a key/chord
      * change, not here — this runs on every param move (Flux, a Gravity ramp). */
-    reverb_set_decay(r, p->decay);
-    reverb_set_mod_depth(r, p->mod_depth);
-    reverb_set_mod_shape(r, 0);
-    float hz = 0.05f * expf(p->mod_rate * 5.075f);
-    reverb_set_mod_rate(r, p->mod_rate);
-    granular_set_mod_rate_hz(g, hz);
-    reverb_set_mod_rate_hz(r, hz);
+    granular_set_mod_rate_hz(g, 0.05f * expf(p->mod_rate * 5.075f));   /* granular pitch-mod LFO rate */
 }
-
-#ifdef AMB_BUILTIN_REVERB
-/* Plinky NATIVE reverb via the firmware do_reverb() call, as an alternative to the
- * Dattorro plate (frees the SRAM our own reverb needs; uses the pre-allocated
- * mix_buffers.reverbbuf). do_reverb runs at 16 kHz and accumulates int wet in the
- * ±32768 scale, so decimate 32->16k in, upsample 16->32k out, and stay in float
- * [-1,1]. Parked pending a firmware API to set its base shimmer/feedback (those live
- * in globals do_fx normally configures); until then AMB_DATTORRO is the shipping path. */
-static void fc_builtin_reverb(fc_state* st, const float* inL, const float* inR,
-                              float* outL, float* outR, int n, const full_params* p) {
-    /* Tail -> RT60. Room size (size_q7) is fixed; the tail is governed by feedback:
-     * base FEEDBACK=12 gives ~1.2 s, and reverb_extra_fb_gain_q8 0..255 extends it to
-     * ~5.6 s (finite), tracking the plugin's ~1.3..5 s across the Tail range. */
-    const int size_q7 = 60;
-    float tail01 = (p->decay - 0.30f) * (1.0f / 0.70f);   /* undo Tail->decay map to 0..1 */
-    if (tail01 < 0.f) tail01 = 0.f; else if (tail01 > 1.f) tail01 = 1.f;
-    reverb_extra_fb_gain_q8 = (int)(255.0f * powf(tail01, 0.7f) + 0.5f);
-    reverb_extra_shimmer    = 0;
-    /* do_reverb expects a send-level input (~1/10 full scale); attenuate in, makeup out.
-     * Keep the wet peak ~0.30 so it stays under the Spectra resonators' ~0.15 RMS
-     * blow-out threshold (measured against the plugin's harmony.c). */
-    const float kIn = 3000.0f, kOut = 1.6f / 32768.0f;
-    for (int i = 0; i < n; i += 2) {
-        float dL = 0.5f * (inL[i] + (i + 1 < n ? inL[i + 1] : inL[i]));   /* 32k -> 16k decimate */
-        float dR = 0.5f * (inR[i] + (i + 1 < n ? inR[i + 1] : inR[i]));
-        float cl = dL < -1.f ? -1.f : dL > 1.f ? 1.f : dL;
-        float cr = dR < -1.f ? -1.f : dR > 1.f ? 1.f : dR;
-        int wl = 0, wr = 0;
-        do_reverb((int)(cl * kIn), (int)(cr * kIn), size_q7, &wl, &wr);   /* accumulates */
-        float wL = (float)wl * kOut, wR = (float)wr * kOut;
-        if (wL > 1.5f) wL = 1.5f; else if (wL < -1.5f) wL = -1.5f;        /* safety clamp */
-        if (wR > 1.5f) wR = 1.5f; else if (wR < -1.5f) wR = -1.5f;
-        outL[i] = 0.5f * (st->br_holdL + wL);   /* 16k -> 32k linear upsample */
-        outR[i] = 0.5f * (st->br_holdR + wR);
-        if (i + 1 < n) { outL[i + 1] = wL; outR[i + 1] = wR; }
-        st->br_holdL = wL; st->br_holdR = wR;
-    }
-}
-#endif
 
 /* Process ONE block of n (<= FC_BLK) frames. State persists in st across calls. */
-static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_t* m, reverb_t* r,
+static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_t* m,
                             harmony_t* h, bloom_t* b, drift_t* d, const full_params* p, double sr,
                             const float* in_l, const float* in_r, float* out_l, float* out_r, int n) {
     if (n > FC_BLK) n = FC_BLK;
@@ -176,7 +130,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         int keyChord = !st->have_pushed || p->key != st->last_pushed.key || p->chord != st->last_pushed.chord;
         int changed  = !st->have_pushed || memcmp(p, &st->last_pushed, sizeof(full_params)) != 0;
         if (changed && (keyChord || (st->push_ctr & 3u) == 0u)) {
-            fc_push_params(l, g, m, r, h, b, d, p, sr);
+            fc_push_params(l, g, m, h, b, d, p, sr);
             if (keyChord) {
                 float f[HARMONY_MAX_VOICES]; int nv = fc_build_chord(p->key, p->chord, f);
                 harmony_set_chord(h, f, nv);
@@ -232,17 +186,12 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
       for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + microRevSend * st->micL[i];
                                     st->rinR[i] = st->blR[i] + st->layR[i] + microRevSend * st->micR[i]; } }
 
-#if defined(AMB_DATTORRO)
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
       dattorro_set_decay(st->dat, t);                       /* Tail -> tail length (tracks the plugin) */
       dattorro_set_mod(st->dat, 0.25f + 0.75f * p->mod_depth); /* Flux + a floor so the tank always shimmers */
       dattorro_set_damp(st->dat, 0.22f); }                  /* bright, lush tail */
     dattorro_process(st->dat, st->rinL, st->rinR, st->wetL, st->wetR, n);
-#elif defined(AMB_BUILTIN_REVERB)
-    fc_builtin_reverb(st, st->rinL, st->rinR, st->wetL, st->wetR, n, p);
-#else
-    reverb_process(r, st->rinL, st->rinR, st->wetL, st->wetR, n);   /* modal comb reverb (fallback) */
-#endif
+
     if (horizonClear > 0.001f) {                 /* Event Horizon ducks the reverb wash (1..0.15) */
         float wetTailGain = 1.0f - 0.85f * horizonClear;
         for (int i = 0; i < n; i++) { st->wetL[i] *= wetTailGain; st->wetR[i] *= wetTailGain; }
@@ -286,17 +235,15 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 }
 
 /* Harness convenience: render `total` frames in FC_BLK chunks (one fc_state). */
-static void fc_render(looper_t* l, granular_t* g, microloop_t* m, reverb_t* r,
+static void fc_render(looper_t* l, granular_t* g, microloop_t* m,
                       harmony_t* h, bloom_t* b, drift_t* d, const full_params* p, double sr,
                       const float* in_l, const float* in_r, float* out_l, float* out_r, int total) {
     static fc_state st;                       /* static: keep ~22 KB off the stack */
     fc_init(&st, p->mix);
-#if defined(AMB_DATTORRO)
     if (!st.dat) st.dat = dattorro_create(sr);
-#endif
     for (int start = 0; start < total; start += FC_BLK) {
         int n = (FC_BLK < total - start) ? FC_BLK : (total - start);
-        fc_render_block(&st, l, g, m, r, h, b, d, p, sr, in_l + start, in_r + start, out_l + start, out_r + start, n);
+        fc_render_block(&st, l, g, m, h, b, d, p, sr, in_l + start, in_r + start, out_l + start, out_r + start, n);
     }
 }
 #endif

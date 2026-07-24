@@ -4,7 +4,7 @@
  * is "inaudible in a modulation/window/waveshaper", not scientific.
  *
  * Used to replace ONLY the per-sample (hot-loop) calls in the chain. Per-block
- * / setup calls (reverb_set_*, *_create) keep the exact libm versions.
+ * / setup calls (the *_set_* coefficient updates, *_create) keep the exact libm versions.
  */
 #ifndef AMB_FAST_MATH_H
 #define AMB_FAST_MATH_H

@@ -89,7 +89,7 @@ int main(void) {
     printf("=== Ambiotica @ %d Hz — fixed-arena port [%s] ===\n\n", SR, VARIANT);
     make_input(inL, inR, TOTAL, SR);
 
-    looper_t* l; granular_t* g; microloop_t* m; reverb_t* r;
+    looper_t* l; granular_t* g; microloop_t* m;
     harmony_t* h; bloom_t* b; drift_t* d;
     const int loopcap = 32 * SR;   /* kLoopBufMaxSeconds(32) * sr — matches the plugin */
 
@@ -99,7 +99,6 @@ int main(void) {
     CREATE("looper",    l = looper_create(loopcap, SR));
     CREATE("granular",  g = granular_create(SR));
     CREATE("microloop", m = microloop_create(SR));
-    CREATE("reverb",    r = reverb_create(SR));
     CREATE("harmony",   h = harmony_create(SR));     /* Spectra */
     CREATE("bloom",     b = bloom_create(SR));
     CREATE("drift",     d = drift_create(SR));       /* Flux */
@@ -116,7 +115,7 @@ int main(void) {
     p.gravity = 0.0f; p.horizon = 1.0f;   /* horizon 1 = full sustain (0 would drain the loop) */
 
     clock_t t0 = clock();
-    fc_render(l, g, m, r, h, b, d, &p, SR, inL, inR, outL, outR, TOTAL);
+    fc_render(l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, TOTAL);
     double cpu = (double)(clock() - t0) / CLOCKS_PER_SEC;
     printf("\nrender: %.1fs audio in %.3fs CPU  => %.0fx realtime (desktop, not RP2350)\n",
            (double)SECS, cpu, SECS / cpu);
