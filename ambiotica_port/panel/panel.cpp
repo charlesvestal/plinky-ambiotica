@@ -234,9 +234,12 @@ struct ambiotica_panel : panel_t {
         shimmer_phase += (float)dt_us * 1e-6f * (0.35f + fx.mod_rate * 2.2f); shimmer_phase -= (float)(int)shimmer_phase;
         float shTri   = shimmer_phase < 0.5f ? shimmer_phase * 2.f : 2.f - shimmer_phase * 2.f;
         float shimmer = shTri * shTri * (3.f - 2.f * shTri);
-        /* Gravity ghost: a purple spark is EMITTED at the bottom of each pulled column and
-           shoots up while fading out (an emission, not a looping band). ~0.8 Hz. */
-        ghost_phase  += (float)dt_us * 1e-6f * 0.8f; ghost_phase  -= (float)(int)ghost_phase;
+        /* Gravity pulse: a slow, gentle breath (~0.6 Hz, its own rate) shared by the col-15
+           Gravity slider AND the ghost extensions, so they pulse in unison. Stays clearly
+           lit (150..256) — a legible breath, not the old hard-to-read rising sparks. */
+        ghost_phase += (float)dt_us * 1e-6f * 0.6f; ghost_phase -= (float)(int)ghost_phase;
+        float gpTri = ghost_phase < 0.5f ? ghost_phase * 2.f : 2.f - ghost_phase * 2.f;
+        int gravPulse = 150 + (int)(106.f * gpTri * gpTri * (3.f - 2.f * gpTri));   /* 150..256 */
         freeze_phase += (float)dt_us * 1e-6f * 2.5f; freeze_phase -= (float)(int)freeze_phase;   /* Satellite freeze bounce */
         /* How far Gravity is currently pulling each macro (targets mirror the deriveStages
            lerp), indexed by the reordered columns; -1 = Gravity doesn't touch it (Mix). */
@@ -276,10 +279,9 @@ struct ambiotica_panel : panel_t {
             }
 
             /* Gravity ghost: while Gravity is engaged it pulls this macro above its slider
-               setting. Visualise the pull as a purple spark shooting UP the extension gap
-               (from the set level to where Gravity has reached) — a bright rising head with
-               a fading trail, synced across every pulled column so they read as one gesture.
-               Same purple as the col-15 Gravity slider to tie them together. */
+               setting. Show that pull as a steadily-lit purple "extension" filling the gap
+               from the set level up to where Gravity has reached — same purple as the col-15
+               Gravity slider, and breathing on the shared gravPulse so they pulse together. */
             if (kGravTgt[i] >= 0.f && gg > 0.02f) {
                 float set01    = fx_val[i] / 127.f;
                 float pulled01 = set01 + (kGravTgt[i] - set01) * gg;
@@ -287,24 +289,7 @@ struct ambiotica_panel : panel_t {
                     int setTop  = 16 - (int)(set01    * 16.f + 0.5f);   /* just above the set fill (extension bottom) */
                     int pullTop = 16 - (int)(pulled01 * 16.f + 0.5f);   /* row Gravity has reached (extension top) */
                     if (pullTop < 0) pullTop = 0;
-                    int hgt = setTop - pullTop;
-                    const float trail = 0.40f;             /* trail length below a head, fraction of the gap */
-                    /* Two sparks per column, offset half a cycle, so one is always mid-flight
-                       (continuous emission rather than one-at-a-time pings). Each is born
-                       bright at the bottom and fades out as it climbs. */
-                    for (int y = pullTop; y < setTop; y++) {
-                        float frac = (hgt > 1) ? (float)(setTop - 1 - y) / (float)(hgt - 1) : 0.f;  /* 0 bottom..1 top */
-                        int b = 0;
-                        for (int k = 0; k < 2; k++) {
-                            float ph = ghost_phase + 0.5f * (float)k; if (ph >= 1.f) ph -= 1.f;
-                            float below = ph - frac;       /* >=0: this row is below the k-th rising head */
-                            if (below >= 0.f && below < trail) {
-                                int bb = (int)(255.f * (1.f - ph) * (1.f - below / trail));   /* bright head, fade down + fade as it rises */
-                                if (bb > b) b = bb;
-                            }
-                        }
-                        if (b > 8) set_led(8 + i, y, fade_col(AMB_PURPLE, b > 256 ? 256 : b));
-                    }
+                    for (int y = pullTop; y < setTop; y++) set_led(8 + i, y, fade_col(AMB_PURPLE, gravPulse));
                 }
             }
         }
@@ -314,8 +299,9 @@ struct ambiotica_panel : panel_t {
            Gravity (collapse into the drone); DOWN drains via Event Horizon. Colour reads
            PURPLE above centre (Gravity — matches the ghost cascade) / RED below (drain). */
         int gd = (int)fx_val15 - 64;
+        int g15bri = (gd > 0) ? gravPulse : 256;   /* Gravity up: breathe with the ghosts; drain/neutral: steady */
         fxslider15.simple_slider(15, 0, 16, VERTICAL | SHOW_STEM,
-                                 fade_col(gd >= 0 ? AMB_PURPLE : RED, 256), 0, 127, fx_val15, "Grav/Drain");
+                                 fade_col(gd >= 0 ? AMB_PURPLE : RED, g15bri), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
         fx.gravity = gd > 0 ? (float)gd / 63.f : 0.f;          /* up   -> gravity 0..1 */
