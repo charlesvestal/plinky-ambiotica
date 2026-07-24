@@ -71,6 +71,8 @@ struct microloop_s {
     float  freeze_mix_a;         /* per-sample ramp coef for freeze_mix  */
     unsigned rng;                /* LCG state for grain randomisation    */
     int    spawn_timer;          /* samples until the next grain spawns  */
+    int    cloud_tick;           /* half-rate toggle: cloud recomputes every other sample */
+    float  cloud_l, cloud_r;     /* held cloud output between half-rate computes */
     struct {
         float rd;                /* fractional read cursor into buf      */
         int   len, age, active;  /* grain length / progress / live flag  */
@@ -117,9 +119,9 @@ static void micro_spawn_grain(microloop_t *m, int write_pos) {
 
 /* Advance + sum the grain cloud for one sample. `active` keeps spawning new
  * Hann-windowed grains; their faded edges hide the loop seam. */
-static inline void micro_cloud(microloop_t *m, int active, int write_pos,
+static inline void micro_cloud(microloop_t *m, int active, int write_pos, int step,
                                float *out_l, float *out_r) {
-    if (active) { if (--m->spawn_timer <= 0) micro_spawn_grain(m, write_pos); }
+    if (active) { m->spawn_timer -= step; if (m->spawn_timer <= 0) micro_spawn_grain(m, write_pos); }
 
     int cap = m->buf_capacity;
     float cl = 0.0f, cr = 0.0f;
@@ -136,8 +138,8 @@ static inline void micro_cloud(microloop_t *m, int active, int write_pos,
                                      / (float)m->grain[gi].len);
         cl += sL * w * m->grain[gi].gL;
         cr += sR * w * m->grain[gi].gR;
-        m->grain[gi].rd += 1.0f; if (m->grain[gi].rd >= (float)cap) m->grain[gi].rd -= (float)cap;
-        if (++m->grain[gi].age >= m->grain[gi].len) m->grain[gi].active = 0;
+        m->grain[gi].rd += (float)step; if (m->grain[gi].rd >= (float)cap) m->grain[gi].rd -= (float)cap;
+        m->grain[gi].age += step; if (m->grain[gi].age >= m->grain[gi].len) m->grain[gi].active = 0;
     }
     *out_l = cl * M_CLOUD_GAIN;
     *out_r = cr * M_CLOUD_GAIN;
@@ -151,12 +153,14 @@ static inline float micro_shimmer (microloop_t *m, float in) {
     const float x0 = m->shphase / L;
     float p1 = m->shphase + L * 0.5f; if (p1 >= L) p1 -= L;
     float s0, s1;
+    /* i is already in [0,shlen) after the while, so i%shlen==i and (i-1) only needs a
+     * single wrap — the modulo (integer divide, ~12 cyc each, 4x/sample) was dead cost. */
     { int bk=(int)m->shphase; float fr=m->shphase-(float)bk; int i=m->shwidx-bk; while(i<0)i+=m->shlen;
-      float a=m->shbuf[i%m->shlen], b=m->shbuf[(i+m->shlen-1)%m->shlen]; s0=a+(b-a)*fr; }
+      int ip=i?i-1:m->shlen-1; float a=m->shbuf[i], b=m->shbuf[ip]; s0=a+(b-a)*fr; }
     { int bk=(int)p1; float fr=p1-(float)bk; int i=m->shwidx-bk; while(i<0)i+=m->shlen;
-      float a=m->shbuf[i%m->shlen], b=m->shbuf[(i+m->shlen-1)%m->shlen]; s1=a+(b-a)*fr; }
+      int ip=i?i-1:m->shlen-1; float a=m->shbuf[i], b=m->shbuf[ip]; s1=a+(b-a)*fr; }
     float w0 = fast_sinf(3.14159265f * x0); w0 = w0*w0;
-    m->shwidx = (m->shwidx + 1) % m->shlen;
+    if (++m->shwidx >= m->shlen) m->shwidx = 0;
     return s0*w0 + s1*(1.0f - w0);
 }
 
@@ -192,6 +196,7 @@ microloop_t* microloop_create(double sample_rate) {
     m->freeze_mix_a = 1.0f - expf(-1.0f / (M_FREEZE_MIX_T * (float)sr));
     m->rng = 0x1234567u;
     m->spawn_timer = 0;
+    m->cloud_tick = 0; m->cloud_l = m->cloud_r = 0.0f;
     for (int i = 0; i < M_GRAINS; i++) m->grain[i].active = 0;
     return m;
 }
@@ -216,6 +221,7 @@ void microloop_reset(microloop_t *m) {
     m->xfade_remaining = 0; m->has_queued = 0;   /* cancel any in-flight re-anchor */
     m->reverse_current = 0.0f; m->rev_counter = 0;
     m->freeze_mix = 0.0f; m->spawn_timer = 0;
+    m->cloud_tick = 0; m->cloud_l = m->cloud_r = 0.0f;
     for (int i = 0; i < M_GRAINS; i++) m->grain[i].active = 0;
 }
 
@@ -385,10 +391,16 @@ void microloop_process(microloop_t *m,
         }
         m->freeze_mix += m->freeze_mix_a * (cloud_target - m->freeze_mix);
         if (m->freeze_mix > 0.0001f) {
-            float cl, cr;
-            micro_cloud(m, cloud_target > 0.0f, write_pos, &cl, &cr);
-            read_L += (cl - read_L) * m->freeze_mix;
-            read_R += (cr - read_R) * m->freeze_mix;
+            /* Half-rate: the cloud is a smeared granular wash, so recompute it every
+             * other sample (advancing grains by 2) and hold between — halves its
+             * scattered PSRAM grain reads, the dominant cost, and is inaudible on a
+             * wash. (Shimmer stays full-rate: it's octave-up, would alias at 16 kHz.) */
+            if ((m->cloud_tick ^= 1))
+                micro_cloud(m, cloud_target > 0.0f, write_pos, 2, &m->cloud_l, &m->cloud_r);
+            read_L += (m->cloud_l - read_L) * m->freeze_mix;
+            read_R += (m->cloud_r - read_R) * m->freeze_mix;
+        } else {
+            m->cloud_tick = 0;         /* start next freeze on a compute sample */
         }
 
         /* Output: ONLY the loop content. Caller mixes in dry passthrough.
