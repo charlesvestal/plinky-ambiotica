@@ -42,7 +42,7 @@ struct ambiotica_panel : panel_t {
     slider_t       fxslider15;                 /* col-15: bipolar Gravity(up)/Drain(down) */
     unsigned char  fx_val15 = 64;              /* 64 = centre / neutral */
     int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
-    int            chord_type = 0;             /* 0..4 = min/maj/sus4/5th/oct (right buttons) */
+    int            mode_sel = 0;             /* 0..4 = Ionian/Aeolian/Dorian/Lydian/Mixolydian (right buttons) */
     bool           eh_flushed = false;         /* Event Horizon: buffers cleared at the bottom (edge) */
     float          grav_sm = 0.f;              /* Gravity macro, ramped ~2 s (plugin gravitySmooth) */
     int            synth_preset = 0;
@@ -187,44 +187,33 @@ struct ambiotica_panel : panel_t {
     void on_ui(int dt_us) override {
         leds_clear();
         voices_seen = 0;
-        /* Play-surface colour tracks the Spectra chord: hue = key (root semitone),
-           shade/brightness = chord type — so the left/right buttons visibly recolour
-           the surface as they move the key around the circle of fifths / change the
-           chord quality. */
+        /* Play-surface colour: hue = key (root), shade/brightness = mode — so the
+           left/right buttons visibly recolour the surface as they move the key around
+           the circle of fifths / change the mode. */
         /* Play-surface hue is reserved to 8..15 so it can never collide with a macro
            slider (those use hues 0..6, Orbit = 0) — the two halves must stay tellable
            apart. Brightness still tracks the chord, hue still tracks the key. */
-        uint32_t keycol = palette[(7 + chord_type * 2) & 15][8 + (fx.key & 7)];
+        uint32_t keycol = palette[(7 + mode_sel * 2) & 15][8 + (fx.key & 7)];
         /* play surface, now with an activity glow/sparkle via the brightness cb */
         /* 4-voice polyphony: the synth renders inside the same core1 2ms budget
          * as our FX; 8 voices' render time pushed us over. 4 leaves headroom for
          * the full chain and is plenty for an ambient wash. */
-        /* Chord-tone string layout: each string's ROOT is a chord tone, stacked up in
-           octaves — so playing ACROSS strings voices the selected Spectra chord, and
-           sliding ALONG a string moves through the key's scale (scale_root = fx.key).
-           Root follows the circle-of-fifths key. Semitone intervals above the key root:
-           min 0-3-7, maj 0-4-7, sus4 0-5-7, 5th 0-7, oct = octaves. */
-        static const struct { unsigned char n; unsigned char iv[3]; } kChordTones[5] = {
-            { 3, { 0, 3, 7 } },   /* min  */
-            { 3, { 0, 4, 7 } },   /* maj  */
-            { 3, { 0, 5, 7 } },   /* sus4 */
-            { 2, { 0, 7, 0 } },   /* 5th  */
-            { 1, { 0, 0, 0 } },   /* oct  (root octaves) */
+        /* Quartal, always-in-key play surface: 8 strings tuned in DIATONIC 4THS
+           (interval_degrees = 3 scale steps) within the selected key + mode, so every
+           adjacent cluster is an open, in-key chord and sliding up a string walks the
+           scale. Root register follows the circle-of-fifths key; the mode (right buttons)
+           picks the scale, so the whole surface + the Spectra wash share one tonal world.
+           Scale bitmask, bit N = N semitones above the root. */
+        static const uint16_t kModeScale[5] = {
+            2741,   /* Ionian / major    0,2,4,5,7,9,11 */
+            1453,   /* Aeolian / minor   0,2,3,5,7,8,10 */
+            1709,   /* Dorian            0,2,3,5,7,9,10 */
+            2773,   /* Lydian            0,2,4,6,7,9,11 */
+            1717,   /* Mixolydian        0,2,4,5,7,9,10 */
         };
-        int ci = (chord_type < 0 || chord_type > 4) ? 1 : chord_type;
-        unsigned char cn = kChordTones[ci].n;
-        int cbase = 48 + fx.key;                          /* key root, ~C3 register */
-        unsigned char string_roots[8];
-        for (int i = 0; i < 8; i++) {
-            int r = cbase + kChordTones[ci].iv[i % cn] + 12 * (i / cn);
-            string_roots[i] = (unsigned char)(r < 0 ? 0 : (r > 127 ? 127 : r));
-        }
-        /* Along-string scale follows the chord tonality so slides stay in-key. */
-        uint16_t surf_scale = (chord_type == 0) ? 1453      /* natural minor 0,2,3,5,7,8,10 */
-                            : (chord_type == 3) ? 661       /* major pentatonic 0,2,4,7,9   */
-                            :                     2741;     /* major         0,2,4,5,7,9,11 */
-        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(keycol), keycol, string_roots, note_cb, this,
-                             VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, surf_scale, fx.key,
+        int msel = (mode_sel < 0 || mode_sel > 4) ? 0 : mode_sel;
+        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(keycol), keycol, 48 + fx.key, 3, note_cb, this,
+                             VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, kModeScale[msel], fx.key,
                              viz_brightness, this);
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
@@ -390,19 +379,20 @@ struct ambiotica_panel : panel_t {
         return true;
     }
 
-    /* Physical side buttons: LEFT pair steps the Spectra KEY around the circle of
-       fifths (+1 = up a fifth = +7 semitones); RIGHT pair steps the CHORD TYPE
-       (min/maj/sus4/5th/oct). The play-surface colour follows (hue = key, shade =
-       chord). Unhandled buttons fall through to the system (BPM / pages). */
+    /* Physical side buttons: LEFT pair steps the KEY around the circle of fifths
+       (+1 = up a fifth = +7 semitones); RIGHT pair steps the MODE (Ionian/Aeolian/
+       Dorian/Lydian/Mixolydian), which sets the surface scale AND the Spectra wash
+       tonic. The play-surface colour follows (hue = key, shade = mode). Unhandled
+       buttons fall through to the system (BPM / pages). */
     void on_click(uint8_t button_mask) override {
         bool handled = false;
         if ((button_mask & BTN_BIT_LUP)   && button_clicked(BUTTON_LUP))   { key_pos    = (key_pos + 1)  % 12; handled = true; }
         if ((button_mask & BTN_BIT_LDOWN) && button_clicked(BUTTON_LDOWN)) { key_pos    = (key_pos + 11) % 12; handled = true; }
-        if ((button_mask & BTN_BIT_RUP)   && button_clicked(BUTTON_RUP))   { chord_type = (chord_type + 1) % 5; handled = true; }
-        if ((button_mask & BTN_BIT_RDOWN) && button_clicked(BUTTON_RDOWN)) { chord_type = (chord_type + 4) % 5; handled = true; }
+        if ((button_mask & BTN_BIT_RUP)   && button_clicked(BUTTON_RUP))   { mode_sel = (mode_sel + 1) % 5; handled = true; }
+        if ((button_mask & BTN_BIT_RDOWN) && button_clicked(BUTTON_RDOWN)) { mode_sel = (mode_sel + 4) % 5; handled = true; }
         if (handled) {
             fx.key   = (key_pos * 7) % 12;   /* circle of fifths -> root semitone offset */
-            fx.chord = chord_type;
+            fx.chord = mode_sel;
         } else {
             panel_t::on_click(button_mask);
         }

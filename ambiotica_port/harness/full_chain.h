@@ -36,7 +36,7 @@ typedef struct {
     float mix, loop_layer, grain_size, scatter, micro_hold, decay, mod_depth, mod_rate;
     float bloom, drift_amt, spectra, ring;      /* spectra = harmony amount */
     float loop_length_bars, micro_bars, bpm;    /* micro_bars = Satellite micro-loop length */
-    int   key, chord;                            /* Spectra chord: 0..4 = min/maj/sus4/5th/oct */
+    int   key, chord;                            /* chord = mode: 0..4 = Ion/Aeol/Dor/Lyd/Mixo (sets the Spectra tonic) */
     float gravity;                               /* Gravity macro amount; also a post-mix tremolo here */
     float horizon;                               /* Event Horizon: 1 = full sustain, <1 drains loop/micro/wet */
 } full_params;
@@ -58,15 +58,17 @@ typedef struct {
     dattorro_t* dat;           /* Dattorro plate; created by the panel / fc_render */
 } fc_state;
 
-/* The 3 Spectra resonator pitches for each chord type, as semitone offsets above the
- * key root. Voiced C3..C5 so the triad sits in an audible register — the plugin's full
- * voicing adds lower octaves that are felt more than heard as a chord. */
+/* Spectra wash = the selected MODE's tonic chord, as semitone offsets above the key
+ * root, voiced ~C3 so it sits in an audible register. `chord` is the mode index
+ * (0 Ionian/major, 1 Aeolian/minor, 2 Dorian, 3 Lydian, 4 Mixolydian). Dorian and
+ * Mixolydian get a characteristic colour tone (nat-6 / b7); the rest are plain tonic
+ * triads — each mode's full character lives on the play surface (its scale). */
 static const int FC_CHORD_SEMIS[5][4] = {
-    {12,15,19,-1},   /* min:  C3 Eb3 G3 */
-    {12,16,19,-1},   /* maj:  C3 E3  G3 */
-    {12,17,19,-1},   /* sus4: C3 F3  G3 */
-    {12,19,24,-1},   /* 5th:  C3 G3  C4 */
-    {12,24,36,-1}    /* oct:  C3 C4  C5 */
+    {12,16,19,-1},   /* Ionian / major    -> C3 E3  G3 */
+    {12,15,19,-1},   /* Aeolian / minor   -> C3 Eb3 G3 */
+    {12,15,21,-1},   /* Dorian            -> C3 Eb3 A3  (minor + nat 6) */
+    {12,16,19,-1},   /* Lydian (major)    -> C3 E3  G3 */
+    {12,16,22,-1}    /* Mixolydian        -> C3 E3  Bb3 (major + b7) */
 };
 static int fc_build_chord(int key, int chord, float* out) {
     if (key < 0) key = 0; if (key > 11) key = 11;
