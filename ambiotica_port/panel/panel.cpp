@@ -97,6 +97,7 @@ struct ambiotica_panel : panel_t {
     preset_pages_t presets;
     file_picker_t  scene_picker;               /* whole-panel save/load — its own picker, since it
                                                   caches a different folder listing to presets' */
+    bool           scene_dirs_made = false;    /* /PLINKY/u_<panel>/ created (once, on first visit) */
     unsigned char  audio_source = 0;           /* 0 = off (synth only), 1 = line in, 2 = mic */
     unsigned char  audio_in_level = 64;        /* external input level into the chain, 0..127 */
     slider_t       fxslider15;                 /* col-15: bipolar Gravity(up)/Drain(down) */
@@ -397,6 +398,13 @@ struct ambiotica_panel : panel_t {
         bool done = false;
         if (scene) {
             scene_picker.panel_picker(grid_y, grid_y + 8);
+            /* A brand-new panel has no /PLINKY/u_<panel>/ on the card, and nothing creates it
+               for us: the picker just fails its folder scan every frame (flooding the log,
+               and clearing current_file_idx again right after a tap, so the save/load buttons
+               light for one frame and go dark). make_dirs() is the SDK's fix for this. Run it
+               after the first panel_picker call so the picker's root is already set, and only
+               once — it touches the SD card. */
+            if (!scene_dirs_made) { scene_picker.make_dirs(); scene_dirs_made = true; }
             done  = scene_picker.panel_save_button(COL_SAVE, page_y + CTL_UP);
             /* panel_load_button only STAGES the load; finalise commits it at the audio-safe
                point (it swaps the whole panel object, so it can't happen mid-block). */
