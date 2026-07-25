@@ -97,6 +97,8 @@ struct ambiotica : panel_t {
     unsigned char   pattern[DRUM_TRACKS * DRUM_STEPS] = {0};
     clock_divider_t drum_clock;
     int             drum_step = 0;
+    unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing */
+    int             nav_cooldown = 0;  /* frames to ignore nav taps after a page change */
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
     full_params fx_sm;   /* per-block-smoothed macros actually fed to the chain (de-click) */
@@ -378,20 +380,30 @@ struct ambiotica : panel_t {
        SCALE doubles as Cancel on the picker pages: on_done() is the picker's own cleanup
        (drops the audition preview and the pending delete), so leaving via SCALE is a real
        cancel rather than just a scroll. */
+    /* scroll_to_page ANIMATES, and the nav pads sit on rows 0 and 14. While the grid slides,
+       the next page's row-0 pad sweeps upward past row 14 — straight under a finger that is
+       still down from the tap that started the scroll — and fires. Symptom: tapping TRACKS
+       lands you on the preset browser, auditioning whatever slot the finger then rests on.
+       So swallow nav taps for a few frames after any page change. Draw them as normal; only
+       the action is suppressed. */
+    void nav_goto(int page) { scroll_to_page(page); nav_cooldown = 15; }
+
     void draw_nav(int page_y, int page) {
         uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
+        const bool armed = (nav_cooldown == 0);
         if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away, ISOLATED,
-                   page == PAGE_PRESET || page == PAGE_SCENE ? "Cancel — back to play" : "Play surface")) {
+                   page == PAGE_PRESET || page == PAGE_SCENE ? "Cancel — back to play" : "Play surface")
+            && armed) {
             if (page == PAGE_PRESET) presets.picker.on_done();
             if (page == PAGE_SCENE)  scene_picker.on_done();
-            scroll_to_page(PAGE_PLAY);
+            nav_goto(PAGE_PLAY);
         }
-        if (button(COL_SYNTH,  page_y + CTL_DN,  page == PAGE_SYNTH  ? here : away, ISOLATED, "Synth editor"))
-            scroll_to_page(PAGE_SYNTH);
-        if (button(COL_PRESET, page_y + CTL_TOP, page == PAGE_PRESET ? here : away, ISOLATED, "Synth presets"))
-            scroll_to_page(PAGE_PRESET);
-        if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene"))
-            scroll_to_page(PAGE_SCENE);
+        if (button(COL_SYNTH,  page_y + CTL_DN,  page == PAGE_SYNTH  ? here : away, ISOLATED, "Synth editor") && armed)
+            nav_goto(PAGE_SYNTH);
+        if (button(COL_PRESET, page_y + CTL_TOP, page == PAGE_PRESET ? here : away, ISOLATED, "Synth presets") && armed)
+            nav_goto(PAGE_PRESET);
+        if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene") && armed)
+            nav_goto(PAGE_SCENE);
         /* × — the printed shift key, on every page. Drawn with set_led and read with raw
            touch rather than as a widget, so holding it modifies other pads instead of
            consuming the press itself. */
@@ -400,9 +412,9 @@ struct ambiotica : panel_t {
 
         if (button(COL_TRACKS, page_y + CTL_UP,
                    xh ? RED : (page == PAGE_DRUMS ? here : away), ISOLATED,
-                   xh ? "Clear the whole pattern" : "Drum sequencer")) {
+                   xh ? "Clear the whole pattern" : "Drum sequencer") && armed) {
             if (xh) memset(pattern, 0, sizeof pattern);   /* ×+TRACKS = wipe, per the manual's shift idiom */
-            else    scroll_to_page(PAGE_DRUMS);
+            else    nav_goto(PAGE_DRUMS);
         }
 
         /* Transport on the printed corner, on every page — the groove has to be startable
@@ -426,16 +438,23 @@ struct ambiotica : panel_t {
     void draw_drums_page() {
         const int page_y = PAGE_DRUMS * 16;
         bool playing = is_transport_playing();
-        /* PAINT, not toggle. get_touch_down is level-triggered, so a finger dragged across
-           the row writes every pad it crosses — which is how you actually enter a hi-hat
-           line. Toggling per pad would fight the drag, flipping steps back off as the finger
-           moved. × inverts it into an eraser, so a scrub wipes a run of steps. */
-        bool erase = shift_held(page_y);
+        /* Tap toggles, drag paints. The FIRST pad of a gesture decides the mode from its own
+           state — land on an empty step and the whole drag writes, land on a lit one and it
+           erases — and that mode is held until every finger lifts. That is what makes a tap
+           behave like a toggle while a drag stays coherent: without the latch, each pad the
+           finger crossed would flip on its own and a swipe would just invert the row.
+           × forces erase regardless, so you can scrub out a run that starts on a gap. */
+        bool erase_mod = shift_held(page_y);
+        bool any_down = false;
         for (int t = 0; t < DRUM_TRACKS; t++) {
             int y = page_y + UI_Y + t;
             for (int s = 0; s < DRUM_STEPS; s++) {
                 int idx = t * DRUM_STEPS + s;
-                if (get_touch_down(s, y)) pattern[idx] = erase ? 0 : 100;
+                if (get_touch_down(s, y)) {
+                    any_down = true;
+                    if (!drum_paint) drum_paint = pattern[idx] ? 2 : 1;   /* latch on first contact */
+                    pattern[idx] = (erase_mod || drum_paint == 2) ? 0 : 100;
+                }
                 unsigned char vel = pattern[idx];
                 bool head = playing && s == drum_step;
                 uint32_t c;
@@ -446,6 +465,7 @@ struct ambiotica : panel_t {
                 set_led(s, y, c);
             }
         }
+        if (!any_down) drum_paint = 0;   /* gesture ends only when the grid is fully released */
         draw_nav(page_y, PAGE_DRUMS);
     }
 
@@ -611,7 +631,20 @@ struct ambiotica : panel_t {
            the log during the heaviest burst the firmware emits (plantime prints a long line
            per preset slot, and mask=0xfff is twelve of them), which looks like the USB CDC
            stream giving out rather than a hang — so our own output is now kept to the bare
-           minimum around a load, to stop us adding to that pressure. */
+           minimum around a load, to stop us adding to that pressure.
+           Kept at a 30 s trickle because the arena is the tightest budget we have and it is
+           the one number worth watching as features land. NB it measures the panel OBJECT
+           (members) only — sample buffers live in PSRAM and code lives in flash, neither of
+           which is counted here. */
+        static unsigned size_report_us = 0;
+        size_report_us += (unsigned)dt_us;
+        if (size_report_us >= 30000000u) {
+            size_report_us = 0;
+            printf("PANEL: sizeof=%u free=%d dsp_ok=%d\n",
+                   (unsigned)sizeof(*this), 131072 - (int)sizeof(*this), (int)dsp_ok);
+        }
+
+        if (nav_cooldown > 0) nav_cooldown--;
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
            than at the button because the precondition is not satisfied in the same frame, and
