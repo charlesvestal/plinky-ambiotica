@@ -532,9 +532,23 @@ struct ambiotica : panel_t {
             if (preset_slice_has_sample_data(sl)) {
                 unsigned int base = get_mip_va(p, 0, false);   /* mip 0 = the unfiltered original */
                 unsigned int a = base + sl->start_read_only, b = base + sl->end_read_only;
-                unsigned int step = (b - a) / DRUM_TRACKS;
-                for (int t = 0; t < DRUM_TRACKS; t++)
-                    drums_set_sample(drums, t, a + step * t, a + step * (t + 1));
+                /* Length comes from the preset's OWN chop grid, not from the track count.
+                   The breaks ship no explicit chop_count, so they fall through to
+                   PRESET_DEFAULT_CHOP_COUNT (16) — sixteenths. Cutting the bar into
+                   DRUM_TRACKS instead gave eighths, twice the intended length, and every
+                   hit ran into the next.
+                   Starts stay spread across the whole bar so all eight tracks still address
+                   it; only the pieces get shorter. So each track fires the attack at its
+                   eighth-note position and stops a sixteenth later — which is what a chopped
+                   break actually sounds like. */
+                unsigned int bar  = b - a;
+                unsigned int chop = bar / preset_slice_chop_count(sl);
+                unsigned int stride = bar / DRUM_TRACKS;
+                for (int t = 0; t < DRUM_TRACKS; t++) {
+                    unsigned int s0 = a + stride * t;
+                    unsigned int s1 = s0 + chop; if (s1 > b) s1 = b;
+                    drums_set_sample(drums, t, s0, s1);
+                }
                 return;
             }
         }
