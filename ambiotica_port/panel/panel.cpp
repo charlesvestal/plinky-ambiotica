@@ -51,10 +51,14 @@ enum {
 enum {
     CTL_TOP    = 0,     /* top control row — the stock page strip (AUDIO IN..MIDI) */
     CTL_TOP2   = 1,     /* second control row — SEQUENCE / CONDITION / GENERATE labels */
-    COL_PROB   = 12,    /* "PROB"   (row 1)  — hold to see and edit per-step probability */
-    COL_REROLL = 12,    /* printed ⭕ (row 15) — hold + tap a target to randomise it.
-                           Both Blocks and Toadstep make randomise a first-class modifier
-                           applying to the SAME targets as clear; this is that key. */
+    /* Row 1 carries the stock CONDITION and GENERATE groups, and both mean here what they
+       mean on Chords. PROB is a condition — "a step is triggered or not, depending on a
+       percentage chance". FILL is generate — "styles on how to fill the sequence" — which
+       is exactly what a reroll does, so that is where randomise lives.
+       NB Chords has no reroll pad; the (12,15) circle is RECORD, not a reroll. Blocks and
+       Toadstep both have a dedicated reroll key, but their silkscreens are not ours. */
+    COL_PROB   = 12,    /* "PROB" (row 1) — hold to see and edit per-step probability */
+    COL_REROLL = 14,    /* "FILL" (row 1) — hold + tap a target to randomise it */
     CTL_UP     = 14,    /* bottom row A — the printed ▲ / upper-label row */
     CTL_DN     = 15,    /* bottom row B — the printed ▼ / lower-label row */
     COL_KEY    = 0,     /* "KEY"    ▲/▼ — key, around the circle of fifths */
@@ -262,7 +266,7 @@ struct ambiotica : panel_t {
     /* Raw touch, not a widget: a modifier has to be readable by OTHER pads on the same frame,
        and it must not swallow its own press. */
     bool shift_held(int page_y)  const { return get_touch_down(COL_X,      page_y + CTL_DN)  != 0; }
-    bool reroll_held(int page_y) const { return get_touch_down(COL_REROLL, page_y + CTL_DN)  != 0; }
+    bool reroll_held(int page_y) const { return get_touch_down(COL_REROLL, page_y + CTL_TOP2) != 0; }
     bool prob_held(int page_y)   const { return get_touch_down(COL_PROB,   page_y + CTL_TOP2) != 0; }
 
     /* xorshift32. Only ever drives UI-level randomisation, never audio, so it needs to be
@@ -491,7 +495,7 @@ struct ambiotica : panel_t {
            set_led for the same reason × is: a modifier has to be legible to OTHER pads on
            the same frame and must not swallow its own press. */
         bool rr = reroll_held(page_y);
-        set_led(COL_REROLL, page_y + CTL_DN,   rr ? PURPLE : DIMMESTEST(PURPLE));
+        set_led(COL_REROLL, page_y + CTL_TOP2, rr ? PURPLE : DIMMESTEST(PURPLE));
         set_led(COL_PROB,   page_y + CTL_TOP2, prob_held(page_y) ? CYAN : DIMMESTEST(CYAN));
 
         if (button(COL_SYNTH,  page_y + CTL_DN,
