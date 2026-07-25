@@ -177,7 +177,7 @@ void looper_clear(looper_t *l) {
     memset(l->buf_R, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
 }
 
-void looper_process(looper_t *l,
+void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                     const float *in_l, const float *in_r,
                     float *out_l, float *out_r,
                     int frames) {

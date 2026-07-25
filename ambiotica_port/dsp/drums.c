@@ -246,27 +246,53 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
         const float rate = d->rate;
         float pos = v->pos;
         const float last = (float)(len - 1);
-        for (int i = 0; i < frames; i++) {
-            if (pos >= last) { pos = -1.0f; break; }
-            int   i0 = (int)pos;
-            float fr = pos - (float)i0;
-            float a, b;
-            if (sampled) {
+        /* Unity pitch is the common case — the kit is untransposed unless you ask — and
+           there interpolation is pure waste: the read head lands exactly on samples. That
+           matters more than it looks, because the expensive part is not the arithmetic but
+           the READ_SAMPLE lookups: each one indexes the chunk table and reaches into paged
+           memory, and interpolating does TWO per output sample. Profiling put this stage at
+           ~180us for eight voices, roughly 50 cycles a sample, which is the double read
+           rather than the maths. So walk integers at unity and only interpolate when
+           actually resampling. */
+        if (rate == 1.0f) {
+            int i0 = (int)pos;
+            for (int i = 0; i < frames; i++, i0++) {
+                if ((float)i0 >= last) { i0 = -1; break; }
+                float x;
+                if (sampled) {
 #if defined(READ_SAMPLE)
-                unsigned int va = src->va_start + (unsigned int)i0;
-                a = (float)(int16_t)READ_SAMPLE(va);
-                b = (float)(int16_t)READ_SAMPLE(va + 1u);
+                    x = (float)(int16_t)READ_SAMPLE(src->va_start + (unsigned int)i0);
 #else
-                a = b = 0.0f;
+                    x = 0.0f;
 #endif
-            } else {
-                a = (float)s->data[i0];
-                b = (float)s->data[i0 + 1];
+                } else x = (float)s->data[i0];
+                out_l[i] += x * gl;
+                out_r[i] += x * gr;
             }
-            float x = a + (b - a) * fr;
-            out_l[i] += x * gl;
-            out_r[i] += x * gr;
-            pos += rate;
+            pos = (i0 < 0) ? -1.0f : (float)i0;
+        } else {
+            for (int i = 0; i < frames; i++) {
+                if (pos >= last) { pos = -1.0f; break; }
+                int   i0 = (int)pos;
+                float fr = pos - (float)i0;
+                float a, b;
+                if (sampled) {
+#if defined(READ_SAMPLE)
+                    unsigned int va = src->va_start + (unsigned int)i0;
+                    a = (float)(int16_t)READ_SAMPLE(va);
+                    b = (float)(int16_t)READ_SAMPLE(va + 1u);
+#else
+                    a = b = 0.0f;
+#endif
+                } else {
+                    a = (float)s->data[i0];
+                    b = (float)s->data[i0 + 1];
+                }
+                float x = a + (b - a) * fr;
+                out_l[i] += x * gl;
+                out_r[i] += x * gr;
+                pos += rate;
+            }
         }
         v->pos = pos;
     }
