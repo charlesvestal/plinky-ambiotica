@@ -14,6 +14,14 @@
 #ifndef AMB_DATTORRO_H
 #define AMB_DATTORRO_H
 
+/* dattorro_process is one of the heaviest core1 stages (~215us/block, measured). PLINKY_DSP_RAM_FUNC un-inlines it and
+ * places its code in SRAM, exempting it from the shared XIP cache. Fallback so the desktop
+ * harness and older firmware still build. NOTE: the SRAM code region is small and
+ * granular/looper already live there — if this stops LINKING, drop the wrapper. */
+#ifndef PLINKY_DSP_RAM_FUNC
+#define PLINKY_DSP_RAM_FUNC(f) f
+#endif
+
 typedef struct dattorro_s dattorro_t;
 
 dattorro_t* dattorro_create(double sample_rate);
@@ -29,7 +37,7 @@ void        dattorro_set_damp(dattorro_t* d, float damp_0_1);
 void        dattorro_set_mod(dattorro_t* d, float mod_0_1);
 
 /* Full host-rate stereo in -> stereo wet out (n frames). Internally half-rate. */
-void        dattorro_process(dattorro_t* d, const float* in_l, const float* in_r,
+void        PLINKY_DSP_RAM_FUNC(dattorro_process)(dattorro_t* d, const float* in_l, const float* in_r,
                              float* out_l, float* out_r, int n);
 
 #endif
