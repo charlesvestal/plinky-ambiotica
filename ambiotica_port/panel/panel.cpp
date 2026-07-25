@@ -846,10 +846,11 @@ struct ambiotica : panel_t {
         static unsigned prof_ctr = 0;
         if ((++prof_ctr % 30) == 0) {
             unsigned nn = g_stage_n ? g_stage_n : 1;
-            printf("STG loop=%u gran=%u mic=%u rev=%u harm=%u mix=%u push=%u  (n=%u)\n",
+            printf("STG loop=%u gran=%u mic=%u rev=%u harm=%u mix=%u push=%u drum=%u (n=%u)\n",
                    g_stage_us[0]/nn, g_stage_us[1]/nn, g_stage_us[2]/nn, g_stage_us[3]/nn,
-                   g_stage_us[4]/nn, g_stage_us[5]/nn, g_stage_us[6]/nn, g_stage_n);
-            for (int s = 0; s < 7; s++) g_stage_us[s] = 0;
+                   g_stage_us[4]/nn, g_stage_us[5]/nn, g_stage_us[6]/nn, g_stage_us[7]/nn,
+                   g_stage_n);
+            for (int s = 0; s < 8; s++) g_stage_us[s] = 0;
             g_stage_n = 0;
         }
 #endif
@@ -1132,7 +1133,13 @@ struct ambiotica : panel_t {
            That is the whole point: the looper, the grains and the plate never see them, so
            the pattern stays dry and legible while the wash does whatever it likes behind it.
            It also means drums cost no polyphony: they are our own playback, not synth voices. */
+#ifdef AMB_PROFILE
+        unsigned int _td = time_us();
+#endif
         drums_render(drums, oL, oR, BLOCK_SIZE);
+#ifdef AMB_PROFILE
+        g_stage_us[7] += time_us() - _td;
+#endif
 
         for (int i = 0; i < BLOCK_SIZE; i++) {
             int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);

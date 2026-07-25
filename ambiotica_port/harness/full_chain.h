@@ -36,7 +36,11 @@
  * per-stage core1 timing using the SDK's time_us(); the panel prints the averages. Never
  * defined for the desktop harness (no time_us there). */
 #ifdef AMB_PROFILE
-static unsigned int g_stage_us[7];   /* 0 loop 1 gran 2 mic 3 rev 4 harm 5 mix 6 push */
+/* 0 loop 1 gran 2 mic 3 rev 4 harm 5 mix 6 push 7 drums.
+   Slot 7 is filled by the panel, not by fc_render_block — drums render after the chain,
+   so they are outside this file but inside the same core1 block and have to be counted
+   against the same budget. */
+static unsigned int g_stage_us[8];
 static unsigned int g_stage_n;
 #endif
 

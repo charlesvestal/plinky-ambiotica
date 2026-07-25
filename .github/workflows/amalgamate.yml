@@ -60,17 +60,22 @@ jobs:
         run: |
           tmp="$(mktemp -d)"
           cp ambiotica_port/panel/plinky_ambiotica.cpp "$tmp/plinky_ambiotica.cpp"
+          cp ambiotica_port/panel/plinky_ambiotica_profile.cpp "$tmp/plinky_ambiotica_profile.cpp"
           printf '%s\n' \
             "dist branch: generated artifact only." \
             "" \
             "plinky_ambiotica.cpp is the single-file Plinky panel, auto-generated" \
             "from the sources on main. View it here in the browser; do not edit." \
+            "" \
+            "plinky_ambiotica_profile.cpp is the same panel with AMB_PROFILE on: it prints" \
+            "per-stage core1 timings (STG loop/gran/mic/rev/harm/mix/push/drum) so you can" \
+            "see where the DSP budget actually goes. Flash it via plinky12.com, not stage." \
             "Rebuilt on every push to main." > "$tmp/README.md"
           cd "$tmp"
           git init -q -b dist
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add plinky_ambiotica.cpp README.md
+          git add plinky_ambiotica.cpp plinky_ambiotica_profile.cpp README.md
           git commit -q -m "dist: plinky_ambiotica.cpp @ ${GITHUB_SHA:0:7}"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" dist
 

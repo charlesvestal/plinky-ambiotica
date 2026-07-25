@@ -15,7 +15,8 @@ STAMP_HASH="$(git -C "$HN" rev-parse --short HEAD 2>/dev/null || echo nogit)"
 git -C "$HN" diff --quiet HEAD 2>/dev/null || STAMP_HASH="${STAMP_HASH}-dirty"
 STAMP_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
-OUT="$HN/plinky_ambiotica.cpp"
+# AMB_OUT lets the profiling pass below write to a different file.
+OUT="${AMB_OUT:-$HN/plinky_ambiotica.cpp}"
 
 strip() { grep -vE '^[[:space:]]*#[[:space:]]*include' "$1"; }
 
@@ -29,7 +30,7 @@ BODY="$(mktemp)"
 trap 'rm -f "$BODY"' EXIT
 {
     strip "$HN/amb_config.h"          # build config (LOOPER_I16); per-module flags live in their .c files
-    [ -n "$AMB_PROFILE" ] && echo "#define AMB_PROFILE   // per-stage core1 timing (STG printf); set AMB_PROFILE=1 to build"
+    [ -n "$AMB_PROFILE" ] && echo "#define AMB_PROFILE"
     strip "$HN/alloc_prelude.h"
     for h in $MODULES; do strip "$DSP/$h.h"; done
     strip "$DSP/rate_util.h"
@@ -87,6 +88,9 @@ echo "wrote $OUT ($(wc -l < "$OUT" | tr -d ' ') lines, $(wc -c < "$OUT" | tr -d 
 # The repo allows EXACTLY these three, no subdirectories and no other files, so this
 # rebuilds the directory from scratch rather than adding to it. The library listing comes
 # from the @-metadata block at the top of the .cpp, not from README.md.
+# The submission bundle is built only for the normal panel, not the profiling variant.
+if [ -n "$AMB_OUT" ]; then exit 0; fi
+
 KEY=ambiotica
 DIST="$HN/dist/$KEY"
 rm -rf "$DIST"
@@ -95,3 +99,13 @@ cp "$OUT"                  "$DIST/$KEY.cpp"
 cp "$HN/library_readme.md" "$DIST/README.md"
 cp "$HN/artwork.png"       "$DIST/artwork.png"
 echo "wrote $DIST/ ($KEY.cpp, README.md, artwork.png)"
+
+# Profiling variant, built alongside so it can never drift from the real panel. It prints
+# per-stage core1 timings (STG loop/gran/mic/rev/harm/mix/push/drum), which is what decides
+# where PLINKY_DSP_RAM_FUNC is worth spending the limited SRAM code region on. Deliberately
+# NOT in dist/ — that directory allows exactly three files — but published beside the normal
+# build so it can be flashed from a URL like any other.
+# AMB_OUT guards the recursion: the child sets it, so it builds the body and stops.
+if [ -z "$AMB_OUT" ]; then
+    AMB_PROFILE=1 AMB_OUT="$HN/plinky_ambiotica_profile.cpp" sh "$0"
+fi

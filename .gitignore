@@ -21,3 +21,5 @@ llm.txt
 
 # generated community-panels submission bundle (rebuilt by panel/amalgamate.sh)
 ambiotica_port/panel/dist/
+
+ambiotica_port/panel/plinky_ambiotica_profile.cpp
