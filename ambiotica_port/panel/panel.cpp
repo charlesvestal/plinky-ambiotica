@@ -518,7 +518,12 @@ struct ambiotica : panel_t {
         if (scene_commit_wait > 0) {
             if (is_panel_load_staged()) {
                 scene_commit_wait = 0;
-                scene_picker.request_panel_load_finalise();
+                bool accepted = scene_picker.request_panel_load_finalise();
+                printf("SCENE: finalise accepted=%d\n", (int)accepted);
+                /* The docs say to "return immediately if it accepts" — an accepted request
+                   queues a swap of this whole panel object, so carrying on to draw widgets
+                   and touch the picker means running against state about to be replaced. */
+                if (accepted) return;
             } else if (--scene_commit_wait == 0) {
                 printf("SCENE: load never staged, commit abandoned\n");
             }
