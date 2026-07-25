@@ -219,7 +219,7 @@ void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int
     d->v[track].pos = -1.0f;   /* a voice mid-flight would keep indexing the old source */
 }
 
-void PLINKY_DSP_RAM_FUNC(drums_render)(drums_t* d, float* out_l, float* out_r, int frames) {
+void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
     if (!d) return;
     for (int t = 0; t < DRUM_TRACKS; t++) {
         drum_voice_t* v = &d->v[t];
