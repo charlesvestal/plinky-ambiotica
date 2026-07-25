@@ -37,8 +37,11 @@ One bipolar slider, neutral at centre (white).
 ## Drums
 
 An 8-track x0x sequencer on its own page (**TRACKS**): the whole pattern at once, 8 tracks
-down and 16 steps across, tap to toggle. Kick, snare, closed and open hat, clap, rim and
-two toms — synthesised at boot as 8-bit samples, so there are no files to install.
+down and 16 steps across. Kick, snare, closed and open hat, clap, rim and two toms —
+synthesised at boot as 8-bit samples, so there are no files to install.
+
+**Drag** across a row to write steps. Hold **×** (the printed shift key) and drag to scrub
+them out again; hold **×** and tap **TRACKS** to clear the whole pattern.
 
 The kit deliberately sits **outside** the wash. Drums are mixed into the output after the
 chain, so the looper, grains and plate never touch them: the pattern stays dry and legible
