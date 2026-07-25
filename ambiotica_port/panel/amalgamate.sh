@@ -64,3 +64,22 @@ META
 } > "$OUT"
 
 echo "wrote $OUT ($(wc -l < "$OUT" | tr -d ' ') lines)"
+
+# Submission bundle in the plinkysynth/community-panels layout. Built locally every time
+# so it never drifts from the sources; submitting is a separate, manual act.
+#
+#   dist/<key>/<key>.cpp   the panel — filename must match the directory, which IS the key
+#   dist/<key>/README.md   shown on the IDE panel cover after someone opens the panel
+#   dist/<key>/artwork.png square library thumbnail
+#
+# The repo allows EXACTLY these three, no subdirectories and no other files, so this
+# rebuilds the directory from scratch rather than adding to it. The library listing comes
+# from the @-metadata block at the top of the .cpp, not from README.md.
+KEY=ambiotica
+DIST="$HN/dist/$KEY"
+rm -rf "$DIST"
+mkdir -p "$DIST"
+cp "$OUT"                  "$DIST/$KEY.cpp"
+cp "$HN/library_readme.md" "$DIST/README.md"
+cp "$HN/artwork.png"       "$DIST/artwork.png"
+echo "wrote $DIST/ ($KEY.cpp, README.md, artwork.png)"

@@ -18,3 +18,6 @@ ambiotica_port/panel/*.o
 # Plinky IDE API reference — third-party (plinky12.com), NOT redistributable.
 # Fetch the latest from the site when needed; never commit it.
 llm.txt
+
+# generated community-panels submission bundle (rebuilt by panel/amalgamate.sh)
+ambiotica_port/panel/dist/
