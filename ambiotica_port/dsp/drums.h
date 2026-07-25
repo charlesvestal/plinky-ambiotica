@@ -1,0 +1,42 @@
+/* Ambiotica drums — an x0x-style kit that deliberately sits OUTSIDE the wash.
+ *
+ * The panel owns its audio output, so drums are rendered into the chain's OUTPUT buffers
+ * after fc_render_block rather than into its input. They therefore never reach the looper,
+ * the grains or the plate: the pattern stays dry and legible under an ambient wash that is
+ * doing whatever it likes. That placement is the whole design, not an implementation detail.
+ *
+ * The kit is SYNTHESISED once at create() into 8-bit mono buffers in PSRAM. No sample files,
+ * so the panel stays a single self-contained .cpp, boots instantly and has nothing for a user
+ * to install. 8-bit is half the PSRAM read traffic of 16 — which matters here, because core1
+ * reaches PSRAM over the same QSPI bus it fetches code through (see PORT_NOTES) — and the
+ * grit suits the material. Whole kit is ~57 KB.
+ *
+ * Realtime contract: drums_render and drums_trigger allocate nothing and do no I/O.
+ * Patterns are NOT stored here — they live in the panel so they serialise with the scene.
+ */
+#ifndef AMBIOTICA_DRUMS_H
+#define AMBIOTICA_DRUMS_H
+
+enum {
+    DRUM_KICK, DRUM_SNARE, DRUM_CHAT, DRUM_OHAT,
+    DRUM_CLAP, DRUM_RIM,   DRUM_TOMLO, DRUM_TOMHI,
+    DRUM_TRACKS
+};
+#define DRUM_STEPS 16
+
+typedef struct drums_s drums_t;
+
+/* Synthesises the kit. Allocates from the caller's current arena region — put it in PSRAM. */
+drums_t* drums_create(double sample_rate);
+
+/* velocity 1..127; 0 is ignored. Retriggering a track restarts it (one voice per track, as
+   on the machines this imitates — a closed hat cuts the open hat, see drums.c). */
+void drums_trigger(drums_t* d, int track, int velocity);
+
+/* ADDS into out_l/out_r — does not clear them. Call after the wash has been rendered. */
+void drums_render(drums_t* d, float* out_l, float* out_r, int frames);
+
+/* Silence every voice without clearing the kit (transport stop, scene load). */
+void drums_all_off(drums_t* d);
+
+#endif
