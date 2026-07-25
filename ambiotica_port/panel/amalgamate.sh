@@ -19,7 +19,7 @@ OUT="$HN/plinky_ambiotica.cpp"
 
 strip() { grep -vE '^[[:space:]]*#[[:space:]]*include' "$1"; }
 
-MODULES="looper granular microloop harmony bloom drift lfo dattorro"
+MODULES="looper granular microloop harmony bloom drift lfo dattorro drums"
 
 {
     # Panel library metadata. MUST be the first BLOCK comment in the file — that is what

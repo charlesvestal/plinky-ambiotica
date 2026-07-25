@@ -34,6 +34,17 @@ One bipolar slider, neutral at centre (white).
 - **Up (green): Gravity** — collapse the engine into a slow evolving drone.
 - **Down (red): Event Horizon** — drain everything back to silence for the next phrase.
 
+## Drums
+
+An 8-track x0x sequencer on its own page (**TRACKS**): the whole pattern at once, 8 tracks
+down and 16 steps across, tap to toggle. Kick, snare, closed and open hat, clap, rim and
+two toms — synthesised at boot as 8-bit samples, so there are no files to install.
+
+The kit deliberately sits **outside** the wash. Drums are mixed into the output after the
+chain, so the looper, grains and plate never touch them: the pattern stays dry and legible
+underneath whatever the ambience is doing. They also cost no polyphony — they are not synth
+voices. Transport is on the printed ▷ and ▢ pads, available from every page.
+
 ## Control pads
 
 | Pad | |

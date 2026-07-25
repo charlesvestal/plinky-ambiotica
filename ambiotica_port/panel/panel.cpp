@@ -58,14 +58,17 @@ enum {
     COL_PRESET = 9,     /* "PRESET" (row 0)  — synth preset browser page */
     COL_SONG   = 10,    /* "SONG"   (row 15) — whole-scene (panel) save/load page */
     COL_SYNTH  = 11,    /* "SYNTH"  (row 15) — synth editor page */
+    COL_TRACKS = 9,     /* "TRACKS" (row 14) — drum sequencer page */
     COL_SAVE   = 12,    /* "SAVE"   (row 14) — commit, on the picker pages only */
     COL_LOAD   = 13,    /* "LOAD"   (row 14) — commit, on the picker pages only */
+    COL_STOP   = 14,    /* printed ▢ (row 15) — the stock transport corner */
+    COL_PLAY   = 15,    /* printed ▷ (row 15) */
 };
 
 /* Pages are a window onto a taller surface: page N lives at logical y = N*16. Every page
    places its content at +UI_Y so it lands on the printed pad circles and leaves the
    control rows free for the nav bar. */
-enum { PAGE_PLAY = 0, PAGE_SYNTH = 1, PAGE_PRESET = 2, PAGE_SCENE = 3, PAGE_N };
+enum { PAGE_PLAY = 0, PAGE_DRUMS = 1, PAGE_SYNTH = 2, PAGE_PRESET = 3, PAGE_SCENE = 4, PAGE_N };
 
 /* Panel settings pages live ABOVE page 0 (right-up from the play surface), at y = -16*n. */
 enum { SET_SOURCE = -1, SET_IN_LEVEL = -2, SET_N = 2 };
@@ -83,7 +86,15 @@ enum { SET_SOURCE = -1, SET_IN_LEVEL = -2, SET_N = 2 };
 struct ambiotica : panel_t {
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0;
     harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
+    drums_t*  drums = 0;
     bool dsp_ok = false;
+
+    /* x0x sequencer. The PATTERN lives here rather than in drums_t so it serialises with the
+       scene — drums_t is in PSRAM, which on_serialise never sees. Flat rather than [t][s] so
+       it round-trips through one FIELD_BASE64. A byte per step is velocity, 0 = off. */
+    unsigned char   pattern[DRUM_TRACKS * DRUM_STEPS] = {0};
+    clock_divider_t drum_clock;
+    int             drum_step = 0;
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
     full_params fx_sm;   /* per-block-smoothed macros actually fed to the chain (de-click) */
@@ -188,6 +199,9 @@ struct ambiotica : panel_t {
         if (ps) looper    = looper_create(loopcap, sr);
         if (ps) microloop = microloop_create(sr);
         if (ps) granular  = granular_create(sr);
+        /* Kit is ~57 KB of 8-bit PSRAM, synthesised here. Costs a few ms at boot and again on
+           a scene load; that is fine, and it is why there are no sample files to install. */
+        if (ps) drums     = drums_create(sr);
         g_amb_region = 0;   /* SRAM pool: fast-access modules (dattorro/harmony/drift/bloom) */
         bloom   = bloom_create(sr);
         drift   = drift_create(sr);
@@ -214,6 +228,36 @@ struct ambiotica : panel_t {
        now zero, so rebuild it: the DSP chain (see build_dsp), the macro smoother, and any
        runtime latches. Voices are released because the note-ons that started them belonged
        to the panel we just replaced. */
+    void fire_drum_step() {
+        for (int t = 0; t < DRUM_TRACKS; t++) {
+            unsigned char v = pattern[t * DRUM_STEPS + drum_step];
+            if (v) drums_trigger(drums, t, v);
+        }
+    }
+
+    /* Musical timing, on core0's high-priority timer — it keeps running while the foreground
+       thread is blocked on SD, which matters here because a scene save stalls on_ui for 70 ms+
+       and the groove must not stutter through it.
+       drums_trigger only writes two ints per voice, which core1 reads; a torn read costs at
+       worst one block at the wrong amplitude, which is why this needs no lock. */
+    void on_sequence(int delta_time_us) override {
+        (void)delta_time_us;
+        if (!drums) return;
+        if (!is_transport_playing()) return;
+        /* 4 divider steps per quarter note = 16ths. update() reports how many edges were
+           crossed, so a stall cannot silently drop the beat. */
+        int edges = drum_clock.update(-1, 4, 1, UPDATE_DIV_ON_BAR);
+        if (edges <= 0) return;
+        if (has_transport_just_started()) {
+            drum_step = 0;                       /* start of the bar, not wherever we stopped */
+        } else {
+            /* Skip forward over any steps a stall swallowed rather than firing them all at
+               once — a burst of stacked hits reads as a glitch, a skipped step does not. */
+            drum_step = (drum_step + edges) & (DRUM_STEPS - 1);
+        }
+        fire_drum_step();
+    }
+
     void on_load_finished() override {
         release_all_voices();
         build_dsp(false);        /* rebuild: skips the multi-MB PSRAM clear, resets instead */
@@ -342,6 +386,47 @@ struct ambiotica : panel_t {
             scroll_to_page(PAGE_PRESET);
         if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene"))
             scroll_to_page(PAGE_SCENE);
+        if (button(COL_TRACKS, page_y + CTL_UP,  page == PAGE_DRUMS  ? here : away, ISOLATED, "Drum sequencer"))
+            scroll_to_page(PAGE_DRUMS);
+
+        /* Transport on the printed corner, on every page — the groove has to be startable
+           from wherever you are, and these are the pads users already expect it on. */
+        bool playing = is_transport_playing();
+        if (button(COL_PLAY, page_y + CTL_DN,
+                   playing ? fade_col(GREEN, 90 + (int)(nav_pulse * 166.f)) : DIMMER(GREEN),
+                   ISOLATED, playing ? "Playing" : "Play"))
+            start_transport();
+        if (button(COL_STOP, page_y + CTL_DN, playing ? DIMMER(RED) : DIMMESTEST(RED),
+                   ISOLATED, "Stop")) {
+            stop_transport();
+            drums_all_off(drums);   /* kill ringing tails rather than letting them run out */
+        }
+    }
+
+    /* x0x grid: the whole pattern at once — 8 tracks down, 16 steps across — rather than the
+       classic one-track-at-a-time, because we have the rows and seeing it all beats paging.
+       Colour is per track (hue) so rows stay tellable apart; every 4th step is dimly lit as a
+       beat ruler; the playhead brightens its whole column. */
+    void draw_drums_page() {
+        const int page_y = PAGE_DRUMS * 16;
+        bool playing = is_transport_playing();
+        for (int t = 0; t < DRUM_TRACKS; t++) {
+            int y = page_y + UI_Y + t;
+            for (int s = 0; s < DRUM_STEPS; s++) {
+                unsigned char vel = pattern[t * DRUM_STEPS + s];
+                bool head = playing && s == drum_step;
+                uint32_t c;
+                if (vel) c = palette[head ? 13 : 8][(t * 2 + 1) & 15];  /* lit step, flares on the beat */
+                else if (head)        c = DIMMER(WHITE);                /* playhead over an empty step */
+                else if ((s & 3) == 0) c = DIMMESTEST(WHITE);           /* beat ruler */
+                else                   c = 0;
+                set_led(s, y, c);
+                /* invisible_button so the LED above stands — button() would repaint it. */
+                if (invisible_button(s, y, ISOLATED, "Step"))
+                    pattern[t * DRUM_STEPS + s] = vel ? 0 : 100;
+            }
+        }
+        draw_nav(page_y, PAGE_DRUMS);
     }
 
     /* Page 0's reserved rows: the tuning pads plus the nav bar. Drawn last so it wins any
@@ -541,7 +626,8 @@ struct ambiotica : panel_t {
         leds_clear();
         if (page != PAGE_PLAY) {
             release_all_voices();
-            if (page == PAGE_SYNTH)       draw_synth_page();
+            if (page == PAGE_DRUMS)       draw_drums_page();
+            else if (page == PAGE_SYNTH)  draw_synth_page();
             else if (page == PAGE_PRESET) draw_picker_page(PAGE_PRESET, false);
             else if (page == PAGE_SCENE)  draw_picker_page(PAGE_SCENE,  true);
             else                          scroll_to_page(PAGE_PLAY);
@@ -753,6 +839,12 @@ struct ambiotica : panel_t {
         fc_render_block(&st, looper, granular, microloop, harmony, bloom, drift,
                         &fx_sm, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
 
+        /* Drums go in HERE — into the chain's output, after the wash, never into sL/sR.
+           That is the whole point: the looper, the grains and the plate never see them, so
+           the pattern stays dry and legible while the wash does whatever it likes behind it.
+           It also means drums cost no polyphony: they are our own playback, not synth voices. */
+        drums_render(drums, oL, oR, BLOCK_SIZE);
+
         for (int i = 0; i < BLOCK_SIZE; i++) {
             int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);
             if (preview_mix > 0.001f) {   /* audition, dry and unprocessed, over the decaying tail */
@@ -811,6 +903,7 @@ struct ambiotica : panel_t {
         FIELD("gravity", o.fx_val15,               0u, 127u);
         FIELD("key",     o.key_pos,                0,  11);
         FIELD("mode",    o.mode_sel,               0,  4);
+        FIELD_BASE64("drums", o.pattern, (int)sizeof(o.pattern), (int)sizeof(o.pattern));
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
          * preset-install planner on a scene load — that happens for every staged panel load
          * regardless of what we serialise. So they are not implicated in the load failure,
