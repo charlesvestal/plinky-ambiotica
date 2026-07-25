@@ -74,7 +74,13 @@ enum { SET_SOURCE = -1, SET_IN_LEVEL = -2, SET_N = 2 };
    around a ~0.18 peak input, and a line/mic feed can arrive at full scale. */
 #define AMB_EXT_IN_GAIN 0.25f
 
-struct ambiotica_panel : panel_t {
+/* NOTE: keep this name SHORT. The class name becomes the panel name (when no @Name is
+ * set), the runtime prefixes it with "u_", and the file picker stores folder names in
+ * char[17] — 16 chars plus NUL. "ambiotica_panel" made "u_ambiotica_panel", 17 chars,
+ * one over: the folder scan truncated and failed forever, so no slot was ever
+ * selectable, so the save that would have created /PLINKY/u_<panel>/ could never fire.
+ * "u_ambiotica" is 11. It also matches the community-panels key. Diagnosed by mmalex. */
+struct ambiotica : panel_t {
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0;
     harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
     bool dsp_ok = false;
@@ -231,7 +237,7 @@ struct ambiotica_panel : panel_t {
     }
 
     static void note_cb(void* user, int voice, int note, unsigned char vel, finger_t f) {
-        ambiotica_panel* self = (ambiotica_panel*)user;
+        ambiotica* self = (ambiotica*)user;
         if (voice < 0 || voice >= 16) return;
         unsigned short bit = (unsigned short)(1u << voice);
         bool is_new = (self->voices_active & bit) == 0;
@@ -245,7 +251,7 @@ struct ambiotica_panel : panel_t {
        Constellate slider instead of sparkling here — see on_ui.) */
     static unsigned char viz_brightness(void* user, int si, int sp, int x, int y, int note) {
         (void)si; (void)sp; (void)note; (void)x; (void)y;
-        ambiotica_panel* self = (ambiotica_panel*)user;
+        ambiotica* self = (ambiotica*)user;
         int b = (int)(self->viz_out * 28.f);                       /* breathing base glow */
         if (b < 0) b = 0; if (b > 255) b = 255;
         return (unsigned char)b;
@@ -404,17 +410,16 @@ struct ambiotica_panel : panel_t {
                light for one frame and go dark). make_dirs() is the SDK's fix for this. Run it
                after the first panel_picker call so the picker's root is already set, and only
                once — it touches the SD card. */
+            /* The folder is created BY SAVING — the runtime makes it on demand, so there is
+               nothing to provision up front. It only looked broken because the old 17-char
+               panel name overflowed the picker's char[17], which killed the scan and left
+               the save button dark. One-shot print of the name and its length so a future
+               rename that creeps back over 16 shows up immediately instead of silently
+               breaking save/load again. */
             if (!scene_dirs_made) {
-                scene_picker.make_dirs();
                 scene_dirs_made = true;
-                /* make_dirs() alone did NOT fix the missing folder, so print what the picker
-                   is deriving its path from. panel_folder is where this panel's state was
-                   loaded from — expected to be empty for a panel flashed live from the web
-                   IDE, which is the current suspicion for why /PLINKY/u_<panel>/ never
-                   exists. Prints once per boot, not per frame. */
                 const char* pn = get_current_panel_name();
-                printf("SCENE: name='%s' panel_folder='%s' idx=%d  (make_dirs called)\n",
-                       pn ? pn : "(null)", panel_folder, panel_idx_in_folder);
+                printf("SCENE: name='%s' len=%d (max 16)\n", pn ? pn : "(null)", pn ? (int)strlen(pn) : -1);
             }
             done  = scene_picker.panel_save_button(COL_SAVE, page_y + CTL_UP);
             /* panel_load_button only STAGES the load; finalise commits it at the audio-safe
@@ -719,7 +724,7 @@ struct ambiotica_panel : panel_t {
        fx_sm is snapped to it so nothing audibly ramps in from the old scene. */
     bool on_serialise(serialiser_t& s, int version) override {
         (void)version;
-        ambiotica_panel& o = *this;
+        ambiotica& o = *this;
         OBJECT_BEGIN(s);
         FIELD("orbit",   o.fx_val[FX_ORBIT],       0u, 127u);
         FIELD("satel",   o.fx_val[FX_SATELLITE],   0u, 127u);
@@ -742,7 +747,7 @@ struct ambiotica_panel : panel_t {
        system reloads them automatically at boot. */
     bool on_serialise_settings(serialiser_t& s, int version) override {
         (void)version;
-        ambiotica_panel& o = *this;
+        ambiotica& o = *this;
         OBJECT_BEGIN(s);
         FIELD("audio_source", o.audio_source,   0u, 2u);
         FIELD("audio_in",     o.audio_in_level, 0u, 127u);
