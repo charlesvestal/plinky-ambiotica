@@ -7,8 +7,11 @@
  * amalgamate.sh; per-module flags live in their own files (shimmer/cloud off in
  * microloop.c). Reverb is always the Dattorro plate.
  *
- * Everything is laid out inside rows UI_Y..UI_Y1 (the middle 12) — see the layout
- * enum below — because the Chords grid reserves two rows top and bottom.
+ * Laid out for the CHORDS overlay: the play UI occupies rows UI_Y..UI_Y1 (the middle 12,
+ * the only rows the overlay draws pads for) and the reserved rows carry control pads under
+ * their printed labels — KEY / BANK set key and mode, SYNTH and PRESET jump to the stock
+ * editor pages, SCALE comes back. No physical side button is claimed. See the two layout
+ * enums below.
  */
 #define PANEL_PAD_COLOR TEAL
 #define AMB_SR 32000.0
@@ -39,6 +42,26 @@ enum {
     UI_HALF   = UI_H / 2 - 1,           /* rows of travel from centre to either end (5) */
 };
 
+/* Control pads. The Chords overlay is PRINTED on the hardware, so a pad keeps its label
+   whatever page is showing — which is why the back button can sit at the same physical
+   spot (SCALE) on all three pages. We light only the pads whose printed label matches
+   what we actually do; every other reserved pad stays dark, including the row-15
+   transport corner (we have no sequencer). No physical side button is claimed — they
+   keep their stock BPM / page-cycle behaviour. */
+enum {
+    CTL_TOP    = 0,     /* top control row — the stock page strip (AUDIO IN..MIDI) */
+    CTL_UP     = 14,    /* bottom row A — the printed ▲ / upper-label row */
+    CTL_DN     = 15,    /* bottom row B — the printed ▼ / lower-label row */
+    COL_KEY    = 0,     /* "KEY"    ▲/▼ — key, around the circle of fifths */
+    COL_BANK   = 6,     /* "BANK"   ▲/▼ — mode (Ionian/Aeolian/Dorian/Lydian/Mixolydian) */
+    COL_SCALE  = 8,     /* "SCALE"  (row 14) — back to the play surface */
+    COL_PRESET = 9,     /* "PRESET" (row 0)  — preset browser page */
+    COL_SYNTH  = 11,    /* "SYNTH"  (row 15) — synth editor page */
+};
+
+/* Pages are a window onto a taller surface: page N lives at logical y = N*16. */
+enum { PAGE_PLAY = 0, PAGE_SYNTH = 1, PAGE_PRESET = 2, PAGE_N };
+
 struct ambiotica_panel : panel_t {
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0;
     harmony_t* harmony = 0; bloom_t* bloom = 0; drift_t* drift = 0;
@@ -56,6 +79,7 @@ struct ambiotica_panel : panel_t {
     play_surface_t play;
     slider_t       fxslider[FX_N];
     unsigned char  fx_val[FX_N];
+    preset_pages_t presets;                    /* stock synth-editor + preset-browser pages */
     slider_t       fxslider15;                 /* col-15: bipolar Gravity(up)/Drain(down) */
     unsigned char  fx_val15 = 64;              /* 64 = centre / neutral */
     int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
@@ -78,6 +102,7 @@ struct ambiotica_panel : panel_t {
     unsigned int viz_loop_len = 1, viz_micro_len = 1;          /* their cycle lengths in samples (falling-star clocks) */
     float        shimmer_phase = 0.f;              /* slow LFO for the Tail slider's shimmer */
     float        freeze_phase = 0.f;               /* Satellite freeze indicator: fast 3-spot bounce */
+    float        nav_phase = 0.f, nav_pulse = 0.f; /* nav-bar "you are here" breath (runs on every page) */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
        envelope against its own slow peak-hold: idle -> dim floor, emitting ->
@@ -201,8 +226,74 @@ struct ambiotica_panel : panel_t {
         return (unsigned char)b;
     }
 
+    int get_num_pages() override { return PAGE_N; }
+
+    /* Play-surface colour: hue = key (root), shade = mode. The KEY/BANK control pads
+       share it, so the four "what are the strings tuned to" pads visibly belong to the
+       surface they retune. Hue is held in 8..15 so it can never collide with a macro
+       slider (those use hues 0..6, Orbit = 0). */
+    uint32_t key_col() const { return palette[(7 + mode_sel * 2) & 15][8 + (fx.key & 7)]; }
+
+    void apply_key_mode() {
+        fx.key   = (key_pos * 7) % 12;   /* circle of fifths -> root semitone offset */
+        fx.chord = mode_sel;             /* mode also picks the Spectra wash tonic */
+    }
+
+    /* Leaving page 0 stops do_play_surface running, so nothing would ever send the
+       note-offs for pads still held as the page scrolled away — release them here or
+       they hang for as long as you stay on the editor. */
+    void release_all_voices() {
+        for (int v = 0; v < 16; v++) if (voices_active & (1u << v)) synth_note_up(v);
+        voices_active = voices_seen = 0;
+    }
+
+    /* Nav bar — the same three physical pads on every page, so the way between them never
+       moves. The pad for the page you are ON breathes; the other two sit dim, so "where am
+       I" and "where can I go" read at a glance. Exception: on the preset page the file
+       picker owns row 0, so PRESET is left out there (the picker itself is the indicator). */
+    void draw_nav(int page_y, int page) {
+        uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
+        if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away,
+                   ISOLATED, "Play surface"))
+            scroll_to_page(PAGE_PLAY);
+        if (button(COL_SYNTH, page_y + CTL_DN, page == PAGE_SYNTH ? here : away,
+                   ISOLATED, "Synth editor"))
+            scroll_to_page(PAGE_SYNTH);
+        if (page != PAGE_PRESET && button(COL_PRESET, page_y + CTL_TOP, away, ISOLATED, "Presets"))
+            scroll_to_page(PAGE_PRESET);
+    }
+
+    /* Page 0's reserved rows: the tuning pads plus the nav bar. Drawn last so it wins any
+       pad the main UI also touched. */
+    void draw_control_rows() {
+        uint32_t kc = key_col();
+        if (button(COL_KEY,  CTL_UP, kc, ISOLATED, "Key up (fifth)"))     { key_pos = (key_pos + 1)  % 12; apply_key_mode(); }
+        if (button(COL_KEY,  CTL_DN, kc, ISOLATED, "Key down (fourth)"))  { key_pos = (key_pos + 11) % 12; apply_key_mode(); }
+        if (button(COL_BANK, CTL_UP, DIMMER(kc), ISOLATED, "Mode up"))    { mode_sel = (mode_sel + 1) % 5; apply_key_mode(); }
+        if (button(COL_BANK, CTL_DN, DIMMER(kc), ISOLATED, "Mode down"))  { mode_sel = (mode_sel + 4) % 5; apply_key_mode(); }
+        draw_nav(PAGE_PLAY * 16, PAGE_PLAY);
+    }
+
+    /* Stock synth-parameter editor. Offset by UI_Y so its two 5-high slider banks and the
+       flag-button row land on the printed pad circles (rows 2..12) and the control rows
+       stay clear. NB it also exposes DELAY_SEND / REVERB_SEND and the MIX params, which do
+       nothing here — on_dsp owns the output, so the native FX buses never run. */
+    void draw_synth_page() {
+        const int page_y = PAGE_SYNTH * 16;
+        presets.edit(synth_preset, page_y + UI_Y);
+        draw_nav(page_y, PAGE_SYNTH);
+    }
+
+    /* Stock preset browser. saveload spans rows 0..8 (file grid + hue row) and puts its own
+       cancel/OK on row 15 cols 14/15 — under the printed ▢ / ▷ — and returns to page 0
+       itself once you load or cancel. Row 14 is free, so SCALE still works as the escape. */
+    void draw_preset_page() {
+        const int page_y = PAGE_PRESET * 16;
+        presets.saveload(synth_preset, page_y);
+        draw_nav(page_y, PAGE_PRESET);
+    }
+
     void on_ui(int dt_us) override {
-        leds_clear();
 #ifdef AMB_PROFILE
         /* Per-stage core1 timing (avg us/block). Prints UNCONDITIONALLY ~8x/sec so it's a
          * heartbeat too: if this never appears, printf/on_ui isn't reaching the console;
@@ -217,14 +308,28 @@ struct ambiotica_panel : panel_t {
             g_stage_n = 0;
         }
 #endif
+        /* Nav "you are here" breath (~0.8 Hz). Advanced before the page dispatch so it keeps
+           running on every page, not just the play surface. */
+        nav_phase += (float)dt_us * 1e-6f * 0.8f; nav_phase -= (float)(int)nav_phase;
+        float nt = nav_phase < 0.5f ? nav_phase * 2.f : 2.f - nav_phase * 2.f;
+        nav_pulse = nt * nt * (3.f - 2.f * nt);
+
+        /* Page dispatch. Negative pages are the system's own settings UI — return without
+           clearing so it keeps its own drawing. The chain runs on core1 regardless of the
+           page, so the wash keeps going while you edit the synth or browse presets. */
+        int page = get_scroll_page();
+        if (page < 0) return;
+        leds_clear();
+        if (page != PAGE_PLAY) {
+            release_all_voices();
+            if (page == PAGE_SYNTH)       draw_synth_page();
+            else if (page == PAGE_PRESET) draw_preset_page();
+            else                          scroll_to_page(PAGE_PLAY);
+            return;
+        }
+
         voices_seen = 0;
-        /* Play-surface colour: hue = key (root), shade/brightness = mode — so the
-           left/right buttons visibly recolour the surface as they move the key around
-           the circle of fifths / change the mode. */
-        /* Play-surface hue is reserved to 8..15 so it can never collide with a macro
-           slider (those use hues 0..6, Orbit = 0) — the two halves must stay tellable
-           apart. Brightness still tracks the chord, hue still tracks the key. */
-        uint32_t keycol = palette[(7 + mode_sel * 2) & 15][8 + (fx.key & 7)];
+        uint32_t keycol = key_col();
         /* play surface, now with an activity glow/sparkle via the brightness cb */
         /* 4-voice polyphony: the synth renders inside the same core1 2ms budget
          * as our FX; 8 voices' render time pushed us over. 4 leaves headroom for
@@ -232,8 +337,8 @@ struct ambiotica_panel : panel_t {
         /* Quartal, always-in-key play surface: 8 strings tuned in DIATONIC 4THS
            (interval_degrees = 3 scale steps) within the selected key + mode, so every
            adjacent cluster is an open, in-key chord and sliding up a string walks the
-           scale. Root register follows the circle-of-fifths key; the mode (right buttons)
-           picks the scale, so the whole surface + the Spectra wash share one tonal world.
+           scale. Root register follows the circle-of-fifths key (KEY pads); the mode (BANK
+           pads) picks the scale, so the whole surface + the Spectra wash share one tonal world.
            Scale bitmask, bit N = N semitones above the root. */
         static const uint16_t kModeScale[5] = {
             2741,   /* Ionian / major    0,2,4,5,7,9,11 */
@@ -323,6 +428,8 @@ struct ambiotica_panel : panel_t {
         }
         fx.gravity = geff > 0 ? (float)geff / (float)(63 - DZ) : 0.f;              /* up   -> gravity 0..1 */
         fx.horizon = geff < 0 ? 1.f - (float)(-geff) / (float)(64 - DZ) : 1.f;     /* down -> horizon 1..0 */
+
+        draw_control_rows();
     }
 
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
@@ -430,24 +537,9 @@ struct ambiotica_panel : panel_t {
         return true;
     }
 
-    /* Physical side buttons: LEFT pair steps the KEY around the circle of fifths
-       (+1 = up a fifth = +7 semitones); RIGHT pair steps the MODE (Ionian/Aeolian/
-       Dorian/Lydian/Mixolydian), which sets the surface scale AND the Spectra wash
-       tonic. The play-surface colour follows (hue = key, shade = mode). Unhandled
-       buttons fall through to the system (BPM / pages). */
-    void on_click(uint8_t button_mask) override {
-        bool handled = false;
-        if ((button_mask & BTN_BIT_LUP)   && button_clicked(BUTTON_LUP))   { key_pos    = (key_pos + 1)  % 12; handled = true; }
-        if ((button_mask & BTN_BIT_LDOWN) && button_clicked(BUTTON_LDOWN)) { key_pos    = (key_pos + 11) % 12; handled = true; }
-        if ((button_mask & BTN_BIT_RUP)   && button_clicked(BUTTON_RUP))   { mode_sel = (mode_sel + 1) % 5; handled = true; }
-        if ((button_mask & BTN_BIT_RDOWN) && button_clicked(BUTTON_RDOWN)) { mode_sel = (mode_sel + 4) % 5; handled = true; }
-        if (handled) {
-            fx.key   = (key_pos * 7) % 12;   /* circle of fifths -> root semitone offset */
-            fx.chord = mode_sel;
-        } else {
-            panel_t::on_click(button_mask);
-        }
-    }
+    /* No on_click override: key and mode now live on the printed KEY / BANK pads, so the
+       physical side buttons keep their stock behaviour (left = BPM, right = page cycle).
+       The right pair is therefore a second way between pages, on top of SYNTH/PRESET/SCALE. */
 
     bool on_serialise(serialiser_t& s, int version) override {
         /* TODO: persist fx_val[], synth_preset, fx.key/chord via save_and_load.h field macros */
