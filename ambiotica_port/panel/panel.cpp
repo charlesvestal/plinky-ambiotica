@@ -458,11 +458,9 @@ struct ambiotica : panel_t {
                the save button dark. One-shot print of the name and its length so a future
                rename that creeps back over 16 shows up immediately instead of silently
                breaking save/load again. */
-            if (!scene_dirs_made) {
-                scene_dirs_made = true;
-                const char* pn = get_current_panel_name();
-                printf("SCENE: name='%s' len=%d (max 16)\n", pn ? pn : "(null)", pn ? (int)strlen(pn) : -1);
-            }
+            /* (Was printing the panel name and its length here. Answered: 'u_ambiotica',
+               11 of the 16 the picker's char[17] allows. Dropped to keep the log quiet
+               around a load — see the note in on_ui.) */
             done  = scene_picker.panel_save_button(COL_SAVE, page_y + CTL_UP);
             /* panel_load_button only STAGES the load. Do NOT finalise here: the documented
                precondition is is_panel_load_staged(), which "returns true while a staged
@@ -503,17 +501,12 @@ struct ambiotica : panel_t {
            the symptom being chased (commit never completes, USB dies). sram_pool is the
            adjustable 88 KB of it; preset_pages_t and the two file_picker_t caches are several
            KB more. Anything near or over 131072 is the bug.
-           Reprinted every 5 s rather than once at boot: device logging can only be attached
-           after boot, so a startup print is never seen. The counter is a function-local
-           static, so unlike a member it also survives the load's memcpy. dsp_ok rides along
-           to show whether the chain is still alive after a commit. */
-        static unsigned size_report_us = 0;
-        size_report_us += (unsigned)dt_us;
-        if (size_report_us >= 5000000u) {
-            size_report_us = 0;
-            printf("PANEL: sizeof=%u sram_pool=%u arena=131072 dsp_ok=%d\n",
-                   (unsigned)sizeof(*this), (unsigned)sizeof(sram_pool), (int)dsp_ok);
-        }
+           Answered: 127040 of 131072, so the object fits and this is no longer worth
+           printing periodically. Every observed failure has been a MID-TOKEN truncation of
+           the log during the heaviest burst the firmware emits (plantime prints a long line
+           per preset slot, and mask=0xfff is twelve of them), which looks like the USB CDC
+           stream giving out rather than a hang — so our own output is now kept to the bare
+           minimum around a load, to stop us adding to that pressure. */
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
            than at the button because the precondition is not satisfied in the same frame, and
@@ -818,19 +811,12 @@ struct ambiotica : panel_t {
         FIELD("gravity", o.fx_val15,               0u, 127u);
         FIELD("key",     o.key_pos,                0,  11);
         FIELD("mode",    o.mode_sel,               0,  4);
-        /* EXPERIMENT (2026-07-25): synth + mix presets temporarily OUT of the scene.
-         * Carrying them makes every scene load stage a preset install, which is what runs
-         * the system's "plantime" planner — and that is exactly where the second load dies
-         * (mid-line, before finalise is even reached; our commit path now completes
-         * cleanly). Dropping them removes that phase from the load entirely.
-         *   still dies  -> plantime is not the trigger, look elsewhere
-         *   survives    -> it is preset staging, which is firmware side, and we have a
-         *                  precise report for mmalex
-         * Cost while this is out: a scene recalls the macros/key/mode but not its sound.
-         * Old save files keep these keys; the reader skips unknown keys, so they load fine.
+        /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
+         * preset-install planner on a scene load — that happens for every staged panel load
+         * regardless of what we serialise. So they are not implicated in the load failure,
+         * and a scene should carry its sound. */
         FIELD_SYNTH_PRESET("preset", 0);
         FIELD_MIX_PRESET("presetMix");
-         */
         OBJECT_END(s);
         if (s.reading) { apply_key_mode(); push_fx_from_ui(); fx_sm = fx; }
         return true;
