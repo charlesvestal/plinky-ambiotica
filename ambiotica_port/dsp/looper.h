@@ -11,6 +11,14 @@
 #ifndef AMBIOTICA_LOOPER_H
 #define AMBIOTICA_LOOPER_H
 
+/* looper_process is the biggest remaining core1 stage (~245us/block, measured). The SDK's
+ * PLINKY_DSP_RAM_FUNC un-inlines it and places its code in SRAM, exempting it from the
+ * shared XIP cache. Fallback so the desktop harness and older firmware still build.
+ * NOTE: the SRAM code region is small — if this stops LINKING, drop the wrapper. */
+#ifndef PLINKY_DSP_RAM_FUNC
+#define PLINKY_DSP_RAM_FUNC(f) f
+#endif
+
 typedef struct looper_s looper_t;
 
 /* Create with maximum buffer capacity in samples. The active loop length
@@ -39,7 +47,7 @@ void      looper_clear(looper_t *l);
  * capture ring (with feedback). out_l/out_r receive ONLY the loop signal
  * (fb × delayed_read) — no dry. The caller is responsible for mixing dry
  * back in. in and out may NOT alias. */
-void      looper_process(looper_t *l,
+void      PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                          const float *in_l, const float *in_r,
                          float *out_l, float *out_r,
                          int frames);
