@@ -892,6 +892,10 @@ struct ambiotica : panel_t {
     bool on_serialise(serialiser_t& s, int version) override {
         (void)version;
         ambiotica& o = *this;
+        /* FIELD_BASE64 takes its length by non-const reference (it writes back how much was
+           actually read), so this needs an lvalue, declared before OBJECT_BEGIN opens its
+           switch. Same shape the stock worm panel uses. */
+        int pattern_bytes = (int)sizeof(o.pattern);
         OBJECT_BEGIN(s);
         FIELD("orbit",   o.fx_val[FX_ORBIT],       0u, 127u);
         FIELD("satel",   o.fx_val[FX_SATELLITE],   0u, 127u);
@@ -903,7 +907,7 @@ struct ambiotica : panel_t {
         FIELD("gravity", o.fx_val15,               0u, 127u);
         FIELD("key",     o.key_pos,                0,  11);
         FIELD("mode",    o.mode_sel,               0,  4);
-        FIELD_BASE64("drums", o.pattern, (int)sizeof(o.pattern), (int)sizeof(o.pattern));
+        FIELD_BASE64("drums", o.pattern, pattern_bytes, (int)sizeof(o.pattern));
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
          * preset-install planner on a scene load — that happens for every staged panel load
          * regardless of what we serialise. So they are not implicated in the load failure,
