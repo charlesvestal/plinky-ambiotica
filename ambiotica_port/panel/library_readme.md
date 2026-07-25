@@ -42,7 +42,10 @@ One bipolar slider, neutral at centre (white).
 | **BANK** ▲▼ | mode: Ionian / Aeolian / Dorian / Lydian / Mixolydian |
 | **SCALE** | back to the play surface |
 | **PRESET** | synth preset browser |
+| **SONG** | save/load a whole scene — every macro, the tuning and the sound |
 | **SYNTH** | synth editor, laid out to match the printed Chords labels |
+
+On the picker pages, **SAVE** and **LOAD** commit and **SCALE** cancels.
 
 The pad for the page you are on breathes. No physical side button is claimed, so the
 left pair still nudges BPM (Orbit and Satellite follow the tempo) and the right pair
