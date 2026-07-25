@@ -818,8 +818,19 @@ struct ambiotica : panel_t {
         FIELD("gravity", o.fx_val15,               0u, 127u);
         FIELD("key",     o.key_pos,                0,  11);
         FIELD("mode",    o.mode_sel,               0,  4);
+        /* EXPERIMENT (2026-07-25): synth + mix presets temporarily OUT of the scene.
+         * Carrying them makes every scene load stage a preset install, which is what runs
+         * the system's "plantime" planner — and that is exactly where the second load dies
+         * (mid-line, before finalise is even reached; our commit path now completes
+         * cleanly). Dropping them removes that phase from the load entirely.
+         *   still dies  -> plantime is not the trigger, look elsewhere
+         *   survives    -> it is preset staging, which is firmware side, and we have a
+         *                  precise report for mmalex
+         * Cost while this is out: a scene recalls the macros/key/mode but not its sound.
+         * Old save files keep these keys; the reader skips unknown keys, so they load fine.
         FIELD_SYNTH_PRESET("preset", 0);
         FIELD_MIX_PRESET("presetMix");
+         */
         OBJECT_END(s);
         if (s.reading) { apply_key_mode(); push_fx_from_ui(); fx_sm = fx; }
         return true;
