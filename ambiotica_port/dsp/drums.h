@@ -43,6 +43,11 @@ void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int
 /* ADDS into out_l/out_r — does not clear them. Call after the wash has been rendered. */
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames);
 
+/* Closed hat cuts the open hat. On by default — it is what makes a kit sound like a kit,
+   and exactly wrong for a sliced break, where the tracks are consecutive eighths of one
+   continuous performance and would cut each other off. */
+void drums_set_choke(drums_t* d, int enabled);
+
 /* Silence every voice without clearing the kit (transport stop, scene load). */
 void drums_all_off(drums_t* d);
 
