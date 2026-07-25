@@ -110,7 +110,7 @@ struct ambiotica : panel_t {
        timer expires does the selection become real. */
     int             drum_kit_sel = -1;
     int             drum_kit_arm_us = 0;
-    int             nav_cooldown = 0;  /* frames to ignore nav taps after a page change */
+    int             nav_cooldown_us = 0;  /* input ignored this long after a page change */
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
     full_params fx_sm;   /* per-block-smoothed macros actually fed to the chain (de-click) */
@@ -179,6 +179,14 @@ struct ambiotica : panel_t {
         memset(&fx, 0, sizeof fx);
         fx.bpm = 120.f; fx.loop_length_bars = 2.f; fx.key = 0; fx.chord = 0; fx.bloom = 0.4f;
         fx.gravity = 0.f; fx.horizon = 1.f;   /* neutral: no gravity, full sustain */
+        /* Explicit, not inherited. Every other control gets its default here, and relying on
+           the arena being pre-zeroed is an assumption about someone else's code — the
+           "blank panel" action routes through this function too, so an empty grid has to be
+           stated rather than assumed. */
+        memset(pattern, 0, sizeof pattern);
+        drum_kit = drum_kit_sel = -1;   /* generated kit */
+        drum_kit_arm_us = 0;
+        drum_step = 0;
         push_fx_from_ui();
         fx_sm = fx;   /* start the smoother at the target so nothing ramps up from 0 on boot */
 
@@ -395,17 +403,29 @@ struct ambiotica : panel_t {
        SCALE doubles as Cancel on the picker pages: on_done() is the picker's own cleanup
        (drops the audition preview and the pending delete), so leaving via SCALE is a real
        cancel rather than just a scroll. */
-    /* scroll_to_page ANIMATES, and the nav pads sit on rows 0 and 14. While the grid slides,
-       the next page's row-0 pad sweeps upward past row 14 — straight under a finger that is
-       still down from the tap that started the scroll — and fires. Symptom: tapping TRACKS
-       lands you on the preset browser, auditioning whatever slot the finger then rests on.
-       So swallow nav taps for a few frames after any page change. Draw them as normal; only
-       the action is suppressed. */
-    void nav_goto(int page) { scroll_to_page(page); nav_cooldown = 15; }
+    /* scroll_to_page ANIMATES, and the incoming page slides upward under whatever finger is
+       still down from the tap that started it. Anything that pad passes over fires:
+         - nav pads sit on rows 0/14, so tapping TRACKS could land on the preset browser
+         - worse, the drums grid sweeps past too, and TRACKS is column 9 — so holding it
+           wrote step 10 on nearly every track as the rows went by
+       So freeze ALL touch-driven input until the scroll has finished. Everything still
+       draws; only actions are suppressed.
+       There is no "page settled" callback, but the state is exact: get_scroll_y_16() is the
+       live position in 1/16 LED units and page N sits at y = N*16, so it has settled when
+       that equals N*256. That is better than guessing a duration — it releases input the
+       instant the grid stops rather than a fixed time later.
+       The ceiling exists because scroll_settled() rests on my reading of those units: if it
+       is wrong and never returns true, input would be dead forever. With the ceiling the
+       worst case degrades to a one-second timer. If input feels frozen for a beat after
+       every page change, that assumption is what to look at. */
+    static constexpr int NAV_FREEZE_CEILING_US = 1000000;
+    bool scroll_settled() const { return get_scroll_y_16() == get_scroll_page() * 256; }
+    bool input_frozen()  const { return nav_cooldown_us > 0 && !scroll_settled(); }
+    void nav_goto(int page) { scroll_to_page(page); nav_cooldown_us = NAV_FREEZE_CEILING_US; }
 
     void draw_nav(int page_y, int page) {
         uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
-        const bool armed = (nav_cooldown == 0);
+        const bool armed = !input_frozen();
         if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away, ISOLATED,
                    page == PAGE_PRESET || page == PAGE_SCENE ? "Cancel — back to play" : "Play surface")
             && armed) {
@@ -570,6 +590,14 @@ struct ambiotica : panel_t {
     void report_presets() {
         if (preset_report_done) return;
         preset_report_done = true;
+        /* Steps that were never entered have shown up after a load; count them so we can see
+           whether the pattern really holds data or the grid is only drawing it that way. */
+        int lit = 0, first = -1;
+        for (int i = 0; i < (int)sizeof(pattern); i++)
+            if (pattern[i]) { lit++; if (first < 0) first = i; }
+        printf("DRUMS: lit=%d first=%d (trk %d step %d) kit=%d\n",
+               lit, first, first < 0 ? -1 : first / DRUM_STEPS,
+               first < 0 ? -1 : first % DRUM_STEPS, drum_kit);
         for (int i = 0; i < MAX_SYNTH_PRESETS; i++) {
             const synth_preset_t* p = &synth_presets[i];
             int slices = 0;
@@ -597,7 +625,9 @@ struct ambiotica : panel_t {
             int y = page_y + UI_Y + t;
             for (int s = 0; s < DRUM_STEPS; s++) {
                 int idx = t * DRUM_STEPS + s;
-                if (get_touch_down(s, y)) {
+                /* Frozen during a page transition — otherwise the finger still down from the
+                   TRACKS tap writes a step on every row the grid slides past it. */
+                if (!input_frozen() && get_touch_down(s, y)) {
                     any_down = true;
                     if (!drum_paint) drum_paint = pattern[idx] ? 2 : 1;   /* latch on first contact */
                     pattern[idx] = (erase_mod || drum_paint == 2) ? 0 : 100;
@@ -622,12 +652,12 @@ struct ambiotica : panel_t {
         if (button(COL_BANK, page_y + CTL_UP, kitcol, ISOLATED, "Kit up"))   arm_kit(drum_kit_sel + 1);
         if (button(COL_BANK, page_y + CTL_DN, kitcol, ISOLATED, "Kit down")) arm_kit(drum_kit_sel - 1);
 
-        /* While the selection is armed, show its name over the top of the grid so you can
-           read what you are scrolling past before it commits. Four characters is all that
-           fits across 16 columns in FONT_4; the full name goes to the help line. */
+        /* While the selection is armed, show its name in the four empty rows BELOW the step
+           grid, so scrolling kits never hides the pattern you are editing. Four characters
+           is all that fits across 16 columns in FONT_4; the full name goes to the help line
+           for the second-screen view. */
         if (drum_kit_arm_us > 0) {
-            leds_rectangle(0, page_y + UI_Y, 16, page_y + UI_Y + 4, 0);
-            leds_draw_string(0, page_y + UI_Y, FONT_4, WHITE, kit_label(drum_kit_sel));
+            leds_draw_string(0, page_y + UI_Y + DRUM_TRACKS, FONT_4, BLUE, kit_label(drum_kit_sel));
             set_help_text("Kit: #fc2#*%s#.", kit_name(drum_kit_sel));
         }
 
@@ -809,7 +839,7 @@ struct ambiotica : panel_t {
                    (unsigned)sizeof(*this), 131072 - (int)sizeof(*this), (int)dsp_ok);
         }
 
-        if (nav_cooldown > 0) nav_cooldown--;
+        if (nav_cooldown_us > 0) nav_cooldown_us -= dt_us;
         tick_kit_arm(dt_us);
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
