@@ -98,6 +98,7 @@ struct ambiotica : panel_t {
     clock_divider_t drum_clock;
     int             drum_step = 0;
     unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing */
+    bool            preset_report_done = false;   /* one-shot preset/kit dump (see report_presets) */
     int             nav_cooldown = 0;  /* frames to ignore nav taps after a page change */
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
@@ -435,8 +436,29 @@ struct ambiotica : panel_t {
        classic one-track-at-a-time, because we have the rows and seeing it all beats paging.
        Colour is per track (hue) so rows stay tellable apart; every 4th step is dimly lit as a
        beat ruler; the playhead brightens its whole column. */
+    /* One-shot dump of the 12 preset slots, on first visit to the drums page. We cannot see
+       what is on someone's card from outside, but the panel can: this reports which slots
+       hold kits (is_kit = the preset name contains "kit" as a delimited word), how many
+       slices carry sample data, and how long the underlying tape is. That is exactly what
+       the drum engine needs to point tracks at real samples — one kit preset's 8 slices map
+       onto our 8 tracks. User-triggered so it costs nothing until you go looking. */
+    void report_presets() {
+        if (preset_report_done) return;
+        preset_report_done = true;
+        for (int i = 0; i < MAX_SYNTH_PRESETS; i++) {
+            const synth_preset_t* p = &synth_presets[i];
+            int slices = 0;
+            for (int s = 0; s < PRESET_SLICE_COUNT; s++)
+                if (preset_slice_has_sample_data(&p->slice[s])) slices++;
+            printf("P%02d kit=%d slices=%d tape=%u '%s' bank='%s/%s'\n",
+                   i, (int)synth_preset_is_kit(p), slices,
+                   (unsigned)p->tape_length_samples, p->name, p->bank_category, p->bank_filename);
+        }
+    }
+
     void draw_drums_page() {
         const int page_y = PAGE_DRUMS * 16;
+        report_presets();
         bool playing = is_transport_playing();
         /* Tap toggles, drag paints. The FIRST pad of a gesture decides the mode from its own
            state — land on an empty step and the whole drag writes, land on a lit one and it
