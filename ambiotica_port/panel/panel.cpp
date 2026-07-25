@@ -146,14 +146,6 @@ struct ambiotica : panel_t {
     }
 
     void setup_default_panel_state() override {
-        /* The WHOLE panel object must fit the 128 KB panel arena — and a panel LOAD builds a
-         * SECOND copy in the shadow arena before memcpying it over us. So an oversized object
-         * is invisible during normal play and only corrupts memory when you load, which is
-         * the symptom being chased (commit never completes, USB dies). sram_pool is the
-         * adjustable 88 KB of it; preset_pages_t and the two file_picker_t caches are several
-         * KB more. If this prints anything near or over 131072, that is the bug. */
-        printf("PANEL: sizeof=%u bytes, sram_pool=%u, arena=131072\n",
-               (unsigned)sizeof(*this), (unsigned)sizeof(sram_pool));
 
         fx_val[FX_ORBIT] = 48; fx_val[FX_CONSTELLATE] = 48; fx_val[FX_SATELLITE] = 32;
         fx_val[FX_TAIL] = 76; fx_val[FX_FLUX] = 40; fx_val[FX_SPECTRA] = 64; fx_val[FX_MIX] = 90;
@@ -500,6 +492,24 @@ struct ambiotica : panel_t {
             g_stage_n = 0;
         }
 #endif
+        /* The WHOLE panel object must fit the 128 KB panel arena — and a panel LOAD builds a
+           SECOND copy in the shadow arena before memcpying it over us. So an oversized object
+           is invisible during normal play and only corrupts memory when you load, which is
+           the symptom being chased (commit never completes, USB dies). sram_pool is the
+           adjustable 88 KB of it; preset_pages_t and the two file_picker_t caches are several
+           KB more. Anything near or over 131072 is the bug.
+           Reprinted every 5 s rather than once at boot: device logging can only be attached
+           after boot, so a startup print is never seen. The counter is a function-local
+           static, so unlike a member it also survives the load's memcpy. dsp_ok rides along
+           to show whether the chain is still alive after a commit. */
+        static unsigned size_report_us = 0;
+        size_report_us += (unsigned)dt_us;
+        if (size_report_us >= 5000000u) {
+            size_report_us = 0;
+            printf("PANEL: sizeof=%u sram_pool=%u arena=131072 dsp_ok=%d\n",
+                   (unsigned)sizeof(*this), (unsigned)sizeof(sram_pool), (int)dsp_ok);
+        }
+
         /* Commit a staged scene load once the system reports it complete. Polled here rather
            than at the button because the precondition is not satisfied in the same frame, and
            because we scroll back to the play surface as soon as it is staged. Bounded so a
