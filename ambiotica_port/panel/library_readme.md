@@ -47,8 +47,8 @@ Hold **PROB** and tap a lit step to cycle how often it fires — 100 / 75 / 50 /
 shown as its brightness. Probability is what keeps a long ambient pattern from repeating
 identically.
 
-Hold **⭕** (reroll) and tap a track to randomise a quarter of it; tap again to push it
-further. **⭕ + SYNTH** rolls a new sound out of the current preset.
+Hold **FILL** and tap a track to randomise a quarter of it; tap again to push it
+further. **FILL + SYNTH** rolls a new sound out of the current preset.
 
 The kit deliberately sits **outside** the wash. Drums are mixed into the output after the
 chain, so the looper, grains and plate never touch them: the pattern stays dry and legible
