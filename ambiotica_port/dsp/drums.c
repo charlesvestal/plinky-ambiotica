@@ -35,6 +35,7 @@ struct drums_s {
     drum_sample_t s[DRUM_TRACKS];
     drum_voice_t  v[DRUM_TRACKS];   /* one voice per track — a retrigger cuts its predecessor */
     drum_source_t src[DRUM_TRACKS]; /* zeroed = use the generated buffer */
+    int           choke;            /* closed hat cuts open hat — a kit thing, not a break thing */
 };
 
 /* ---- synthesis helpers (boot-time only, never realtime) ---------------------------- */
@@ -180,14 +181,17 @@ drums_t* drums_create(double sample_rate) {
     }
 
     for (int t = 0; t < DRUM_TRACKS; t++) d->v[t].pos = -1;
+    d->choke = 1;
     return d;
 }
+
+void drums_set_choke(drums_t* d, int enabled) { if (d) d->choke = enabled ? 1 : 0; }
 
 void drums_trigger(drums_t* d, int track, int velocity) {
     if (!d || track < 0 || track >= DRUM_TRACKS || velocity <= 0) return;
     /* A closed hat chokes the open hat — the one piece of cross-track behaviour worth
        having, and the thing that makes a hat pattern sound like a hat pattern. */
-    if (track == DRUM_CHAT) d->v[DRUM_OHAT].pos = -1;
+    if (d->choke && track == DRUM_CHAT) d->v[DRUM_OHAT].pos = -1;
     d->v[track].pos = 0;
     d->v[track].amp = (float)velocity * (1.0f / 127.0f);
 }
@@ -215,10 +219,14 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
         const int len = sampled ? (int)(src->va_end - src->va_start) : s->len;
         /* 8-bit generated buffers run +/-127, preset sample memory is 16-bit; normalise here
            so per-track gain and velocity mean the same thing either way. */
-        float g  = v->amp * s->gain * (sampled ? (1.0f / 32768.0f) : (1.0f / 127.0f));
+        /* Per-track gain/pan are trims baked for the GENERATED kit; applying the synthesised
+           hat's 0.38 to a sampled hat (or to an eighth of a break) would be arbitrary, so
+           sampled sources play flat and centred. */
+        float g  = v->amp * (sampled ? (1.0f / 32768.0f) : s->gain * (1.0f / 127.0f));
+        float pan = sampled ? 0.0f : s->pan;
         /* Equal-ish power pan, cheap: pan is small so a linear split is inaudible here. */
-        float gl = g * (1.0f - s->pan) * 0.5f;
-        float gr = g * (1.0f + s->pan) * 0.5f;
+        float gl = g * (1.0f - pan) * 0.5f;
+        float gr = g * (1.0f + pan) * 0.5f;
         int n = frames, pos = v->pos;
         if (pos + n > len) n = len - pos;
         if (sampled) {

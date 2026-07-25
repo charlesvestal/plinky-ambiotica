@@ -456,11 +456,36 @@ struct ambiotica : panel_t {
        NOT included: procedural/Transistor_Kit, whose presets start with '!' and have an
        empty tape — the firmware synthesises those through the synth engine, so there is no
        sample memory for us to read and they would have to go through the wash. */
-    struct drum_kit_t { const char* category; const char* bank; };
+    struct drum_kit_t {
+        const char* category;
+        const char* bank;
+        int         preset_in_bank;   /* <0 = one-shot kit (8 presets -> 8 tracks);
+                                         >=0 = SLICED: this one preset, cut into 8 */
+    };
     static constexpr drum_kit_t kKits[] = {
-        { "2_DRUMS", "ELEC_KIT"      },
-        { "2_DRUMS", "ALUMINIUM_KIT" },
-        { "2_DRUMS", "MIAMI_KIT"     },
+        { "2_DRUMS", "ELEC_KIT",      -1 },
+        { "2_DRUMS", "ALUMINIUM_KIT", -1 },
+        { "2_DRUMS", "MIAMI_KIT",     -1 },
+        /* Breaks. Every DivBeats preset is exactly 113778 samples = one bar, so cutting it
+           into DRUM_TRACKS gives eight eighth-notes: track n is the nth eighth of the bar,
+           and the step grid rearranges them. One preset slot, not eight. Bank indices are
+           the octal filenames (20.json = 16, ...). */
+        { "artists", "DivBeats",  0 },  /* AmenBrother      */
+        { "artists", "DivBeats",  1 },  /* AshleysRoach     */
+        { "artists", "DivBeats",  2 },  /* ColdSweat        */
+        { "artists", "DivBeats",  3 },  /* FunkyDrummer     */
+        { "artists", "DivBeats",  4 },  /* FunkyPresident   */
+        { "artists", "DivBeats",  5 },  /* ImpeachPresident */
+        { "artists", "DivBeats",  6 },  /* RockSteady       */
+        { "artists", "DivBeats",  7 },  /* ThinkAboutU      */
+        { "artists", "DivBeats", 16 },  /* Dubstep          */
+        { "artists", "DivBeats", 17 },  /* ElektroBreak     */
+        { "artists", "DivBeats", 18 },  /* Electronica      */
+        { "artists", "DivBeats", 19 },  /* HipHop           */
+        { "artists", "DivBeats", 20 },  /* House            */
+        { "artists", "DivBeats", 21 },  /* LoFiGarage       */
+        { "artists", "DivBeats", 22 },  /* Techno           */
+        { "artists", "DivBeats", 23 },  /* DnB              */
     };
     static constexpr int kNumKits = (int)(sizeof(kKits) / sizeof(kKits[0]));
 
@@ -468,12 +493,29 @@ struct ambiotica : panel_t {
        Called after loading a kit and after a scene load, since a load replaces the presets. */
     void refresh_drum_slices() {
         if (!drums) return;
+        const bool sliced = drum_kit >= 0 && kKits[drum_kit].preset_in_bank >= 0;
+        /* A sliced break is one continuous performance, so the hat choke — which makes a kit
+           sound like a kit — would just cut adjacent eighths off each other. */
+        drums_set_choke(drums, !sliced);
+
+        if (sliced) {
+            const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE];
+            const synth_preset_slice_t* sl = &p->slice[0];
+            if (preset_slice_has_sample_data(sl)) {
+                unsigned int base = get_mip_va(p, 0, false);   /* mip 0 = the unfiltered original */
+                unsigned int a = base + sl->start_read_only, b = base + sl->end_read_only;
+                unsigned int step = (b - a) / DRUM_TRACKS;
+                for (int t = 0; t < DRUM_TRACKS; t++)
+                    drums_set_sample(drums, t, a + step * t, a + step * (t + 1));
+                return;
+            }
+        }
         for (int t = 0; t < DRUM_TRACKS; t++) {
             unsigned int a = 0, b = 0;
             const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE + t];
             const synth_preset_slice_t* sl = &p->slice[0];
             if (drum_kit >= 0 && preset_slice_has_sample_data(sl)) {
-                unsigned int base = get_mip_va(p, 0, false);   /* mip 0 = the unfiltered original */
+                unsigned int base = get_mip_va(p, 0, false);
                 a = base + sl->start_read_only;
                 b = base + sl->end_read_only;
             }
@@ -489,10 +531,14 @@ struct ambiotica : panel_t {
         if (kit >= kNumKits) kit = -1;
         drum_kit = kit;
         drums_all_off(drums);
-        if (kit >= 0)
-            for (int t = 0; t < DRUM_TRACKS; t++)
-                load_preset_from_filename_with_category(DRUM_PRESET_BASE + t,
-                                                        kKits[kit].category, kKits[kit].bank, t);
+        if (kit >= 0) {
+            const drum_kit_t& k = kKits[kit];
+            if (k.preset_in_bank >= 0)   /* sliced break: one preset, cut into 8 below */
+                load_preset_from_filename_with_category(DRUM_PRESET_BASE, k.category, k.bank, k.preset_in_bank);
+            else                         /* one-shot kit: one preset per track */
+                for (int t = 0; t < DRUM_TRACKS; t++)
+                    load_preset_from_filename_with_category(DRUM_PRESET_BASE + t, k.category, k.bank, t);
+        }
         refresh_drum_slices();
     }
 
