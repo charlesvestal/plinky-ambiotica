@@ -33,6 +33,13 @@ drums_t* drums_create(double sample_rate);
    on the machines this imitates — a closed hat cuts the open hat, see drums.c). */
 void drums_trigger(drums_t* d, int track, int velocity);
 
+/* Point a track at sample data owned by the preset system, as a virtual-address range (see
+   READ_SAMPLE / get_mip_va in the SDK). Pass va_end <= va_start to clear it, and the track
+   falls back to its generated voice — which is what keeps the panel playable with no samples
+   loaded at all. Slice bounds must come from the preset: the docs warn that reading past the
+   end of a sample can crash, and that regions outside a loaded preset may not be resident. */
+void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int va_end);
+
 /* ADDS into out_l/out_r — does not clear them. Call after the wash has been rendered. */
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames);
 

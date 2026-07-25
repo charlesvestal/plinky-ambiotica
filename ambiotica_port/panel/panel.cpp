@@ -72,6 +72,10 @@ enum {
    control rows free for the nav bar. */
 enum { PAGE_PLAY = 0, PAGE_DRUMS = 1, PAGE_SYNTH = 2, PAGE_PRESET = 3, PAGE_SCENE = 4, PAGE_N };
 
+/* Drum tracks own preset slots 1..8; slot 0 stays with the play surface, 9..11 spare.
+   (MAX_SYNTH_PRESETS is 12, all resident at once.) */
+#define DRUM_PRESET_BASE 1
+
 /* Panel settings pages live ABOVE page 0 (right-up from the play surface), at y = -16*n. */
 enum { SET_SOURCE = -1, SET_IN_LEVEL = -2, SET_N = 2 };
 
@@ -99,6 +103,7 @@ struct ambiotica : panel_t {
     int             drum_step = 0;
     unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing */
     bool            preset_report_done = false;   /* one-shot preset/kit dump (see report_presets) */
+    int             drum_kit = -1;      /* -1 = the generated kit; else an index into kKits */
     int             nav_cooldown = 0;  /* frames to ignore nav taps after a page change */
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
@@ -274,6 +279,9 @@ struct ambiotica : panel_t {
         fx_sm = fx;              /* land on the loaded scene rather than ramping into it */
         eh_flushed = false;
         preview_mix = 0.f;
+        /* The scene carried its own presets, so the tracks' slices point at whatever it
+           loaded — re-derive them rather than trusting the pointers we just overwrote. */
+        refresh_drum_slices();
         printf("SCENE: load committed, dsp_ok=%d\n", (int)dsp_ok);
     }
 
@@ -442,6 +450,52 @@ struct ambiotica : panel_t {
        slices carry sample data, and how long the underlying tape is. That is exactly what
        the drum engine needs to point tracks at real samples — one kit preset's 8 slices map
        onto our 8 tracks. User-triggered so it costs nothing until you go looking. */
+    /* Sampled kits that ship on the stock SD card. Each bank is one tape plus up to 64
+       one-slice presets — one drum per preset — so a kit costs us 8 of the 12 preset slots,
+       loaded into 1..8 with slot 0 left for the play surface.
+       NOT included: procedural/Transistor_Kit, whose presets start with '!' and have an
+       empty tape — the firmware synthesises those through the synth engine, so there is no
+       sample memory for us to read and they would have to go through the wash. */
+    struct drum_kit_t { const char* category; const char* bank; };
+    static constexpr drum_kit_t kKits[] = {
+        { "2_DRUMS", "ELEC_KIT"      },
+        { "2_DRUMS", "ALUMINIUM_KIT" },
+        { "2_DRUMS", "MIAMI_KIT"     },
+    };
+    static constexpr int kNumKits = (int)(sizeof(kKits) / sizeof(kKits[0]));
+
+    /* Re-point each track at its preset's slice, or clear it so the generated voice plays.
+       Called after loading a kit and after a scene load, since a load replaces the presets. */
+    void refresh_drum_slices() {
+        if (!drums) return;
+        for (int t = 0; t < DRUM_TRACKS; t++) {
+            unsigned int a = 0, b = 0;
+            const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE + t];
+            const synth_preset_slice_t* sl = &p->slice[0];
+            if (drum_kit >= 0 && preset_slice_has_sample_data(sl)) {
+                unsigned int base = get_mip_va(p, 0, false);   /* mip 0 = the unfiltered original */
+                a = base + sl->start_read_only;
+                b = base + sl->end_read_only;
+            }
+            drums_set_sample(drums, t, a, b);
+        }
+    }
+
+    /* kit = -1 is our generated kit; 0..kNumKits-1 load a sampled bank into slots 1..8.
+       NB loading presets runs the system's chunk planner, which blocks core0 for tens of ms
+       and drops a step or two — a between-takes gesture, not a performance one. */
+    void load_drum_kit(int kit) {
+        if (kit < -1) kit = kNumKits - 1;
+        if (kit >= kNumKits) kit = -1;
+        drum_kit = kit;
+        drums_all_off(drums);
+        if (kit >= 0)
+            for (int t = 0; t < DRUM_TRACKS; t++)
+                load_preset_from_filename_with_category(DRUM_PRESET_BASE + t,
+                                                        kKits[kit].category, kKits[kit].bank, t);
+        refresh_drum_slices();
+    }
+
     void report_presets() {
         if (preset_report_done) return;
         preset_report_done = true;
@@ -488,6 +542,15 @@ struct ambiotica : panel_t {
             }
         }
         if (!any_down) drum_paint = 0;   /* gesture ends only when the grid is fully released */
+
+        /* BANK ▲▼ cycles kits here — which is what the pad is actually printed for. On the
+           play page the same pads pick the musical mode; context decides, and both readings
+           are honest. The generated kit sits in the ring as -1, so it is always reachable
+           and the panel still works with no samples loaded. */
+        uint32_t kitcol = drum_kit < 0 ? DIMMER(WHITE) : palette[9][(drum_kit * 3 + 2) & 15];
+        if (button(COL_BANK, page_y + CTL_UP, kitcol, ISOLATED, "Kit up"))   load_drum_kit(drum_kit + 1);
+        if (button(COL_BANK, page_y + CTL_DN, kitcol, ISOLATED, "Kit down")) load_drum_kit(drum_kit - 1);
+
         draw_nav(page_y, PAGE_DRUMS);
     }
 
@@ -983,6 +1046,7 @@ struct ambiotica : panel_t {
         FIELD("key",     o.key_pos,                0,  11);
         FIELD("mode",    o.mode_sel,               0,  4);
         FIELD_BASE64("drums", o.pattern, pattern_bytes, (int)sizeof(o.pattern));
+        FIELD("kit",     o.drum_kit,               -1, 8);
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
          * preset-install planner on a scene load — that happens for every staged panel load
          * regardless of what we serialise. So they are not implicated in the load failure,
