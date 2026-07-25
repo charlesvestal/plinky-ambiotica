@@ -104,6 +104,12 @@ struct ambiotica : panel_t {
     unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing */
     bool            preset_report_done = false;   /* one-shot preset/kit dump (see report_presets) */
     int             drum_kit = -1;      /* -1 = the generated kit; else an index into kKits */
+    /* Selection is deliberately separate from what is LOADED. Loading a kit runs the chunk
+       planner, which blocks core0 for tens of ms — so scrolling a 20-entry ring must not
+       load every entry it passes. BANK moves drum_kit_sel and arms a timer; only when the
+       timer expires does the selection become real. */
+    int             drum_kit_sel = -1;
+    int             drum_kit_arm_us = 0;
     int             nav_cooldown = 0;  /* frames to ignore nav taps after a page change */
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
@@ -461,31 +467,33 @@ struct ambiotica : panel_t {
         const char* bank;
         int         preset_in_bank;   /* <0 = one-shot kit (8 presets -> 8 tracks);
                                          >=0 = SLICED: this one preset, cut into 8 */
+        const char* label;            /* 4 chars — all that fits across 16 columns in FONT_4 */
+        const char* name;             /* full name, for the help line / second screen */
     };
     static constexpr drum_kit_t kKits[] = {
-        { "2_DRUMS", "ELEC_KIT",      -1 },
-        { "2_DRUMS", "ALUMINIUM_KIT", -1 },
-        { "2_DRUMS", "MIAMI_KIT",     -1 },
+        { "2_DRUMS", "ELEC_KIT",      -1, "ELEC", "Elec kit"      },
+        { "2_DRUMS", "ALUMINIUM_KIT", -1, "ALUM", "Aluminium kit" },
+        { "2_DRUMS", "MIAMI_KIT",     -1, "MIAM", "Miami kit"     },
         /* Breaks. Every DivBeats preset is exactly 113778 samples = one bar, so cutting it
            into DRUM_TRACKS gives eight eighth-notes: track n is the nth eighth of the bar,
            and the step grid rearranges them. One preset slot, not eight. Bank indices are
            the octal filenames (20.json = 16, ...). */
-        { "artists", "DivBeats",  0 },  /* AmenBrother      */
-        { "artists", "DivBeats",  1 },  /* AshleysRoach     */
-        { "artists", "DivBeats",  2 },  /* ColdSweat        */
-        { "artists", "DivBeats",  3 },  /* FunkyDrummer     */
-        { "artists", "DivBeats",  4 },  /* FunkyPresident   */
-        { "artists", "DivBeats",  5 },  /* ImpeachPresident */
-        { "artists", "DivBeats",  6 },  /* RockSteady       */
-        { "artists", "DivBeats",  7 },  /* ThinkAboutU      */
-        { "artists", "DivBeats", 16 },  /* Dubstep          */
-        { "artists", "DivBeats", 17 },  /* ElektroBreak     */
-        { "artists", "DivBeats", 18 },  /* Electronica      */
-        { "artists", "DivBeats", 19 },  /* HipHop           */
-        { "artists", "DivBeats", 20 },  /* House            */
-        { "artists", "DivBeats", 21 },  /* LoFiGarage       */
-        { "artists", "DivBeats", 22 },  /* Techno           */
-        { "artists", "DivBeats", 23 },  /* DnB              */
+        { "artists", "DivBeats",  0, "AMEN", "Amen Brother"      },
+        { "artists", "DivBeats",  1, "ASHL", "Ashleys Roachclip" },
+        { "artists", "DivBeats",  2, "COLD", "Cold Sweat"        },
+        { "artists", "DivBeats",  3, "FUNK", "Funky Drummer"     },
+        { "artists", "DivBeats",  4, "PRES", "Funky President"   },
+        { "artists", "DivBeats",  5, "IMPC", "Impeach President" },
+        { "artists", "DivBeats",  6, "ROCK", "Rock Steady"       },
+        { "artists", "DivBeats",  7, "THNK", "Think About U"     },
+        { "artists", "DivBeats", 16, "DUB",  "Dubstep"           },
+        { "artists", "DivBeats", 17, "ELKT", "Elektro Break"     },
+        { "artists", "DivBeats", 18, "TRON", "Electronica"       },
+        { "artists", "DivBeats", 19, "HIP",  "Hip Hop"           },
+        { "artists", "DivBeats", 20, "HOUS", "House"             },
+        { "artists", "DivBeats", 21, "LOFI", "LoFi Garage"       },
+        { "artists", "DivBeats", 22, "TECH", "Techno"            },
+        { "artists", "DivBeats", 23, "DNB",  "Drum and Bass"     },
     };
     static constexpr int kNumKits = (int)(sizeof(kKits) / sizeof(kKits[0]));
 
@@ -523,13 +531,30 @@ struct ambiotica : panel_t {
         }
     }
 
+    static int wrap_kit(int k) { return k < -1 ? kNumKits - 1 : (k >= kNumKits ? -1 : k); }
+    const char* kit_label(int k) const { return k < 0 ? "GEN"       : kKits[k].label; }
+    const char* kit_name (int k) const { return k < 0 ? "Generated" : kKits[k].name;  }
+
+    /* Move the selection and restart the arming timer. 700 ms is long enough to scroll
+       several entries without committing, short enough not to feel stuck. */
+    void arm_kit(int k) { drum_kit_sel = wrap_kit(k); drum_kit_arm_us = 700000; }
+
+    /* Runs from on_ui, not the drums page, so an armed selection still commits if you
+       navigate away mid-scroll rather than being silently abandoned. */
+    void tick_kit_arm(int dt_us) {
+        if (drum_kit_arm_us <= 0) return;
+        drum_kit_arm_us -= dt_us;
+        if (drum_kit_arm_us > 0) return;
+        drum_kit_arm_us = 0;
+        if (drum_kit_sel != drum_kit) load_drum_kit(drum_kit_sel);
+    }
+
     /* kit = -1 is our generated kit; 0..kNumKits-1 load a sampled bank into slots 1..8.
        NB loading presets runs the system's chunk planner, which blocks core0 for tens of ms
        and drops a step or two — a between-takes gesture, not a performance one. */
     void load_drum_kit(int kit) {
-        if (kit < -1) kit = kNumKits - 1;
-        if (kit >= kNumKits) kit = -1;
-        drum_kit = kit;
+        kit = wrap_kit(kit);
+        drum_kit = drum_kit_sel = kit;
         drums_all_off(drums);
         if (kit >= 0) {
             const drum_kit_t& k = kKits[kit];
@@ -593,9 +618,18 @@ struct ambiotica : panel_t {
            play page the same pads pick the musical mode; context decides, and both readings
            are honest. The generated kit sits in the ring as -1, so it is always reachable
            and the panel still works with no samples loaded. */
-        uint32_t kitcol = drum_kit < 0 ? DIMMER(WHITE) : palette[9][(drum_kit * 3 + 2) & 15];
-        if (button(COL_BANK, page_y + CTL_UP, kitcol, ISOLATED, "Kit up"))   load_drum_kit(drum_kit + 1);
-        if (button(COL_BANK, page_y + CTL_DN, kitcol, ISOLATED, "Kit down")) load_drum_kit(drum_kit - 1);
+        uint32_t kitcol = drum_kit_sel < 0 ? DIMMER(WHITE) : palette[9][(drum_kit_sel * 3 + 2) & 15];
+        if (button(COL_BANK, page_y + CTL_UP, kitcol, ISOLATED, "Kit up"))   arm_kit(drum_kit_sel + 1);
+        if (button(COL_BANK, page_y + CTL_DN, kitcol, ISOLATED, "Kit down")) arm_kit(drum_kit_sel - 1);
+
+        /* While the selection is armed, show its name over the top of the grid so you can
+           read what you are scrolling past before it commits. Four characters is all that
+           fits across 16 columns in FONT_4; the full name goes to the help line. */
+        if (drum_kit_arm_us > 0) {
+            leds_rectangle(0, page_y + UI_Y, 16, page_y + UI_Y + 4, 0);
+            leds_draw_string(0, page_y + UI_Y, FONT_4, WHITE, kit_label(drum_kit_sel));
+            set_help_text("Kit: #fc2#*%s#.", kit_name(drum_kit_sel));
+        }
 
         draw_nav(page_y, PAGE_DRUMS);
     }
@@ -776,6 +810,7 @@ struct ambiotica : panel_t {
         }
 
         if (nav_cooldown > 0) nav_cooldown--;
+        tick_kit_arm(dt_us);
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
            than at the button because the precondition is not satisfied in the same frame, and
