@@ -55,12 +55,24 @@ enum {
     COL_KEY    = 0,     /* "KEY"    ▲/▼ — key, around the circle of fifths */
     COL_BANK   = 6,     /* "BANK"   ▲/▼ — mode (Ionian/Aeolian/Dorian/Lydian/Mixolydian) */
     COL_SCALE  = 8,     /* "SCALE"  (row 14) — back to the play surface */
-    COL_PRESET = 9,     /* "PRESET" (row 0)  — preset browser page */
+    COL_PRESET = 9,     /* "PRESET" (row 0)  — synth preset browser page */
+    COL_SONG   = 10,    /* "SONG"   (row 15) — whole-scene (panel) save/load page */
     COL_SYNTH  = 11,    /* "SYNTH"  (row 15) — synth editor page */
+    COL_SAVE   = 12,    /* "SAVE"   (row 14) — commit, on the picker pages only */
+    COL_LOAD   = 13,    /* "LOAD"   (row 14) — commit, on the picker pages only */
 };
 
-/* Pages are a window onto a taller surface: page N lives at logical y = N*16. */
-enum { PAGE_PLAY = 0, PAGE_SYNTH = 1, PAGE_PRESET = 2, PAGE_N };
+/* Pages are a window onto a taller surface: page N lives at logical y = N*16. Every page
+   places its content at +UI_Y so it lands on the printed pad circles and leaves the
+   control rows free for the nav bar. */
+enum { PAGE_PLAY = 0, PAGE_SYNTH = 1, PAGE_PRESET = 2, PAGE_SCENE = 3, PAGE_N };
+
+/* Panel settings pages live ABOVE page 0 (right-up from the play surface), at y = -16*n. */
+enum { SET_SOURCE = -1, SET_IN_LEVEL = -2, SET_N = 2 };
+
+/* External input is attenuated like the synth bus is (see AMB_IN_GAIN): the chain is tuned
+   around a ~0.18 peak input, and a line/mic feed can arrive at full scale. */
+#define AMB_EXT_IN_GAIN 0.25f
 
 struct ambiotica_panel : panel_t {
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0;
@@ -79,7 +91,14 @@ struct ambiotica_panel : panel_t {
     play_surface_t play;
     slider_t       fxslider[FX_N];
     unsigned char  fx_val[FX_N];
-    preset_pages_t presets;                    /* stock synth-editor + preset-browser pages */
+    /* Held for its parts, not its pages: slider_banks feed the synth page's two slider
+       blocks (24 of the 32), the_xy_pad the XY block, picker the preset browser. Its
+       edit()/saveload() wrappers hardcode a layout that doesn't match this overlay. */
+    preset_pages_t presets;
+    file_picker_t  scene_picker;               /* whole-panel save/load — its own picker, since it
+                                                  caches a different folder listing to presets' */
+    unsigned char  audio_source = 0;           /* 0 = off (synth only), 1 = line in, 2 = mic */
+    unsigned char  audio_in_level = 64;        /* external input level into the chain, 0..127 */
     slider_t       fxslider15;                 /* col-15: bipolar Gravity(up)/Drain(down) */
     unsigned char  fx_val15 = 64;              /* 64 = centre / neutral */
     int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
@@ -131,6 +150,10 @@ struct ambiotica_panel : panel_t {
          * bleed into a native bus. */
         set_param_packed(VOICE_PARAM_REVERB_SEND, 0, &synth_presets[synth_preset]);
         set_param_packed(VOICE_PARAM_DELAY_SEND,  0, &synth_presets[synth_preset]);
+
+        /* audio_source has already been restored from the settings file by the time this
+           runs, so route the codec to match it. */
+        codec_enable_mic(audio_source == 2);
 
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
@@ -227,6 +250,7 @@ struct ambiotica_panel : panel_t {
     }
 
     int get_num_pages() override { return PAGE_N; }
+    int get_num_panel_settings_pages() override { return SET_N; }
 
     /* Play-surface colour: hue = key (root), shade = mode. The KEY/BANK control pads
        share it, so the four "what are the strings tuned to" pads visibly belong to the
@@ -247,20 +271,27 @@ struct ambiotica_panel : panel_t {
         voices_active = voices_seen = 0;
     }
 
-    /* Nav bar — the same three physical pads on every page, so the way between them never
-       moves. The pad for the page you are ON breathes; the other two sit dim, so "where am
-       I" and "where can I go" read at a glance. Exception: on the preset page the file
-       picker owns row 0, so PRESET is left out there (the picker itself is the indicator). */
+    /* Nav bar — the same four physical pads on every page, so the way between them never
+       moves. The pad for the page you are ON breathes; the others sit dim, so "where am I"
+       and "where can I go" both read at a glance. Every page draws its content at +UI_Y, so
+       the control rows are always free and the whole bar fits on all four pages.
+       SCALE doubles as Cancel on the picker pages: on_done() is the picker's own cleanup
+       (drops the audition preview and the pending delete), so leaving via SCALE is a real
+       cancel rather than just a scroll. */
     void draw_nav(int page_y, int page) {
         uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
-        if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away,
-                   ISOLATED, "Play surface"))
+        if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away, ISOLATED,
+                   page == PAGE_PRESET || page == PAGE_SCENE ? "Cancel — back to play" : "Play surface")) {
+            if (page == PAGE_PRESET) presets.picker.on_done();
+            if (page == PAGE_SCENE)  scene_picker.on_done();
             scroll_to_page(PAGE_PLAY);
-        if (button(COL_SYNTH, page_y + CTL_DN, page == PAGE_SYNTH ? here : away,
-                   ISOLATED, "Synth editor"))
+        }
+        if (button(COL_SYNTH,  page_y + CTL_DN,  page == PAGE_SYNTH  ? here : away, ISOLATED, "Synth editor"))
             scroll_to_page(PAGE_SYNTH);
-        if (page != PAGE_PRESET && button(COL_PRESET, page_y + CTL_TOP, away, ISOLATED, "Presets"))
+        if (button(COL_PRESET, page_y + CTL_TOP, page == PAGE_PRESET ? here : away, ISOLATED, "Synth presets"))
             scroll_to_page(PAGE_PRESET);
+        if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene"))
+            scroll_to_page(PAGE_SCENE);
     }
 
     /* Page 0's reserved rows: the tuning pads plus the nav bar. Drawn last so it wins any
@@ -278,19 +309,107 @@ struct ambiotica_panel : panel_t {
        flag-button row land on the printed pad circles (rows 2..12) and the control rows
        stay clear. NB it also exposes DELAY_SEND / REVERB_SEND and the MIX params, which do
        nothing here — on_dsp owns the output, so the native FX buses never run. */
+    /* Synth page laid out to match the STOCK CHORDS synth page, not preset_pages_t::edit()
+       (whose two-16-wide-banks layout is toadstep's). The Chords manual gives the regions
+       exactly — upper sliders 0,2..16,7 · lower 0,7..8,14 · XY pad 9,7..16,14 — which
+       leaves col 8 rows 7..13 as the XY button column, hence XY_BUTTONS_ON_LEFT.
+       The payoff is the same one as the control pads: every printed label on the hardware
+       is CORRECT for us. The order below is read straight off the overlay silkscreen.
+       Slider colours come from each param's own metadata (col = 0), so the printed colour
+       groups (the red ADSR cluster, etc.) line up for free.
+       Not included: the SIMPLE/TUNE/CHOP/LOOP/SYNC/LPG flag buttons that edit() adds —
+       the Chords layout has no printed home for them inside rows 2..13. */
     void draw_synth_page() {
-        const int page_y = PAGE_SYNTH * 16;
-        presets.edit(synth_preset, page_y + UI_Y);
+        static const int kTop[16] = {           /* rows 2..6, 16 sliders 5 high */
+            VOICE_PARAM_ATTACK,                 /* A     */
+            VOICE_PARAM_DECAY,                  /* D     */
+            VOICE_PARAM_SUSTAIN,                /* S     */
+            VOICE_PARAM_RELEASE,                /* R     */
+            VOICE_PARAM_STEREO,                 /* PAN   */
+            VOICE_PARAM_SUBOSC,                 /* SUB   */
+            VOICE_PARAM_CUTOFF_HP,              /* HP    */
+            VOICE_PARAM_CUTOFF_LP,              /* LP    */
+            VOICE_PARAM_RESONANCE,              /* RESO  */
+            VOICE_PARAM_DELAY_SEND,             /* DELAY */
+            MIX_PARAM_DELAY_TIME + 128,         /* TIME  */
+            MIX_PARAM_DELAY_FEEDBACK + 128,     /* FBK   */
+            VOICE_PARAM_REVERB_SEND,            /* VERB  */
+            MIX_PARAM_REVERB_FEEDBACK + 128,    /* TAIL  */
+            MIX_PARAM_REVERB_SHIMMER + 128,     /* GLOW  */
+            VOICE_PARAM_VOLUME,                 /* VOL   */
+        };
+        static const int kBot[8] = {            /* rows 7..13, 8 sliders 7 high */
+            VOICE_PARAM_GLIDE,                  /* GLIDE  */
+            VOICE_PARAM_PITCH,                  /* PITCH  */
+            VOICE_PARAM_OCTAVE,                 /* OCT    */
+            VOICE_PARAM_CHORUS,                 /* CHORUS */
+            VOICE_PARAM_WAVEFOLD,               /* FOLD   */
+            VOICE_PARAM_SAMPLE_START,           /* START  */
+            VOICE_PARAM_SAMPLE_LENGTH,          /* END    */
+            VOICE_PARAM_TIMESTRETCH,            /* SPEED  */
+        };
+        const int page_y = PAGE_SYNTH * 16, top_y = page_y + UI_Y, bot_y = top_y + 5;
+        synth_param_sliders_block(presets.slider_banks[0], 0, top_y, 16, 5, synth_preset, kTop);
+        synth_param_sliders_block(presets.slider_banks[1], 0, bot_y,  8, 7, synth_preset, kBot);
+        /* x = 8 is the button column (MOD X / Y / loop on the overlay); the pad fills 9..15. */
+        synth_xy_block(&presets.the_xy_pad, synth_preset, 8, bot_y, 7, 7,
+                       WHITE, BLUE, false, 0, XY_BUTTONS_ON_LEFT);
         draw_nav(page_y, PAGE_SYNTH);
     }
 
-    /* Stock preset browser. saveload spans rows 0..8 (file grid + hue row) and puts its own
-       cancel/OK on row 15 cols 14/15 — under the printed ▢ / ▷ — and returns to page 0
-       itself once you load or cancel. Row 14 is free, so SCALE still works as the escape. */
-    void draw_preset_page() {
-        const int page_y = PAGE_PRESET * 16;
-        presets.saveload(synth_preset, page_y);
-        draw_nav(page_y, PAGE_PRESET);
+    void set_audio_source(int source) {
+        unsigned char next = (unsigned char)clampi(source, 0, 2);
+        if (next == audio_source) return;
+        audio_source = next;
+        codec_enable_mic(audio_source == 2);
+        (void)save_settings_to_sd(false);
+    }
+
+    /* Panel settings pages (right-up from the play surface), drawn in the stock system style
+       so they navigate the way the built-in pages do. The left buttons edit the value.
+       These are panel PREFERENCES — they persist via on_serialise_settings and come back on
+       boot, unlike the scene, which is saved per slot by on_serialise. */
+    void draw_settings_page(int page) {
+        if (page == SET_SOURCE) {
+            /* "off" keeps the historical behaviour: the chain hears only the Plinky synth. */
+            static const char* const src_options[] = { "off", "line", "mic" };
+            set_audio_source((int)audio_source + draw_system_style_enum_settings_page("src", audio_source, src_options, 3));
+        } else if (page == SET_IN_LEVEL) {
+            char buf[8]; snprintf(buf, sizeof buf, "%d", (int)audio_in_level);
+            int delta = draw_system_style_settings_page("in", buf, (audio_in_level * 100) / 127);
+            if (delta) {
+                audio_in_level = (unsigned char)clampi((int)audio_in_level + delta, 0, 127);
+                (void)save_settings_to_sd(false);
+            }
+        }
+        /* anything further up is a global system page — leave it alone, it draws itself. */
+    }
+
+    /* The two file-picker pages, built from the picker's own pieces rather than the stock
+       saveload() wrapper — that wrapper hardcodes its buttons to (14,15)/(15,15), which on
+       this overlay is the transport corner. Here the grid sits at +UI_Y (on the printed pad
+       circles, file grid + hue row) and the commit buttons land under the printed SAVE and
+       LOAD. Both self-colour: dark when the action isn't available, so an empty slot can't
+       be loaded and a protected slot can't be overwritten. Cancel is SCALE, via draw_nav. */
+    void draw_picker_page(int page, bool scene) {
+        const int page_y = page * 16, grid_y = page_y + UI_Y;
+        bool done = false;
+        if (scene) {
+            scene_picker.panel_picker(grid_y, grid_y + 8);
+            done  = scene_picker.panel_save_button(COL_SAVE, page_y + CTL_UP);
+            /* panel_load_button only STAGES the load; finalise commits it at the audio-safe
+               point (it swaps the whole panel object, so it can't happen mid-block). */
+            if (scene_picker.panel_load_button(COL_LOAD, page_y + CTL_UP)) {
+                scene_picker.request_panel_load_finalise();
+                done = true;
+            }
+        } else {
+            presets.picker.preset_picker(synth_preset, grid_y, grid_y + 8);
+            done = presets.picker.preset_save_button(synth_preset, COL_SAVE, page_y + CTL_UP)
+                 | presets.picker.preset_load_button(synth_preset, COL_LOAD, page_y + CTL_UP);
+        }
+        if (done) scroll_to_page(PAGE_PLAY);
+        draw_nav(page_y, page);
     }
 
     void on_ui(int dt_us) override {
@@ -318,15 +437,20 @@ struct ambiotica_panel : panel_t {
            clearing so it keeps its own drawing. The chain runs on core1 regardless of the
            page, so the wash keeps going while you edit the synth or browse presets. */
         int page = get_scroll_page();
-        if (page < 0) return;
+        if (page < 0) { draw_settings_page(page); return; }
         leds_clear();
         if (page != PAGE_PLAY) {
             release_all_voices();
             if (page == PAGE_SYNTH)       draw_synth_page();
-            else if (page == PAGE_PRESET) draw_preset_page();
+            else if (page == PAGE_PRESET) draw_picker_page(PAGE_PRESET, false);
+            else if (page == PAGE_SCENE)  draw_picker_page(PAGE_SCENE,  true);
             else                          scroll_to_page(PAGE_PLAY);
             return;
         }
+
+        /* Orbit and Satellite clock off the system tempo, so the left physical buttons (which
+           we hand back to the system, and which nudge BPM) actually move the loop lengths. */
+        fx.bpm = get_tempo_bpm(); if (fx.bpm < 1.f) fx.bpm = 120.f;
 
         voices_seen = 0;
         uint32_t keycol = key_col();
@@ -459,6 +583,17 @@ struct ambiotica_panel : panel_t {
             sL[i] = mix_buffers_out->dry[2*i]   * k;
             sR[i] = mix_buffers_out->dry[2*i+1] * k;
         }
+        /* External input (settings page: src = line / mic, in = level). Summed into the same
+           bus as the synth so the whole chain — looper, grains, plate, Spectra — processes it.
+           Default src is "off", which is the historical synth-only behaviour. Watch the level
+           on "mic": the chain feeds back through the looper, so a hot mic can run away. */
+        if (audio_source && audiobuf_in) {
+            const float ki = (1.0f / 32768.0f) * AMB_EXT_IN_GAIN * (audio_in_level / 127.0f);
+            for (int i = 0; i < BLOCK_SIZE; i++) {
+                sL[i] += audiobuf_in[2*i]   * ki;
+                sR[i] += audiobuf_in[2*i+1] * ki;
+            }
+        }
 
         /* Per-block macro smoothing (~30 ms). The plugin gets smooth param values
            from the host; the Plinky sliders deliver coarse 0..127 steps, so pushing
@@ -541,8 +676,40 @@ struct ambiotica_panel : panel_t {
        physical side buttons keep their stock behaviour (left = BPM, right = page cycle).
        The right pair is therefore a second way between pages, on top of SYNTH/PRESET/SCALE. */
 
+    /* The scene: everything the SONG page save/loads per slot. Macro positions, the tuning,
+       and the synth + mix presets, so a loaded slot sounds exactly like it was saved.
+       Derived state is rebuilt after a read — fx is a function of the raw slider bytes, and
+       fx_sm is snapped to it so nothing audibly ramps in from the old scene. */
     bool on_serialise(serialiser_t& s, int version) override {
-        /* TODO: persist fx_val[], synth_preset, fx.key/chord via save_and_load.h field macros */
-        return panel_t::on_serialise(s, version);
+        (void)version;
+        ambiotica_panel& o = *this;
+        OBJECT_BEGIN(s);
+        FIELD("orbit",   o.fx_val[FX_ORBIT],       0u, 127u);
+        FIELD("satel",   o.fx_val[FX_SATELLITE],   0u, 127u);
+        FIELD("constel", o.fx_val[FX_CONSTELLATE], 0u, 127u);
+        FIELD("tail",    o.fx_val[FX_TAIL],        0u, 127u);
+        FIELD("flux",    o.fx_val[FX_FLUX],        0u, 127u);
+        FIELD("spectra", o.fx_val[FX_SPECTRA],     0u, 127u);
+        FIELD("mix",     o.fx_val[FX_MIX],         0u, 127u);
+        FIELD("gravity", o.fx_val15,               0u, 127u);
+        FIELD("key",     o.key_pos,                0,  11);
+        FIELD("mode",    o.mode_sel,               0,  4);
+        FIELD_SYNTH_PRESET("preset", 0);
+        FIELD_MIX_PRESET("presetMix");
+        OBJECT_END(s);
+        if (s.reading) { apply_key_mode(); push_fx_from_ui(); fx_sm = fx; }
+        return true;
+    }
+
+    /* Panel PREFERENCES — not part of a scene. These follow the box, not the slot, and the
+       system reloads them automatically at boot. */
+    bool on_serialise_settings(serialiser_t& s, int version) override {
+        (void)version;
+        ambiotica_panel& o = *this;
+        OBJECT_BEGIN(s);
+        FIELD("audio_source", o.audio_source,   0u, 2u);
+        FIELD("audio_in",     o.audio_in_level, 0u, 127u);
+        OBJECT_END(s);
+        return true;
     }
 };
