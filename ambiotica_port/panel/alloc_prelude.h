@@ -8,6 +8,15 @@
  * panel's lifetime). Placed FIRST in the amalgamation, before any DSP source.
  */
 static int    g_amb_region = 0;                 /* 0 = SRAM pool, 1 = PSRAM */
+/* Zero large buffers on allocation? Always on first boot (PSRAM contents are undefined).
+ * Cleared only while REBUILDING after a panel load: PSRAM is not part of the panel object,
+ * so the staged-load memcpy leaves it intact and deterministic allocation hands the same
+ * addresses back. Clearing ~4 MB of QSPI PSRAM is far too slow to do on core0 inside
+ * on_load_finished(), which blocks sequence/MIDI until it returns. Small allocations (the
+ * module structs, which hold the state that actually matters) are always zeroed; the big
+ * audio buffers are made unreachable by the *_reset() calls instead. */
+static int    g_amb_zero_big = 1;
+#define AMB_BIG_ALLOC (64u * 1024u)
 static unsigned char* g_amb_sr_base = 0; static size_t g_amb_sr_cap = 0, g_amb_sr_used = 0;
 static short*         g_amb_ps_base = 0; static size_t g_amb_ps_cap = 0, g_amb_ps_used = 0;
 
@@ -22,7 +31,7 @@ static void* amb_bump(unsigned char* base, size_t* used, size_t cap, size_t byte
     if (off + bytes > cap) return 0;
     *used = off + bytes;
     void* p = (void*)aligned;
-    memset(p, 0, bytes);
+    if (g_amb_zero_big || bytes < AMB_BIG_ALLOC) memset(p, 0, bytes);
     return p;
 }
 static void* panel_calloc(size_t n, size_t sz) {

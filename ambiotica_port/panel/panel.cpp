@@ -104,6 +104,7 @@ struct ambiotica : panel_t {
     file_picker_t  scene_picker;               /* whole-panel save/load — its own picker, since it
                                                   caches a different folder listing to presets' */
     bool           scene_dirs_made = false;    /* /PLINKY/u_<panel>/ created (once, on first visit) */
+    int            scene_commit_wait = 0;      /* frames left to wait for a staged scene load to complete */
     unsigned char  audio_source = 0;           /* 0 = off (synth only), 1 = line in, 2 = mic */
     unsigned char  audio_in_level = 64;        /* external input level into the chain, 0..127 */
     slider_t       fxslider15;                 /* col-15: bipolar Gravity(up)/Drain(down) */
@@ -163,7 +164,7 @@ struct ambiotica : panel_t {
            runs, so route the codec to match it. */
         codec_enable_mic(audio_source == 2);
 
-        build_dsp();
+        build_dsp(true);
     }
 
     /* Allocate the chain. Split out of setup_default_panel_state because a panel LOAD has
@@ -175,7 +176,8 @@ struct ambiotica : panel_t {
        See on_load_finished(), which is the documented place to rebuild unserialised runtime
        state. The arena cursors reset here, and allocation order is deterministic, so the
        modules land back at the same addresses. */
-    void build_dsp() {
+    void build_dsp(bool first_boot) {
+        g_amb_zero_big = first_boot ? 1 : 0;   /* see alloc_prelude.h — skip the 4 MB clear on rebuild */
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
         const int sr = (int) AMB_SR;
@@ -193,6 +195,13 @@ struct ambiotica : panel_t {
         fc_init(&st, 0.7f);
         st.dat = dattorro_create(sr);   /* Dattorro plate (SRAM region); after fc_init zeroes st */
         dsp_ok = dsp_ok && st.dat;
+        g_amb_zero_big = 1;
+        if (!first_boot && dsp_ok) {
+            /* Big buffers were left holding the previous scene's audio (not cleared, above).
+               These make it unreachable — the same calls the Event Horizon flush uses. */
+            looper_reset(looper); microloop_reset(microloop); granular_reset(granular);
+            harmony_reset(harmony); bloom_reset(bloom); drift_reset(drift);
+        }
     }
 
     /* Core0, after a staged load has been committed over us. Everything not serialised is
@@ -201,7 +210,7 @@ struct ambiotica : panel_t {
        to the panel we just replaced. */
     void on_load_finished() override {
         release_all_voices();
-        build_dsp();
+        build_dsp(false);        /* rebuild: skips the multi-MB PSRAM clear, resets instead */
         push_fx_from_ui();
         fx_sm = fx;              /* land on the loaded scene rather than ramping into it */
         eh_flushed = false;
@@ -449,10 +458,13 @@ struct ambiotica : panel_t {
                 printf("SCENE: name='%s' len=%d (max 16)\n", pn ? pn : "(null)", pn ? (int)strlen(pn) : -1);
             }
             done  = scene_picker.panel_save_button(COL_SAVE, page_y + CTL_UP);
-            /* panel_load_button only STAGES the load; finalise commits it at the audio-safe
-               point (it swaps the whole panel object, so it can't happen mid-block). */
+            /* panel_load_button only STAGES the load. Do NOT finalise here: the documented
+               precondition is is_panel_load_staged(), which "returns true while a staged
+               panel load is COMPLETE and waiting for a commit request" — committing in the
+               same frame as the button races the deserialise. Poll for it instead (top of
+               on_ui), which also works after we scroll back to the play surface. */
             if (scene_picker.panel_load_button(COL_LOAD, page_y + CTL_UP)) {
-                scene_picker.request_panel_load_finalise();
+                scene_commit_wait = 250;   /* ~1 s of frames to see the stage complete */
                 done = true;
             }
         } else {
@@ -479,6 +491,20 @@ struct ambiotica : panel_t {
             g_stage_n = 0;
         }
 #endif
+        /* Commit a staged scene load once the system reports it complete. Polled here rather
+           than at the button because the precondition is not satisfied in the same frame, and
+           because we scroll back to the play surface as soon as it is staged. Bounded so a
+           stage that never completes (e.g. reloading the slot that is already live, where
+           there may be nothing to do) cannot leave a commit armed indefinitely. */
+        if (scene_commit_wait > 0) {
+            if (is_panel_load_staged()) {
+                scene_commit_wait = 0;
+                scene_picker.request_panel_load_finalise();
+            } else if (--scene_commit_wait == 0) {
+                printf("SCENE: load never staged, commit abandoned\n");
+            }
+        }
+
         /* Nav "you are here" breath (~0.8 Hz). Advanced before the page dispatch so it keeps
            running on every page, not just the play surface. */
         nav_phase += (float)dt_us * 1e-6f * 0.8f; nav_phase -= (float)(int)nav_phase;
