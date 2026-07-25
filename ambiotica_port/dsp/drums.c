@@ -219,6 +219,16 @@ void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int
     d->v[track].pos = -1.0f;   /* a voice mid-flight would keep indexing the old source */
 }
 
+/* One sample of preset-owned sample memory. Kept as a function so the resampling loop reads
+   the same way the unity loop does, and so the READ_SAMPLE fallback lives in one place. */
+static inline float read_src(const drum_source_t* src, int i) {
+#if defined(READ_SAMPLE)
+    return (float)(int16_t)READ_SAMPLE(src->va_start + (unsigned int)i);
+#else
+    (void)src; (void)i; return 0.0f;
+#endif
+}
+
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
     if (!d) return;
     for (int t = 0; t < DRUM_TRACKS; t++) {
@@ -271,28 +281,41 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
             }
             pos = (i0 < 0) ? -1.0f : (float)i0;
         } else {
+            /* Resampling, written to cost about what the unity path costs. Two things made
+               the naive version ~35x slower than unity rather than ~2x, which is what simply
+               doubling the reads would predict:
+                 - (int)pos and pos-(float)i0 every sample, and a float induction variable the
+                   compiler cannot reason about, so nothing hoists;
+                 - a SECOND READ_SAMPLE per output sample, and each one is two dependent
+                   memory accesses (index the chunk table, then index the chunk).
+               So: carry the index as an int with a separate fractional accumulator — no
+               float-to-int per sample — and remember the last pair read. Advancing one source
+               sample turns the old upper neighbour into the new lower one, so a rate under 2
+               costs ONE read per source sample instead of two per output sample. Pitched
+               down it is fewer reads than outputs. */
+            int   idx  = (int)pos;
+            float frac = pos - (float)idx;
+            int   have = -1;                 /* index whose pair is currently loaded */
+            float sa = 0.0f, sb = 0.0f;
             for (int i = 0; i < frames; i++) {
-                if (pos >= last) { pos = -1.0f; break; }
-                int   i0 = (int)pos;
-                float fr = pos - (float)i0;
-                float a, b;
-                if (sampled) {
-#if defined(READ_SAMPLE)
-                    unsigned int va = src->va_start + (unsigned int)i0;
-                    a = (float)(int16_t)READ_SAMPLE(va);
-                    b = (float)(int16_t)READ_SAMPLE(va + 1u);
-#else
-                    a = b = 0.0f;
-#endif
-                } else {
-                    a = (float)s->data[i0];
-                    b = (float)s->data[i0 + 1];
+                if (idx >= len - 1) { idx = -1; break; }
+                if (idx != have) {
+                    if (idx == have + 1) {   /* stepped one on: the old upper is the new lower */
+                        sa = sb;
+                        sb = sampled ? read_src(src, idx + 1) : (float)s->data[idx + 1];
+                    } else {
+                        sa = sampled ? read_src(src, idx)     : (float)s->data[idx];
+                        sb = sampled ? read_src(src, idx + 1) : (float)s->data[idx + 1];
+                    }
+                    have = idx;
                 }
-                float x = a + (b - a) * fr;
+                float x = sa + (sb - sa) * frac;
                 out_l[i] += x * gl;
                 out_r[i] += x * gr;
-                pos += rate;
+                frac += rate;
+                while (frac >= 1.0f) { frac -= 1.0f; idx++; }   /* rate may exceed 1 */
             }
+            pos = (idx < 0) ? -1.0f : (float)idx + frac;
         }
         v->pos = pos;
     }
