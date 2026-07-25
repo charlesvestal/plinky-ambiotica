@@ -197,12 +197,17 @@ struct ambiotica : panel_t {
         st.dat = dattorro_create(sr);   /* Dattorro plate (SRAM region); after fc_init zeroes st */
         dsp_ok = dsp_ok && st.dat;
         g_amb_zero_big = 1;
-        if (!first_boot && dsp_ok) {
-            /* Big buffers were left holding the previous scene's audio (not cleared, above).
-               These make it unreachable — the same calls the Event Horizon flush uses. */
-            looper_reset(looper); microloop_reset(microloop); granular_reset(granular);
-            harmony_reset(harmony); bloom_reset(bloom); drift_reset(drift);
-        }
+        /* Deliberately NO *_reset() here on a rebuild. looper_reset alone memsets
+         * buf_capacity * 2 channels = ~4 MB of PSRAM, and granular/microloop add more.
+         * Blasting that much QSPI from core0 starves core1, which fetches its code and its
+         * buffers over the same bus — measured as a 658 ms audio block and an instant
+         * overrun. (An earlier attempt to skip the clear in the allocator achieved nothing
+         * precisely because these calls redid it.)
+         * It is also unnecessary: *_create() callocs each module struct, those are below
+         * AMB_BIG_ALLOC so they are still zeroed, and the logical state — write_pos,
+         * crossfade, envelopes — is therefore already clean. Only the raw audio in the big
+         * rings is stale, and that is the previous scene's wash, which the loop overwrites
+         * as it records. Continuity there is a fair trade for not stalling the instrument. */
     }
 
     /* Core0, after a staged load has been committed over us. Everything not serialised is
