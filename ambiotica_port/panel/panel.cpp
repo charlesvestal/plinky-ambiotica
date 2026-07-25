@@ -404,7 +404,18 @@ struct ambiotica_panel : panel_t {
                light for one frame and go dark). make_dirs() is the SDK's fix for this. Run it
                after the first panel_picker call so the picker's root is already set, and only
                once — it touches the SD card. */
-            if (!scene_dirs_made) { scene_picker.make_dirs(); scene_dirs_made = true; }
+            if (!scene_dirs_made) {
+                scene_picker.make_dirs();
+                scene_dirs_made = true;
+                /* make_dirs() alone did NOT fix the missing folder, so print what the picker
+                   is deriving its path from. panel_folder is where this panel's state was
+                   loaded from — expected to be empty for a panel flashed live from the web
+                   IDE, which is the current suspicion for why /PLINKY/u_<panel>/ never
+                   exists. Prints once per boot, not per frame. */
+                const char* pn = get_current_panel_name();
+                printf("SCENE: name='%s' panel_folder='%s' idx=%d  (make_dirs called)\n",
+                       pn ? pn : "(null)", panel_folder, panel_idx_in_folder);
+            }
             done  = scene_picker.panel_save_button(COL_SAVE, page_y + CTL_UP);
             /* panel_load_button only STAGES the load; finalise commits it at the audio-safe
                point (it swaps the whole panel object, so it can't happen mid-block). */
