@@ -163,6 +163,19 @@ struct ambiotica : panel_t {
            runs, so route the codec to match it. */
         codec_enable_mic(audio_source == 2);
 
+        build_dsp();
+    }
+
+    /* Allocate the chain. Split out of setup_default_panel_state because a panel LOAD has
+       to redo it: the system zeroes and constructs a staged panel, deserialises into it and
+       memcpys it over us — and setup_default_panel_state() does NOT run on that staged copy
+       (only the init slot gets that). So after a load every module pointer is NULL, dsp_ok
+       is false and sram_pool is zeroed; on_dsp falls to its passthrough branch and the whole
+       engine is silently gone. Observed as dsp time collapsing from ~1750us to ~139us.
+       See on_load_finished(), which is the documented place to rebuild unserialised runtime
+       state. The arena cursors reset here, and allocation order is deterministic, so the
+       modules land back at the same addresses. */
+    void build_dsp() {
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
         const int sr = (int) AMB_SR;
@@ -180,6 +193,20 @@ struct ambiotica : panel_t {
         fc_init(&st, 0.7f);
         st.dat = dattorro_create(sr);   /* Dattorro plate (SRAM region); after fc_init zeroes st */
         dsp_ok = dsp_ok && st.dat;
+    }
+
+    /* Core0, after a staged load has been committed over us. Everything not serialised is
+       now zero, so rebuild it: the DSP chain (see build_dsp), the macro smoother, and any
+       runtime latches. Voices are released because the note-ons that started them belonged
+       to the panel we just replaced. */
+    void on_load_finished() override {
+        release_all_voices();
+        build_dsp();
+        push_fx_from_ui();
+        fx_sm = fx;              /* land on the loaded scene rather than ramping into it */
+        eh_flushed = false;
+        preview_mix = 0.f;
+        printf("SCENE: load committed, dsp_ok=%d\n", (int)dsp_ok);
     }
 
     void push_fx_from_ui() {
