@@ -25,9 +25,16 @@ typedef struct {
     float amp;              /* velocity, 0..1 */
 } drum_voice_t;
 
+/* A track either plays its generated 8-bit buffer or a slice of preset-owned sample memory.
+ * va_end > va_start selects the latter. Sample memory is 16-bit and paged behind
+ * chunk_location_ptrs, so it is read through READ_SAMPLE rather than a raw pointer — the
+ * chunk a slice lives in can move. */
+typedef struct { unsigned int va_start, va_end; } drum_source_t;
+
 struct drums_s {
     drum_sample_t s[DRUM_TRACKS];
     drum_voice_t  v[DRUM_TRACKS];   /* one voice per track — a retrigger cuts its predecessor */
+    drum_source_t src[DRUM_TRACKS]; /* zeroed = use the generated buffer */
 };
 
 /* ---- synthesis helpers (boot-time only, never realtime) ---------------------------- */
@@ -190,24 +197,47 @@ void drums_all_off(drums_t* d) {
     for (int t = 0; t < DRUM_TRACKS; t++) d->v[t].pos = -1;
 }
 
+void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int va_end) {
+    if (!d || track < 0 || track >= DRUM_TRACKS) return;
+    if (va_end <= va_start) { d->src[track].va_start = d->src[track].va_end = 0; }
+    else                    { d->src[track].va_start = va_start; d->src[track].va_end = va_end; }
+    d->v[track].pos = -1;   /* a voice mid-flight would keep indexing the old source */
+}
+
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
     if (!d) return;
     for (int t = 0; t < DRUM_TRACKS; t++) {
         drum_voice_t* v = &d->v[t];
         if (v->pos < 0) continue;
         const drum_sample_t* s = &d->s[t];
+        const drum_source_t* src = &d->src[t];
+        const int sampled = (src->va_end > src->va_start);
+        const int len = sampled ? (int)(src->va_end - src->va_start) : s->len;
+        /* 8-bit generated buffers run +/-127, preset sample memory is 16-bit; normalise here
+           so per-track gain and velocity mean the same thing either way. */
+        float g  = v->amp * s->gain * (sampled ? (1.0f / 32768.0f) : (1.0f / 127.0f));
         /* Equal-ish power pan, cheap: pan is small so a linear split is inaudible here. */
-        float g  = v->amp * s->gain * (1.0f / 127.0f);
         float gl = g * (1.0f - s->pan) * 0.5f;
         float gr = g * (1.0f + s->pan) * 0.5f;
         int n = frames, pos = v->pos;
-        if (pos + n > s->len) n = s->len - pos;
-        const signed char* p = s->data + pos;
-        for (int i = 0; i < n; i++) {
-            float x = (float)p[i];
-            out_l[i] += x * gl;
-            out_r[i] += x * gr;
+        if (pos + n > len) n = len - pos;
+        if (sampled) {
+#if defined(READ_SAMPLE)
+            unsigned int va = src->va_start + (unsigned int)pos;
+            for (int i = 0; i < n; i++) {
+                float x = (float)(int16_t)READ_SAMPLE(va + (unsigned int)i);
+                out_l[i] += x * gl;
+                out_r[i] += x * gr;
+            }
+#endif
+        } else {
+            const signed char* p = s->data + pos;
+            for (int i = 0; i < n; i++) {
+                float x = (float)p[i];
+                out_l[i] += x * gl;
+                out_r[i] += x * gr;
+            }
         }
-        v->pos = (pos + frames >= s->len) ? -1 : pos + frames;
+        v->pos = (pos + frames >= len) ? -1 : pos + frames;
     }
 }
