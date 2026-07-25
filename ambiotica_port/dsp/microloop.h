@@ -19,6 +19,14 @@
 #ifndef AMBIOTICA_MICROLOOP_H
 #define AMBIOTICA_MICROLOOP_H
 
+/* microloop_process is one of the heaviest core1 stages (~240us/block, measured). PLINKY_DSP_RAM_FUNC un-inlines it and
+ * places its code in SRAM, exempting it from the shared XIP cache. Fallback so the desktop
+ * harness and older firmware still build. NOTE: the SRAM code region is small and
+ * granular/looper already live there — if this stops LINKING, drop the wrapper. */
+#ifndef PLINKY_DSP_RAM_FUNC
+#define PLINKY_DSP_RAM_FUNC(f) f
+#endif
+
 typedef struct microloop_s microloop_t;
 
 /* sample_rate scales the buffer, loop-length bounds, crossfade, and smoothing. */
@@ -39,7 +47,7 @@ void         microloop_set_hold(microloop_t *m, float hold_0_1);
  * Crossfades smoothly to the new length. */
 void         microloop_set_loop_len(microloop_t *m, int len_samples);
 
-void         microloop_process(microloop_t *m,
+void         PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
                                const float *in_l, const float *in_r,
                                float *out_l, float *out_r,
                                int frames);

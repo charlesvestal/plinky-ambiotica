@@ -305,7 +305,7 @@ void microloop_set_loop_len(microloop_t *m, int len) {
     }
 }
 
-void microloop_process(microloop_t *m,
+void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
                       const float *in_l, const float *in_r,
                       float *out_l, float *out_r,
                       int frames) {

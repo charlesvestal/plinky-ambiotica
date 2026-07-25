@@ -24,6 +24,14 @@ enum {
 };
 #define DRUM_STEPS 16
 
+/* drums_render is one of the heaviest core1 stages (~130-220us/block, measured; small function, so cheap in SRAM). PLINKY_DSP_RAM_FUNC un-inlines it and
+ * places its code in SRAM, exempting it from the shared XIP cache. Fallback so the desktop
+ * harness and older firmware still build. NOTE: the SRAM code region is small and
+ * granular/looper already live there — if this stops LINKING, drop the wrapper. */
+#ifndef PLINKY_DSP_RAM_FUNC
+#define PLINKY_DSP_RAM_FUNC(f) f
+#endif
+
 typedef struct drums_s drums_t;
 
 /* Synthesises the kit. Allocates from the caller's current arena region — put it in PSRAM. */
@@ -41,7 +49,7 @@ void drums_trigger(drums_t* d, int track, int velocity);
 void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int va_end);
 
 /* ADDS into out_l/out_r — does not clear them. Call after the wash has been rendered. */
-void drums_render(drums_t* d, float* out_l, float* out_r, int frames);
+void PLINKY_DSP_RAM_FUNC(drums_render)(drums_t* d, float* out_l, float* out_r, int frames);
 
 /* Transpose the whole kit, in semitones (clamped +/-24). This is resampling, so a break
    pitched up gets shorter as well as higher — which is the point when you are chopping. */

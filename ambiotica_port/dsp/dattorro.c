@@ -197,7 +197,7 @@ static inline void dattorro_tick(dattorro_t* d, float inL, float inR, float* yl,
     *yl = ol * 0.95f; *yr = orr * 0.95f;   /* tap sum -> wet level (louder wash + more Spectra drive) */
 }
 
-void dattorro_process(dattorro_t* d, const float* in_l, const float* in_r,
+void PLINKY_DSP_RAM_FUNC(dattorro_process)(dattorro_t* d, const float* in_l, const float* in_r,
                       float* out_l, float* out_r, int n) {
     if (!d) { for (int i = 0; i < n; i++) { out_l[i] = out_r[i] = 0.f; } return; }
     for (int i = 0; i < n; i += 2) {
