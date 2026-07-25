@@ -122,6 +122,7 @@ struct ambiotica_panel : panel_t {
     float        shimmer_phase = 0.f;              /* slow LFO for the Tail slider's shimmer */
     float        freeze_phase = 0.f;               /* Satellite freeze indicator: fast 3-spot bounce */
     float        nav_phase = 0.f, nav_pulse = 0.f; /* nav-bar "you are here" breath (runs on every page) */
+    float        preview_mix = 0.f;                /* 0 = normal, 1 = preset audition bypasses the chain */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
        envelope against its own slow peak-hold: idle -> dim floor, emitting ->
@@ -578,7 +579,20 @@ struct ambiotica_panel : panel_t {
             return true;
         }
 
-        const float k = (1.0f / 32768.0f) * AMB_IN_GAIN;   /* headroom for polyphony */
+        /* Preset auditions must be heard CLEAN. The picker previews by playing the built-in
+           synth, so it lands in the same dry bus we swallow — there is no separate preview
+           bus to route around. Left alone it is not just soaked in the wash: the looper
+           CAPTURES it, so browsing a bank smears audition blips through the pad for minutes.
+           So while the audition sounds, gate the chain's INPUT (it hears silence and its tail
+           keeps decaying underneath) and add the dry synth straight to the output below.
+           preview_pressure is the picker's own "audition is making sound" byte; core1 reading
+           it a block late is harmless. Fast in so the attack isn't soaked, slow out so the
+           wash returns gracefully rather than snapping back. */
+        float pv_target = presets.picker.preview_pressure ? 1.0f : 0.0f;
+        preview_mix += (pv_target - preview_mix) * (pv_target > preview_mix ? 0.5f : 0.08f);
+        const float duck = 1.0f - preview_mix;
+
+        const float k = (1.0f / 32768.0f) * AMB_IN_GAIN * duck;   /* headroom for polyphony */
         for (int i = 0; i < BLOCK_SIZE; i++) {
             sL[i] = mix_buffers_out->dry[2*i]   * k;
             sR[i] = mix_buffers_out->dry[2*i+1] * k;
@@ -588,7 +602,7 @@ struct ambiotica_panel : panel_t {
            Default src is "off", which is the historical synth-only behaviour. Watch the level
            on "mic": the chain feeds back through the looper, so a hot mic can run away. */
         if (audio_source && audiobuf_in) {
-            const float ki = (1.0f / 32768.0f) * AMB_EXT_IN_GAIN * (audio_in_level / 127.0f);
+            const float ki = (1.0f / 32768.0f) * AMB_EXT_IN_GAIN * (audio_in_level / 127.0f) * duck;
             for (int i = 0; i < BLOCK_SIZE; i++) {
                 sL[i] += audiobuf_in[2*i]   * ki;
                 sR[i] += audiobuf_in[2*i+1] * ki;
@@ -642,6 +656,10 @@ struct ambiotica_panel : panel_t {
 
         for (int i = 0; i < BLOCK_SIZE; i++) {
             int l = (int)(oL[i] * 32767.0f), r = (int)(oR[i] * 32767.0f);
+            if (preview_mix > 0.001f) {   /* audition, dry and unprocessed, over the decaying tail */
+                l += (int)(mix_buffers_out->dry[2*i]   * preview_mix);
+                r += (int)(mix_buffers_out->dry[2*i+1] * preview_mix);
+            }
             audiobuf_out[2*i]   = (int16_t)(l < -32768 ? -32768 : l > 32767 ? 32767 : l);
             audiobuf_out[2*i+1] = (int16_t)(r < -32768 ? -32768 : r > 32767 ? 32767 : r);
         }
