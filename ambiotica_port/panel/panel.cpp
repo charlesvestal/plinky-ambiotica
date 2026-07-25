@@ -537,16 +537,18 @@ struct ambiotica : panel_t {
                    PRESET_DEFAULT_CHOP_COUNT (16) — sixteenths. Cutting the bar into
                    DRUM_TRACKS instead gave eighths, twice the intended length, and every
                    hit ran into the next.
-                   Starts stay spread across the whole bar so all eight tracks still address
-                   it; only the pieces get shorter. So each track fires the attack at its
-                   eighth-note position and stops a sixteenth later — which is what a chopped
-                   break actually sounds like. */
+                   Chops are CONTIGUOUS rather than spread across the bar: tracks 0..7 are
+                   eight consecutive sixteenths, so playing them in order replays the first
+                   half-bar and the grid genuinely rearranges it. Spreading them over the
+                   whole bar would cover more of the break but only sample the downbeat of
+                   each eighth, which is less useful than a run you can actually reorder. */
                 unsigned int bar  = b - a;
                 unsigned int chop = bar / preset_slice_chop_count(sl);
-                unsigned int stride = bar / DRUM_TRACKS;
                 for (int t = 0; t < DRUM_TRACKS; t++) {
-                    unsigned int s0 = a + stride * t;
-                    unsigned int s1 = s0 + chop; if (s1 > b) s1 = b;
+                    unsigned int s0 = a + chop * t;
+                    unsigned int s1 = s0 + chop;
+                    if (s0 >= b) { drums_set_sample(drums, t, 0, 0); continue; }  /* short sample */
+                    if (s1 > b) s1 = b;
                     drums_set_sample(drums, t, s0, s1);
                 }
                 return;
@@ -884,6 +886,12 @@ struct ambiotica : panel_t {
         /* Page dispatch. Negative pages are the system's own settings UI — return without
            clearing so it keeps its own drawing. The chain runs on core1 regardless of the
            page, so the wash keeps going while you edit the synth or browse presets. */
+        /* Orbit and Satellite are bar-length delays derived from bpm (see fc_push_params), so
+           this has to track the system tempo. Updated BEFORE the page dispatch: it used to
+           live in the page-0 branch, which meant nudging the tempo from the drums page left
+           the loop lengths stale until you navigated back. */
+        fx.bpm = get_tempo_bpm(); if (fx.bpm < 1.f) fx.bpm = 120.f;
+
         int page = get_scroll_page();
         if (page < 0) { draw_settings_page(page); return; }
         leds_clear();
@@ -896,10 +904,6 @@ struct ambiotica : panel_t {
             else                          scroll_to_page(PAGE_PLAY);
             return;
         }
-
-        /* Orbit and Satellite clock off the system tempo, so the left physical buttons (which
-           we hand back to the system, and which nudge BPM) actually move the loop lengths. */
-        fx.bpm = get_tempo_bpm(); if (fx.bpm < 1.f) fx.bpm = 120.f;
 
         voices_seen = 0;
         uint32_t keycol = key_col();
