@@ -6,6 +6,9 @@
  * core1-budget story. Build config: amb_config.h (LOOPER_I16) concatenated by
  * amalgamate.sh; per-module flags live in their own files (shimmer/cloud off in
  * microloop.c). Reverb is always the Dattorro plate.
+ *
+ * Everything is laid out inside rows UI_Y..UI_Y1 (the middle 12) — see the layout
+ * enum below — because the Chords grid reserves two rows top and bottom.
  */
 #define PANEL_PAD_COLOR TEAL
 #define AMB_SR 32000.0
@@ -20,6 +23,21 @@
    Satellite = micro-loop) with the granular scatter after them — grouped for legibility
    rather than strict signal-chain order (looper -> granular -> microloop). */
 enum { FX_ORBIT, FX_SATELLITE, FX_CONSTELLATE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
+
+/* Vertical layout. The panel is designed for the CHORDS grid, which claims the top two
+   and bottom two rows for its own control rows, so ALL of our UI lives in the middle 12
+   (rows 2..13) and the four reserved rows are left dark by leds_clear().
+   Sliders simply shrink to UI_H. The play surface is NOT compressed — do_play_surface
+   keeps one scale step per pad (string_pos = h-1-rely), so a shorter h just lifts each
+   string's bottom (lowest) note up two rows and drops the top two notes. */
+enum {
+    UI_Y      = 2,                      /* first usable row */
+    UI_H      = 12,                     /* usable height */
+    UI_Y1     = UI_Y + UI_H - 1,        /* last usable row (13) */
+    UI_MID_UP = UI_Y + UI_H / 2 - 1,    /* upper centre row (7)  — bipolar zero, upper half */
+    UI_MID_DN = UI_Y + UI_H / 2,        /* lower centre row (8)  — bipolar zero, lower half */
+    UI_HALF   = UI_H / 2 - 1,           /* rows of travel from centre to either end (5) */
+};
 
 struct ambiotica_panel : panel_t {
     looper_t* looper = 0; granular_t* granular = 0; microloop_t* microloop = 0;
@@ -225,7 +243,7 @@ struct ambiotica_panel : panel_t {
             1717,   /* Mixolydian        0,2,4,5,7,9,10 */
         };
         int msel = (mode_sel < 0 || mode_sel > 4) ? 0 : mode_sel;
-        play.do_play_surface(0, 0, 8, 16, 4, DIMMEST(keycol), keycol, 48 + fx.key, 3, note_cb, this,
+        play.do_play_surface(0, UI_Y, 8, UI_H, 4, DIMMEST(keycol), keycol, 48 + fx.key, 3, note_cb, this,
                              VERTICAL | SHOW_BACKGROUND | STRINGOPHONIC_MONO, kModeScale[msel], fx.key,
                              viz_brightness, this);
         unsigned short released = (unsigned short)(voices_active & ~voices_seen);
@@ -251,7 +269,7 @@ struct ambiotica_panel : panel_t {
                 case FX_FLUX:        bri = 60 + (int)(flux * shimmer * 196.f); break;
             }
             if (bri < 0) bri = 0; if (bri > 256) bri = 256;
-            fxslider[i].simple_slider(8 + i, 0, 16, VERTICAL | SHOW_STEM,
+            fxslider[i].simple_slider(8 + i, UI_Y, UI_H, VERTICAL | SHOW_STEM,
                                       fade_col(palette[8][i], bri), 0, 127, fx_val[i], nm[i]);
             fx_val[i] = (unsigned char)last_widget_new_value();
 
@@ -262,12 +280,12 @@ struct ambiotica_panel : panel_t {
             if (i == FX_SATELLITE && fx.micro_hold >= 0.9f) {
                 int step = (int)(freeze_phase * 4.f) & 3;                 /* 0..3 */
                 int off  = (step == 1) ? -1 : (step == 3) ? 1 : 0;        /* centre, up, centre, down */
-                set_led(8 + i, 7 + off, fade_col(WHITE, 240));
+                set_led(8 + i, UI_MID_UP + off, fade_col(WHITE, 240));
             } else if (i == FX_ORBIT || i == FX_SATELLITE) {
                 unsigned int phase = (i == FX_ORBIT) ? viz_loop     : viz_micro;
                 unsigned int len   = (i == FX_ORBIT) ? viz_loop_len : viz_micro_len;
-                int row = len ? (int)(((float)phase / (float)len) * 15.f) : 0;
-                if (row < 0) row = 0; if (row > 15) row = 15;
+                int row = len ? UI_Y + (int)(((float)phase / (float)len) * (float)(UI_H - 1)) : UI_Y;
+                if (row < UI_Y) row = UI_Y; if (row > UI_Y1) row = UI_Y1;
                 int sb = 130 + (bri - 36) / 2;  if (sb > 256) sb = 256;
                 set_led(8 + i, row, fade_col(WHITE, sb));
             }
@@ -278,7 +296,7 @@ struct ambiotica_panel : panel_t {
         /* col-15: bipolar Gravity (up) / Event Horizon (down). Neutral = centre. Call
            simple_slider for the touch/value, then draw our own bipolar column over it. */
         int gd = (int)fx_val15 - 64;
-        fxslider15.simple_slider(15, 0, 16, VERTICAL | SHOW_STEM,
+        fxslider15.simple_slider(15, UI_Y, UI_H, VERTICAL | SHOW_STEM,
                                  fade_col(gd >= 0 ? GREEN : RED, 256), 0, 127, fx_val15, "Grav/Drain");
         fx_val15 = (unsigned char)last_widget_new_value();
         gd = (int)fx_val15 - 64;
@@ -287,19 +305,19 @@ struct ambiotica_panel : panel_t {
            the deadzone you are; 0 inside it. */
         const int DZ = 10;
         int geff = (gd > DZ) ? (gd - DZ) : (gd < -DZ ? (gd + DZ) : 0);
-        /* Bipolar fill that GROWS from the centre (rows 7,8, the true middle of 0..15):
+        /* Bipolar fill that GROWS from the centre (the middle of the usable band):
            GREEN up (Gravity), RED down (Event Horizon). All lit pads coloured; the two
            middle LEDs show WHITE only inside the neutral deadzone. */
-        for (int y = 0; y < 16; y++) {
+        for (int y = UI_Y; y <= UI_Y1; y++) {
             uint32_t c = 0;                                       /* off */
             if (geff == 0) {
-                if (y == 7 || y == 8) c = LED_RGB(20, 20, 20);   /* neutral: white centre marker */
-            } else if (geff > 0) {                               /* Gravity: green fill, rows 7..0 */
-                int topRow = 7 - (geff * 7) / (63 - DZ);
-                if (y >= topRow && y <= 7) c = fade_col(GREEN, 256);
-            } else {                                             /* drain: red fill, rows 8..15 */
-                int botRow = 8 + ((-geff) * 7) / (64 - DZ);
-                if (y >= 8 && y <= botRow) c = fade_col(RED, 256);
+                if (y == UI_MID_UP || y == UI_MID_DN) c = LED_RGB(20, 20, 20);   /* neutral marker */
+            } else if (geff > 0) {                               /* Gravity: green fill, centre -> top */
+                int topRow = UI_MID_UP - (geff * UI_HALF) / (63 - DZ);
+                if (y >= topRow && y <= UI_MID_UP) c = fade_col(GREEN, 256);
+            } else {                                             /* drain: red fill, centre -> bottom */
+                int botRow = UI_MID_DN + ((-geff) * UI_HALF) / (64 - DZ);
+                if (y >= UI_MID_DN && y <= botRow) c = fade_col(RED, 256);
             }
             set_led(15, y, c);
         }
