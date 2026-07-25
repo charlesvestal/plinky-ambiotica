@@ -104,6 +104,7 @@ struct ambiotica : panel_t {
     unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing */
     bool            preset_report_done = false;   /* one-shot preset/kit dump (see report_presets) */
     int             drum_kit = -1;      /* -1 = the generated kit; else an index into kKits */
+    int             drum_transpose = 0;   /* semitones, applied to the whole kit */
     /* Selection is deliberately separate from what is LOADED. Loading a kit runs the chunk
        planner, which blocks core0 for tens of ms — so scrolling a 20-entry ring must not
        load every entry it passes. BANK moves drum_kit_sel and arms a timer; only when the
@@ -187,6 +188,7 @@ struct ambiotica : panel_t {
         drum_kit = drum_kit_sel = -1;   /* generated kit */
         drum_kit_arm_us = 0;
         drum_step = 0;
+        set_drum_transpose(0);
         push_fx_from_ui();
         fx_sm = fx;   /* start the smoother at the target so nothing ramps up from 0 on boot */
 
@@ -521,6 +523,9 @@ struct ambiotica : panel_t {
        Called after loading a kit and after a scene load, since a load replaces the presets. */
     void refresh_drum_slices() {
         if (!drums) return;
+        /* build_dsp() makes a fresh drums_t at unity, so a loaded scene's transpose has to be
+           pushed back in here — this runs after every rebuild and every kit change. */
+        drums_set_pitch(drums, (float)drum_transpose);
         const bool sliced = drum_kit >= 0 && kKits[drum_kit].preset_in_bank >= 0;
         /* A sliced break is one continuous performance, so the hat choke — which makes a kit
            sound like a kit — would just cut adjacent eighths off each other. */
@@ -565,6 +570,13 @@ struct ambiotica : panel_t {
             }
             drums_set_sample(drums, t, a, b);
         }
+    }
+
+    void set_drum_transpose(int semis) {
+        if (semis < -24) semis = -24;
+        if (semis >  24) semis =  24;
+        drum_transpose = semis;
+        drums_set_pitch(drums, (float)semis);
     }
 
     static int wrap_kit(int k) { return k < -1 ? kNumKits - 1 : (k >= kNumKits ? -1 : k); }
@@ -667,6 +679,16 @@ struct ambiotica : panel_t {
         uint32_t kitcol = drum_kit_sel < 0 ? DIMMER(WHITE) : palette[9][(drum_kit_sel * 3 + 2) & 15];
         if (button(COL_BANK, page_y + CTL_UP, kitcol, ISOLATED, "Kit up"))   arm_kit(drum_kit_sel + 1);
         if (button(COL_BANK, page_y + CTL_DN, kitcol, ISOLATED, "Kit down")) arm_kit(drum_kit_sel - 1);
+
+        /* KEY ▲▼ transposes the kit here — the same pads that move the musical key on the
+           play page, doing the pitch job on this one. Resampling, so pitching a break up
+           shortens it too: chops get tighter as they get higher, which is the useful
+           direction. × + KEY returns to unity rather than making you count back. */
+        uint32_t trcol = drum_transpose ? palette[10][drum_transpose > 0 ? 5 : 1] : DIMMER(WHITE);
+        if (button(COL_KEY, page_y + CTL_UP, trcol, ISOLATED, "Drums up a semitone"))
+            set_drum_transpose(erase_mod ? 0 : drum_transpose + 1);
+        if (button(COL_KEY, page_y + CTL_DN, trcol, ISOLATED, "Drums down a semitone"))
+            set_drum_transpose(erase_mod ? 0 : drum_transpose - 1);
 
         /* While the selection is armed, show its name in the four empty rows BELOW the step
            grid, so scrolling kits never hides the pattern you are editing. Four characters
@@ -1176,6 +1198,7 @@ struct ambiotica : panel_t {
         FIELD("mode",    o.mode_sel,               0,  4);
         FIELD_BASE64("drums", o.pattern, pattern_bytes, (int)sizeof(o.pattern));
         FIELD("kit",     o.drum_kit,               -1, 8);
+        FIELD("dtrans", o.drum_transpose,        -24, 24);
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
          * preset-install planner on a scene load — that happens for every staged panel load
          * regardless of what we serialise. So they are not implicated in the load failure,

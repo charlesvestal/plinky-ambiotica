@@ -21,7 +21,7 @@ typedef struct {
 } drum_sample_t;
 
 typedef struct {
-    int   pos;              /* -1 = idle */
+    float pos;              /* fractional read head; <0 = idle */
     float amp;              /* velocity, 0..1 */
 } drum_voice_t;
 
@@ -36,6 +36,7 @@ struct drums_s {
     drum_voice_t  v[DRUM_TRACKS];   /* one voice per track — a retrigger cuts its predecessor */
     drum_source_t src[DRUM_TRACKS]; /* zeroed = use the generated buffer */
     int           choke;            /* closed hat cuts open hat — a kit thing, not a break thing */
+    float         rate;             /* read speed; 1 = unity, 2 = an octave up */
 };
 
 /* ---- synthesis helpers (boot-time only, never realtime) ---------------------------- */
@@ -180,8 +181,9 @@ drums_t* drums_create(double sample_rate) {
         d->s[trk].pan  = pass ? 0.30f : -0.30f;
     }
 
-    for (int t = 0; t < DRUM_TRACKS; t++) d->v[t].pos = -1;
+    for (int t = 0; t < DRUM_TRACKS; t++) d->v[t].pos = -1.0f;
     d->choke = 1;
+    d->rate  = 1.0f;
     return d;
 }
 
@@ -191,21 +193,30 @@ void drums_trigger(drums_t* d, int track, int velocity) {
     if (!d || track < 0 || track >= DRUM_TRACKS || velocity <= 0) return;
     /* A closed hat chokes the open hat — the one piece of cross-track behaviour worth
        having, and the thing that makes a hat pattern sound like a hat pattern. */
-    if (d->choke && track == DRUM_CHAT) d->v[DRUM_OHAT].pos = -1;
-    d->v[track].pos = 0;
+    if (d->choke && track == DRUM_CHAT) d->v[DRUM_OHAT].pos = -1.0f;
+    d->v[track].pos = 0.0f;
     d->v[track].amp = (float)velocity * (1.0f / 127.0f);
+}
+
+void drums_set_pitch(drums_t* d, float semitones) {
+    if (!d) return;
+    /* 2^(semi/12). Clamped so a stray value cannot walk the read head backwards or so fast
+       that a slice is skipped entirely between blocks. */
+    if (semitones < -24.f) semitones = -24.f;
+    if (semitones >  24.f) semitones =  24.f;
+    d->rate = powf(2.0f, semitones / 12.0f);
 }
 
 void drums_all_off(drums_t* d) {
     if (!d) return;
-    for (int t = 0; t < DRUM_TRACKS; t++) d->v[t].pos = -1;
+    for (int t = 0; t < DRUM_TRACKS; t++) d->v[t].pos = -1.0f;
 }
 
 void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int va_end) {
     if (!d || track < 0 || track >= DRUM_TRACKS) return;
     if (va_end <= va_start) { d->src[track].va_start = d->src[track].va_end = 0; }
     else                    { d->src[track].va_start = va_start; d->src[track].va_end = va_end; }
-    d->v[track].pos = -1;   /* a voice mid-flight would keep indexing the old source */
+    d->v[track].pos = -1.0f;   /* a voice mid-flight would keep indexing the old source */
 }
 
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
@@ -227,25 +238,36 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
         /* Equal-ish power pan, cheap: pan is small so a linear split is inaudible here. */
         float gl = g * (1.0f - pan) * 0.5f;
         float gr = g * (1.0f + pan) * 0.5f;
-        int n = frames, pos = v->pos;
-        if (pos + n > len) n = len - pos;
-        if (sampled) {
+        /* Resampled read head. Linear interpolation between neighbouring samples: without it
+           a transposed drum picks up hard quantisation noise on top of the aliasing. The
+           SDK does precompute prefiltered mipmaps for exactly this (get_mip_va), which would
+           beat interpolation when pitching well above unity — but how a slice's offsets map
+           into mip space is undocumented, so mip 0 it is until that is worth confirming. */
+        const float rate = d->rate;
+        float pos = v->pos;
+        const float last = (float)(len - 1);
+        for (int i = 0; i < frames; i++) {
+            if (pos >= last) { pos = -1.0f; break; }
+            int   i0 = (int)pos;
+            float fr = pos - (float)i0;
+            float a, b;
+            if (sampled) {
 #if defined(READ_SAMPLE)
-            unsigned int va = src->va_start + (unsigned int)pos;
-            for (int i = 0; i < n; i++) {
-                float x = (float)(int16_t)READ_SAMPLE(va + (unsigned int)i);
-                out_l[i] += x * gl;
-                out_r[i] += x * gr;
-            }
+                unsigned int va = src->va_start + (unsigned int)i0;
+                a = (float)(int16_t)READ_SAMPLE(va);
+                b = (float)(int16_t)READ_SAMPLE(va + 1u);
+#else
+                a = b = 0.0f;
 #endif
-        } else {
-            const signed char* p = s->data + pos;
-            for (int i = 0; i < n; i++) {
-                float x = (float)p[i];
-                out_l[i] += x * gl;
-                out_r[i] += x * gr;
+            } else {
+                a = (float)s->data[i0];
+                b = (float)s->data[i0 + 1];
             }
+            float x = a + (b - a) * fr;
+            out_l[i] += x * gl;
+            out_r[i] += x * gr;
+            pos += rate;
         }
-        v->pos = (pos + frames >= len) ? -1 : pos + frames;
+        v->pos = pos;
     }
 }
