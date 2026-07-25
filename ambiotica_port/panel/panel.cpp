@@ -50,6 +50,11 @@ enum {
    keep their stock BPM / page-cycle behaviour. */
 enum {
     CTL_TOP    = 0,     /* top control row — the stock page strip (AUDIO IN..MIDI) */
+    CTL_TOP2   = 1,     /* second control row — SEQUENCE / CONDITION / GENERATE labels */
+    COL_PROB   = 12,    /* "PROB"   (row 1)  — hold to see and edit per-step probability */
+    COL_REROLL = 12,    /* printed ⭕ (row 15) — hold + tap a target to randomise it.
+                           Both Blocks and Toadstep make randomise a first-class modifier
+                           applying to the SAME targets as clear; this is that key. */
     CTL_UP     = 14,    /* bottom row A — the printed ▲ / upper-label row */
     CTL_DN     = 15,    /* bottom row B — the printed ▼ / lower-label row */
     COL_KEY    = 0,     /* "KEY"    ▲/▼ — key, around the circle of fifths */
@@ -256,12 +261,59 @@ struct ambiotica : panel_t {
        to the panel we just replaced. */
     /* Raw touch, not a widget: a modifier has to be readable by OTHER pads on the same frame,
        and it must not swallow its own press. */
-    bool shift_held(int page_y) const { return get_touch_down(COL_X, page_y + CTL_DN) != 0; }
+    bool shift_held(int page_y)  const { return get_touch_down(COL_X,      page_y + CTL_DN)  != 0; }
+    bool reroll_held(int page_y) const { return get_touch_down(COL_REROLL, page_y + CTL_DN)  != 0; }
+    bool prob_held(int page_y)   const { return get_touch_down(COL_PROB,   page_y + CTL_TOP2) != 0; }
 
+    /* xorshift32. Only ever drives UI-level randomisation, never audio, so it needs to be
+       cheap and non-repeating rather than statistically good. */
+    unsigned int rng = 0x2545f491u;
+    unsigned int rnd() { rng ^= rng << 13; rng ^= rng >> 17; rng ^= rng << 5; return rng; }
+
+    /* Per-step probability levels, cycled by PROB + tap. 127 = always. Steps are stored as
+       their probability, so "on" and "how often" are the same byte. */
+    static unsigned char next_prob(unsigned char p) {
+        return p >= 127 ? 96 : p >= 96 ? 64 : p >= 64 ? 32 : 127;
+    }
+
+    /* Blocks' model: each press randomises a QUARTER of the track, so holding reroll and
+       tapping repeatedly builds the pattern up rather than replacing it wholesale. */
+    void reroll_track(int t) {
+        for (int k = 0; k < DRUM_STEPS / 4; k++) {
+            int s = (int)(rnd() % DRUM_STEPS);
+            pattern[t * DRUM_STEPS + s] = (rnd() & 1) ? (unsigned char)(64 + (rnd() % 64)) : 0;
+        }
+    }
+
+    /* Reroll + SYNTH. Randomises the CURRENT preset's parameters rather than loading a
+       random preset: it needs no bank enumeration, and it is what Toadstep's reroll does on
+       its synth pages. The list and its ranges are deliberately curated — pitch, octave and
+       volume are left alone because randomising those breaks tuning and levels rather than
+       making a new sound, and the envelope ranges lean long because this is an ambient box. */
+    void reroll_synth() {
+        struct { int param, lo, hi; } r[] = {
+            { VOICE_PARAM_CUTOFF_LP,  40, 127 }, { VOICE_PARAM_RESONANCE,   0,  80 },
+            { VOICE_PARAM_CUTOFF_HP,   0,  40 }, { VOICE_PARAM_ATTACK,     10, 100 },
+            { VOICE_PARAM_DECAY,      40, 127 }, { VOICE_PARAM_SUSTAIN,    40, 127 },
+            { VOICE_PARAM_RELEASE,    50, 127 }, { VOICE_PARAM_SUBOSC,     45,  90 },
+            { VOICE_PARAM_WAVEFOLD,   45,  90 }, { VOICE_PARAM_CHORUS,     45, 100 },
+            { VOICE_PARAM_STEREO,     40, 127 }, { VOICE_PARAM_GLIDE,       0,  40 },
+        };
+        for (unsigned i = 0; i < sizeof(r) / sizeof(r[0]); i++)
+            set_param_packed(r[i].param, r[i].lo + (int)(rnd() % (unsigned)(r[i].hi - r[i].lo + 1)),
+                             &synth_presets[synth_preset]);
+    }
+
+    /* A step's byte IS its probability: 0 = off, 127 = always, less = sometimes. Velocity is
+       held constant so the control stays one-dimensional — "how often", not "how loud".
+       This is the thing that stops an ambient pattern repeating identically forever, and it
+       is why both Blocks and Toadstep put probability on their step editors. */
     void fire_drum_step() {
         for (int t = 0; t < DRUM_TRACKS; t++) {
-            unsigned char v = pattern[t * DRUM_STEPS + drum_step];
-            if (v) drums_trigger(drums, t, v);
+            unsigned char p = pattern[t * DRUM_STEPS + drum_step];
+            if (!p) continue;
+            if (p < 127 && (int)(rnd() % 127u) >= p) continue;   /* rolled a miss */
+            drums_trigger(drums, t, 100);
         }
     }
 
@@ -435,8 +487,19 @@ struct ambiotica : panel_t {
             if (page == PAGE_SCENE)  scene_picker.on_done();
             nav_goto(PAGE_PLAY);
         }
-        if (button(COL_SYNTH,  page_y + CTL_DN,  page == PAGE_SYNTH  ? here : away, ISOLATED, "Synth editor") && armed)
-            nav_goto(PAGE_SYNTH);
+        /* ⭕ reroll and PROB, on their printed pads. Read with raw touch and drawn with
+           set_led for the same reason × is: a modifier has to be legible to OTHER pads on
+           the same frame and must not swallow its own press. */
+        bool rr = reroll_held(page_y);
+        set_led(COL_REROLL, page_y + CTL_DN,   rr ? PURPLE : DIMMESTEST(PURPLE));
+        set_led(COL_PROB,   page_y + CTL_TOP2, prob_held(page_y) ? CYAN : DIMMESTEST(CYAN));
+
+        if (button(COL_SYNTH,  page_y + CTL_DN,
+                   rr ? PURPLE : (page == PAGE_SYNTH ? here : away), ISOLATED,
+                   rr ? "Randomise the synth" : "Synth editor") && armed) {
+            if (rr) reroll_synth();          /* ⭕ + SYNTH = new sound, no page change */
+            else    nav_goto(PAGE_SYNTH);
+        }
         if (button(COL_PRESET, page_y + CTL_TOP, page == PAGE_PRESET ? here : away, ISOLATED, "Synth presets") && armed)
             nav_goto(PAGE_PRESET);
         if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene") && armed)
@@ -648,7 +711,9 @@ struct ambiotica : panel_t {
            finger crossed would flip on its own and a swipe would just invert the row.
            × forces erase regardless, so you can scrub out a run that starts on a gap. */
         bool erase_mod = shift_held(page_y);
-        bool any_down = false;
+        bool prob_mod  = prob_held(page_y);
+        bool rr_mod    = reroll_held(page_y);
+        bool any_down  = false;
         for (int t = 0; t < DRUM_TRACKS; t++) {
             int y = page_y + UI_Y + t;
             for (int s = 0; s < DRUM_STEPS; s++) {
@@ -657,13 +722,29 @@ struct ambiotica : panel_t {
                    TRACKS tap writes a step on every row the grid slides past it. */
                 if (!input_frozen() && get_touch_down(s, y)) {
                     any_down = true;
-                    if (!drum_paint) drum_paint = pattern[idx] ? 2 : 1;   /* latch on first contact */
-                    pattern[idx] = (erase_mod || drum_paint == 2) ? 0 : 100;
+                    if (rr_mod) {
+                        /* ⭕ + a track randomises a quarter of it. Latched through drum_paint
+                           so a held finger rerolls once rather than every frame. */
+                        if (!drum_paint) { drum_paint = 3; reroll_track(t); }
+                    } else if (prob_mod) {
+                        /* PROB + a step cycles 100/75/50/25%. Only lit steps have a
+                           probability to cycle — an empty step has nothing to make less
+                           likely, so this never turns steps on by accident. */
+                        if (!drum_paint) { drum_paint = 3; if (pattern[idx]) pattern[idx] = next_prob(pattern[idx]); }
+                    } else {
+                        if (!drum_paint) drum_paint = pattern[idx] ? 2 : 1;   /* latch on first contact */
+                        pattern[idx] = (erase_mod || drum_paint == 2) ? 0 : 127;
+                    }
                 }
                 unsigned char vel = pattern[idx];
                 bool head = playing && s == drum_step;
                 uint32_t c;
-                if (vel) c = palette[head ? 13 : 8][(t * 2 + 1) & 15];  /* lit step, flares on the beat */
+                if (vel) {
+                    /* Brightness carries probability, so holding PROB turns the grid into a
+                       readout of how often each step fires rather than a separate page. */
+                    int sh = 3 + (vel * 6) / 127; if (head) sh += 4; if (sh > 15) sh = 15;
+                    c = palette[sh][(t * 2 + 1) & 15];
+                }
                 else if (head)         c = DIMMER(WHITE);               /* playhead over an empty step */
                 else if ((s & 3) == 0) c = DIMMESTEST(WHITE);           /* beat ruler */
                 else                   c = 0;
