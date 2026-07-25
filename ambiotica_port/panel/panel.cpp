@@ -61,6 +61,8 @@ enum {
     COL_TRACKS = 9,     /* "TRACKS" (row 14) — drum sequencer page */
     COL_SAVE   = 12,    /* "SAVE"   (row 14) — commit, on the picker pages only */
     COL_LOAD   = 13,    /* "LOAD"   (row 14) — commit, on the picker pages only */
+    COL_X      = 13,    /* printed × (row 15) — the stock SHIFT key. The Chords manual:
+                           "hold it and tap one of the other pads" to reset or delete. */
     COL_STOP   = 14,    /* printed ▢ (row 15) — the stock transport corner */
     COL_PLAY   = 15,    /* printed ▷ (row 15) */
 };
@@ -228,6 +230,10 @@ struct ambiotica : panel_t {
        now zero, so rebuild it: the DSP chain (see build_dsp), the macro smoother, and any
        runtime latches. Voices are released because the note-ons that started them belonged
        to the panel we just replaced. */
+    /* Raw touch, not a widget: a modifier has to be readable by OTHER pads on the same frame,
+       and it must not swallow its own press. */
+    bool shift_held(int page_y) const { return get_touch_down(COL_X, page_y + CTL_DN) != 0; }
+
     void fire_drum_step() {
         for (int t = 0; t < DRUM_TRACKS; t++) {
             unsigned char v = pattern[t * DRUM_STEPS + drum_step];
@@ -386,8 +392,18 @@ struct ambiotica : panel_t {
             scroll_to_page(PAGE_PRESET);
         if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene"))
             scroll_to_page(PAGE_SCENE);
-        if (button(COL_TRACKS, page_y + CTL_UP,  page == PAGE_DRUMS  ? here : away, ISOLATED, "Drum sequencer"))
-            scroll_to_page(PAGE_DRUMS);
+        /* × — the printed shift key, on every page. Drawn with set_led and read with raw
+           touch rather than as a widget, so holding it modifies other pads instead of
+           consuming the press itself. */
+        bool xh = shift_held(page_y);
+        set_led(COL_X, page_y + CTL_DN, xh ? WHITE : DIMMESTEST(WHITE));
+
+        if (button(COL_TRACKS, page_y + CTL_UP,
+                   xh ? RED : (page == PAGE_DRUMS ? here : away), ISOLATED,
+                   xh ? "Clear the whole pattern" : "Drum sequencer")) {
+            if (xh) memset(pattern, 0, sizeof pattern);   /* ×+TRACKS = wipe, per the manual's shift idiom */
+            else    scroll_to_page(PAGE_DRUMS);
+        }
 
         /* Transport on the printed corner, on every page — the groove has to be startable
            from wherever you are, and these are the pads users already expect it on. */
@@ -410,20 +426,24 @@ struct ambiotica : panel_t {
     void draw_drums_page() {
         const int page_y = PAGE_DRUMS * 16;
         bool playing = is_transport_playing();
+        /* PAINT, not toggle. get_touch_down is level-triggered, so a finger dragged across
+           the row writes every pad it crosses — which is how you actually enter a hi-hat
+           line. Toggling per pad would fight the drag, flipping steps back off as the finger
+           moved. × inverts it into an eraser, so a scrub wipes a run of steps. */
+        bool erase = shift_held(page_y);
         for (int t = 0; t < DRUM_TRACKS; t++) {
             int y = page_y + UI_Y + t;
             for (int s = 0; s < DRUM_STEPS; s++) {
-                unsigned char vel = pattern[t * DRUM_STEPS + s];
+                int idx = t * DRUM_STEPS + s;
+                if (get_touch_down(s, y)) pattern[idx] = erase ? 0 : 100;
+                unsigned char vel = pattern[idx];
                 bool head = playing && s == drum_step;
                 uint32_t c;
                 if (vel) c = palette[head ? 13 : 8][(t * 2 + 1) & 15];  /* lit step, flares on the beat */
-                else if (head)        c = DIMMER(WHITE);                /* playhead over an empty step */
+                else if (head)         c = DIMMER(WHITE);               /* playhead over an empty step */
                 else if ((s & 3) == 0) c = DIMMESTEST(WHITE);           /* beat ruler */
                 else                   c = 0;
                 set_led(s, y, c);
-                /* invisible_button so the LED above stands — button() would repaint it. */
-                if (invisible_button(s, y, ISOLATED, "Step"))
-                    pattern[t * DRUM_STEPS + s] = vel ? 0 : 100;
             }
         }
         draw_nav(page_y, PAGE_DRUMS);
