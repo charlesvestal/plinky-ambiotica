@@ -146,6 +146,15 @@ struct ambiotica : panel_t {
     }
 
     void setup_default_panel_state() override {
+        /* The WHOLE panel object must fit the 128 KB panel arena — and a panel LOAD builds a
+         * SECOND copy in the shadow arena before memcpying it over us. So an oversized object
+         * is invisible during normal play and only corrupts memory when you load, which is
+         * the symptom being chased (commit never completes, USB dies). sram_pool is the
+         * adjustable 88 KB of it; preset_pages_t and the two file_picker_t caches are several
+         * KB more. If this prints anything near or over 131072, that is the bug. */
+        printf("PANEL: sizeof=%u bytes, sram_pool=%u, arena=131072\n",
+               (unsigned)sizeof(*this), (unsigned)sizeof(sram_pool));
+
         fx_val[FX_ORBIT] = 48; fx_val[FX_CONSTELLATE] = 48; fx_val[FX_SATELLITE] = 32;
         fx_val[FX_TAIL] = 76; fx_val[FX_FLUX] = 40; fx_val[FX_SPECTRA] = 64; fx_val[FX_MIX] = 90;
         memset(&fx, 0, sizeof fx);
