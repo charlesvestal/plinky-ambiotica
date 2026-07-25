@@ -43,6 +43,10 @@ void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int
 /* ADDS into out_l/out_r — does not clear them. Call after the wash has been rendered. */
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames);
 
+/* Transpose the whole kit, in semitones (clamped +/-24). This is resampling, so a break
+   pitched up gets shorter as well as higher — which is the point when you are chopping. */
+void drums_set_pitch(drums_t* d, float semitones);
+
 /* Closed hat cuts the open hat. On by default — it is what makes a kit sound like a kit,
    and exactly wrong for a sliced break, where the tracks are consecutive eighths of one
    continuous performance and would cut each other off. */
