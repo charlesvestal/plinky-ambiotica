@@ -1,7 +1,7 @@
 /* Ambiotica-on-Plinky: desktop port harness.
  *
  * Goal: validate that the vendored Ambiotica DSP runs with ZERO heap in the
- * process path, at Plinky's 32 kHz, using a fixed memory arena — and print a
+ * process path, at Plinky's 32 kHz, using a fixed memory arena - and print a
  * per-module memory map we can drop onto Plinky's SRAM / PSRAM / flash split.
  *
  * The DSP .c files are compiled with calloc/malloc/free/realloc redirected to
@@ -86,12 +86,12 @@ static void make_input(float* L, float* R, int frames, int sr) {
 static float inL[TOTAL], inR[TOTAL], outL[TOTAL], outR[TOTAL];
 
 int main(void) {
-    printf("=== Ambiotica @ %d Hz — fixed-arena port [%s] ===\n\n", SR, VARIANT);
+    printf("=== Ambiotica @ %d Hz - fixed-arena port [%s] ===\n\n", SR, VARIANT);
     make_input(inL, inR, TOTAL, SR);
 
     looper_t* l; granular_t* g; microloop_t* m;
     harmony_t* h; bloom_t* b; drift_t* d;
-    const int loopcap = 32 * SR;   /* kLoopBufMaxSeconds(32) * sr — matches the plugin */
+    const int loopcap = 32 * SR;   /* kLoopBufMaxSeconds(32) * sr - matches the plugin */
 
     printf("module buffers (allocated at create; this is the Plinky RAM budget):\n");
     #define CREATE(tag, expr) do { g_tag_bytes = 0; expr; \

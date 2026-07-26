@@ -37,7 +37,7 @@
  * defined for the desktop harness (no time_us there). */
 #ifdef AMB_PROFILE
 /* 0 loop 1 gran 2 mic 3 rev 4 harm 5 mix 6 push 7 drums.
-   Slot 7 is filled by the panel, not by fc_render_block — drums render after the chain,
+   Slot 7 is filled by the panel, not by fc_render_block - drums render after the chain,
    so they are outside this file but inside the same core1 block and have to be counted
    against the same budget. */
 static unsigned int g_stage_us[8];
@@ -74,7 +74,7 @@ typedef struct {
  * root, voiced ~C3 so it sits in an audible register. `chord` is the mode index
  * (0 Ionian/major, 1 Aeolian/minor, 2 Dorian, 3 Lydian, 4 Mixolydian). Dorian and
  * Mixolydian get a characteristic colour tone (nat-6 / b7); the rest are plain tonic
- * triads — each mode's full character lives on the play surface (its scale). */
+ * triads - each mode's full character lives on the play surface (its scale). */
 static const int FC_CHORD_SEMIS[5][4] = {
     {12,16,19,-1},   /* Ionian / major    -> C3 E3  G3 */
     {12,15,19,-1},   /* Aeolian / minor   -> C3 Eb3 G3 */
@@ -95,7 +95,7 @@ static int fc_build_chord(int key, int chord, float* out) {
 static void fc_init(fc_state* st, float mix) { memset(st, 0, sizeof(*st)); st->mixCur = mix; }
 
 /* Push all param-derived coefficients into the modules. Called only when params change
- * (and throttled during ramps — see fc_render_block), since it runs many setters. The
+ * (and throttled during ramps - see fc_render_block), since it runs many setters. The
  * reverb (Dattorro) is configured in the reverb stage itself, not here. */
 static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m,
                            harmony_t* h, bloom_t* b, drift_t* d, const full_params* p, double sr) {
@@ -115,7 +115,7 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m,
     harmony_set_amount(h, p->spectra);
     harmony_set_ring(h, p->ring);
     /* The chord itself (powf per voice) is rebuilt in fc_render_block only on a key/chord
-     * change, not here — this runs on every param move (Flux, a Gravity ramp). */
+     * change, not here - this runs on every param move (Flux, a Gravity ramp). */
     granular_set_mod_rate_hz(g, 0.05f * expf(p->mod_rate * 5.075f));   /* granular pitch-mod LFO rate */
 }
 
@@ -131,13 +131,13 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
                                                          grains blend as an in-key bed */
     const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
     /* Plugin one-pole cutoffs at the host rate: a 5 Hz DC blocker and a 2500 Hz low-pass
-     * on the drift-regen feedback. The regen LP must stay this bright — a sub-bass cutoff
+     * on the drift-regen feedback. The regen LP must stay this bright - a sub-bass cutoff
      * makes the Flux wash spiral DOWN in pitch (feeds back only lows). */
     const float dcIC = 1.0f - expf(-6.2831853f *    5.0f / (float) sr);
     const float fbIC = 1.0f - expf(-6.2831853f * 2500.0f / (float) sr);
 
-    /* Re-push coefficients only when params change, and — because the macro ramps
-     * (Gravity/Flux) change a param every 2 ms block for ~2 s — throttle continuous
+    /* Re-push coefficients only when params change, and - because the macro ramps
+     * (Gravity/Flux) change a param every 2 ms block for ~2 s - throttle continuous
      * changes to every 4th block (~8 ms; inaudible, and each module smooths its own
      * target per-sample). Key/chord changes are discrete, so they push immediately. */
 #ifdef AMB_PROFILE
@@ -167,7 +167,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
 
     /* Event Horizon (horizon 1 = full sustain, lower = drain). The drain is done cheaply
      * by the macro lerp pulling the loop + micro feedback down (so the buffers decay) plus
-     * the wet-tail duck below — not by scanning the whole loop buffer each block, which is
+     * the wet-tail duck below - not by scanning the whole loop buffer each block, which is
      * too expensive on the RP2350. */
     const float horizonClear = p->horizon >= 1.0f ? 0.0f : 1.0f - p->horizon;   /* 0..1 */
 
@@ -236,7 +236,7 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     drift_process(d, st->wbL, st->wbR, st->wbL, st->wbR, n);                /* wet-bus detune */
 
     /* Equal-power dry/wet crossfade (plugin): 50% keeps full loudness vs a linear blend's
-     * -6 dB dip. Gains computed once per block — mix is already smoothed upstream, and
+     * -6 dB dip. Gains computed once per block - mix is already smoothed upstream, and
      * per-sample fast_cosf/sinf here would be over the core1 budget. */
     st->mixCur += 0.10f * (p->mix - st->mixCur);
     const float mmix = st->mixCur;

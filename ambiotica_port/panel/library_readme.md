@@ -1,11 +1,11 @@
 # Ambiotica
 
-A generative-ambient instrument. Play a few notes and let go — a rolling looper, a
+A generative-ambient instrument. Play a few notes and let go - a rolling looper, a
 granular scatter cloud, a freezing micro-loop, a Dattorro plate reverb and a bank of
 tuned resonators bloom them into a slow wash that stays in key.
 
 > **Designed for the Chords faceplate.** Every control sits under the printed word that
-> describes it, so the overlay itself documents the panel. It runs on any Plinky 12 — on a
+> describes it, so the overlay itself documents the panel. It runs on any Plinky 12 - on a
 > different faceplate you just lose that correspondence.
 
 Ambiotica owns the audio output: the built-in FX are silenced and the whole chain runs
@@ -22,7 +22,7 @@ mode, so any cluster is an open in-key chord and sliding up a string walks the s
 |---|---|
 | **Orbit** | the rolling loop bed |
 | **Satellite** | micro-loop; at the top it freezes into a held pad |
-| **Constellate** | granular scatter — density and pitch spread |
+| **Constellate** | granular scatter - density and pitch spread |
 | **Tail** | reverb decay |
 | **Flux** | modulation depth and tank movement |
 | **Spectra** | tuned resonators singing a chord out of the wash |
@@ -31,38 +31,38 @@ mode, so any cluster is an open in-key chord and sliding up a string walks the s
 Orbit and Satellite carry a falling star marking their loop cycle; Constellate pulses
 with grain activity.
 
-## Column 15 — Gravity / Event Horizon
+## Column 15 - Gravity / Event Horizon
 
 One bipolar slider, neutral at centre (white).
 
-- **Up (green): Gravity** — collapse the engine into a slow evolving drone.
-- **Down (red): Event Horizon** — drain everything back to silence for the next phrase.
+- **Up (green): Gravity** - collapse the engine into a slow evolving drone.
+- **Down (red): Event Horizon** - drain everything back to silence for the next phrase.
 
 ## Drums
 
 An 8-track x0x sequencer on its own page (**TRACKS**): the whole pattern at once, 8 tracks
-down and 16 steps across. Kick, snare, closed and open hat, clap, rim and two toms —
+down and 16 steps across. Kick, snare, closed and open hat, clap, rim and two toms -
 synthesised at boot as 8-bit samples, so there are no files to install.
 
 **Drag** across a row to write steps. Hold **×** (the printed shift key) and drag to scrub
 them out again; hold **×** and tap **TRACKS** to clear the whole pattern.
 
-### Generating — the printed GENERATE pads
+### Generating - the printed GENERATE pads
 
 Hold **PATTERN** and press a step to replace that track with a Euclidean rhythm of that
-many pulses — press column 5 for five pulses, spread as evenly as sixteen steps allow.
+many pulses - press column 5 for five pulses, spread as evenly as sixteen steps allow.
 Keep holding and slide along the row to rotate it, so tracks can be phased against each
 other. PATTERN replaces; **FILL** builds up.
 
 Hold **FILL** and tap a track to randomise a quarter of it; tap again to push it
 further. **FILL + SYNTH** rolls a new sound out of the current preset.
 
-### Conditions — the printed CONDITION pads
+### Conditions - the printed CONDITION pads
 
 Both work the same way: the **first tap** on a step shows you what it is set to, in big
 digits below the grid, without changing it. Tap that same step again to advance.
 
-Hold **PROB** and tap a step to cycle how often it fires — 100 / 75 / 50 / 25% — also
+Hold **PROB** and tap a step to cycle how often it fires - 100 / 75 / 50 / 25% - also
 shown as its brightness. Probability is what keeps a long ambient pattern from repeating
 identically.
 
@@ -71,7 +71,7 @@ first time of every two, **2:2** the second, up to **4:4**. Two steps set to 1:2
 trade off with each other. A step waiting its turn is dimmed on the passes it will not
 fire, so you can watch a 1:4 breathe across four bars.
 
-### Length — polyrhythms
+### Length - polyrhythms
 
 Hold **LENGTH** and press a step to set that track's loop length. Steps past the loop point
 go dark, and keep their contents, so shortening and lengthening again loses nothing.
@@ -85,7 +85,7 @@ back. Muted tracks keep showing their pattern, dimmed.
 
 The kit deliberately sits **outside** the wash. Drums are mixed into the output after the
 chain, so the looper, grains and plate never touch them: the pattern stays dry and legible
-underneath whatever the ambience is doing. They also cost no polyphony — they are not synth
+underneath whatever the ambience is doing. They also cost no polyphony - they are not synth
 voices. Transport is on the printed ▷ and ▢ pads, available from every page.
 
 ## Control pads
@@ -96,7 +96,7 @@ voices. Transport is on the printed ▷ and ▢ pads, available from every page.
 | **BANK** ▲▼ | mode: Ionian / Aeolian / Dorian / Lydian / Mixolydian |
 | **SCALE** | back to the play surface |
 | **PRESET** | synth preset browser |
-| **SONG** | save/load a whole scene — every macro, the tuning and the sound |
+| **SONG** | save/load a whole scene - every macro, the tuning and the sound |
 | **SYNTH** | synth editor, laid out to match the printed Chords labels |
 
 On the picker pages, **SAVE** and **LOAD** commit and **SCALE** cancels.
@@ -108,7 +108,7 @@ still cycles pages.
 ## Settings
 
 Right-up from the play surface: **src** (off / line / mic) routes external audio into
-the chain, and **in** sets its level. Default is off — synth only.
+the chain, and **in** sets its level. Default is off - synth only.
 
 ## Credits
 

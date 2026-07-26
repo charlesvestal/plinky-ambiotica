@@ -1,4 +1,4 @@
-/* Ambiotica drums — see drums.h for why these sit outside the wash.
+/* Ambiotica drums - see drums.h for why these sit outside the wash.
  *
  * ORIGINAL code (not vendored from ambiotica-plugin).
  *
@@ -29,11 +29,11 @@ typedef struct {
 
 /* A track either plays its generated 8-bit buffer or a slice of preset-owned sample memory.
  * va_end > va_start selects the latter. Sample memory is 16-bit and paged behind
- * chunk_location_ptrs, so it is read through READ_SAMPLE rather than a raw pointer — the
+ * chunk_location_ptrs, so it is read through READ_SAMPLE rather than a raw pointer - the
  * chunk a slice lives in can move. */
 /* base_va/tape_len/off are what mipmap.h needs to find the same slice in a prefiltered
- * octave. tape_len 0 means "no pyramid known for this track" — the generated kit, and any
- * caller still using the plain drums_set_sample — in which case playback stays on mip 0. */
+ * octave. tape_len 0 means "no pyramid known for this track" - the generated kit, and any
+ * caller still using the plain drums_set_sample - in which case playback stays on mip 0. */
 typedef struct {
     unsigned int va_start, va_end;      /* mip 0, absolute */
     unsigned int base_va, tape_len, off;
@@ -41,15 +41,15 @@ typedef struct {
 
 struct drums_s {
     drum_sample_t s[DRUM_TRACKS];
-    drum_voice_t  v[DRUM_TRACKS];   /* one voice per track — a retrigger cuts its predecessor */
+    drum_voice_t  v[DRUM_TRACKS];   /* one voice per track - a retrigger cuts its predecessor */
     drum_source_t src[DRUM_TRACKS]; /* zeroed = use the generated buffer */
-    int           choke;            /* closed hat cuts open hat — a kit thing, not a break thing */
+    int           choke;            /* closed hat cuts open hat - a kit thing, not a break thing */
     float         rate;             /* read speed; 1 = unity, 2 = an octave up */
 };
 
 /* ---- synthesis helpers (boot-time only, never realtime) ---------------------------- */
 
-/* xorshift32 — the noise source for hats, snare and clap. Seeded per-sample so a given kit
+/* xorshift32 - the noise source for hats, snare and clap. Seeded per-sample so a given kit
    is bit-identical on every boot; a kit that changes each power cycle would be a bug. */
 static unsigned int drum_rng(unsigned int* s) {
     unsigned int x = *s;
@@ -95,7 +95,7 @@ drums_t* drums_create(double sample_rate) {
 
     unsigned int rng = 0x1234567u;
 
-    /* KICK — pitch sweep 120 -> 45 Hz over ~40 ms with a fast body decay, plus a click
+    /* KICK - pitch sweep 120 -> 45 Hz over ~40 ms with a fast body decay, plus a click
        transient so it reads on small speakers where the fundamental does not survive. */
     {
         int n = d->s[DRUM_KICK].len; float ph = 0.f;
@@ -110,7 +110,7 @@ drums_t* drums_create(double sample_rate) {
         drum_store(tmp, n, d->s[DRUM_KICK].data, n);
         d->s[DRUM_KICK].gain = 1.00f; d->s[DRUM_KICK].pan = 0.00f;
     }
-    /* SNARE — 190 Hz body under a noise crack, the noise decaying slower than the tone so
+    /* SNARE - 190 Hz body under a noise crack, the noise decaying slower than the tone so
        the tail is mostly rattle rather than pitch. */
     {
         int n = d->s[DRUM_SNARE].len; float ph = 0.f;
@@ -124,7 +124,7 @@ drums_t* drums_create(double sample_rate) {
         drum_store(tmp, n, d->s[DRUM_SNARE].data, n);
         d->s[DRUM_SNARE].gain = 0.85f; d->s[DRUM_SNARE].pan = -0.08f;
     }
-    /* HATS — noise through a crude one-pole high-pass (sample minus its running average).
+    /* HATS - noise through a crude one-pole high-pass (sample minus its running average).
        Closed and open differ only in decay, as on the machines this imitates. */
     for (int pass = 0; pass < 2; pass++) {
         int trk = pass ? DRUM_OHAT : DRUM_CHAT;
@@ -140,7 +140,7 @@ drums_t* drums_create(double sample_rate) {
         d->s[trk].gain = pass ? 0.42f : 0.38f;
         d->s[trk].pan  = pass ? 0.18f : 0.14f;
     }
-    /* CLAP — four noise bursts ~9 ms apart, then a longer diffuse tail. The bursts are what
+    /* CLAP - four noise bursts ~9 ms apart, then a longer diffuse tail. The bursts are what
        make it read as a clap rather than a short snare. */
     {
         int n = d->s[DRUM_CLAP].len; float lp = 0.f;
@@ -162,7 +162,7 @@ drums_t* drums_create(double sample_rate) {
         drum_store(tmp, n, d->s[DRUM_CLAP].data, n);
         d->s[DRUM_CLAP].gain = 0.62f; d->s[DRUM_CLAP].pan = 0.22f;
     }
-    /* RIM — a very short, very fast-decaying high tone. Almost a click with a pitch. */
+    /* RIM - a very short, very fast-decaying high tone. Almost a click with a pitch. */
     {
         int n = d->s[DRUM_RIM].len; float ph = 0.f;
         for (int i = 0; i < n; i++) {
@@ -173,7 +173,7 @@ drums_t* drums_create(double sample_rate) {
         drum_store(tmp, n, d->s[DRUM_RIM].data, n);
         d->s[DRUM_RIM].gain = 0.50f; d->s[DRUM_RIM].pan = -0.22f;
     }
-    /* TOMS — the kick's shape with a gentler sweep and a slower decay, at two pitches. */
+    /* TOMS - the kick's shape with a gentler sweep and a slower decay, at two pitches. */
     for (int pass = 0; pass < 2; pass++) {
         int trk = pass ? DRUM_TOMHI : DRUM_TOMLO;
         int n = d->s[trk].len; float ph = 0.f;
@@ -199,7 +199,7 @@ void drums_set_choke(drums_t* d, int enabled) { if (d) d->choke = enabled ? 1 : 
 
 void drums_trigger(drums_t* d, int track, int velocity) {
     if (!d || track < 0 || track >= DRUM_TRACKS || velocity <= 0) return;
-    /* A closed hat chokes the open hat — the one piece of cross-track behaviour worth
+    /* A closed hat chokes the open hat - the one piece of cross-track behaviour worth
        having, and the thing that makes a hat pattern sound like a hat pattern. */
     if (d->choke && track == DRUM_CHAT) d->v[DRUM_OHAT].pos = -1.0f;
     d->v[track].pos = 0.0f;
@@ -207,7 +207,7 @@ void drums_trigger(drums_t* d, int track, int velocity) {
     /* Pick the octave ONCE, here, rather than per block: pos is measured in the chosen mip's
        samples, so a mip that changed under a sounding voice would jump the read head. Pitch
        is a between-takes gesture, so a note that outlives a transpose simply finishes in the
-       octave it started in — more or less anti-aliased than ideal, never wrong. */
+       octave it started in - more or less anti-aliased than ideal, never wrong. */
     d->v[track].mip = (unsigned char)(d->src[track].tape_len ? mip_for_rate(d->rate) : 0u);
 }
 
@@ -275,14 +275,14 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
         /* Resampled read head. Linear interpolation between neighbouring samples: without it
            a transposed drum picks up hard quantisation noise on top of the aliasing. The
            SDK does precompute prefiltered mipmaps for exactly this (get_mip_va), which would
-           beat interpolation when pitching well above unity — but how a slice's offsets map
+           beat interpolation when pitching well above unity - but how a slice's offsets map
            into mip space is undocumented, so mip 0 it is until that is worth confirming. */
         /* The mip is already an octave down per level, so the read head walks it that
            much slower to land on the same pitch. */
         const float rate = mip ? d->rate * (1.0f / (float)(1u << mip)) : d->rate;
         float pos = v->pos;
         const float last = (float)(len - 1);
-        /* Unity pitch is the common case — the kit is untransposed unless you ask — and
+        /* Unity pitch is the common case - the kit is untransposed unless you ask - and
            there interpolation is pure waste: the read head lands exactly on samples. That
            matters more than it looks, because the expensive part is not the arithmetic but
            the READ_SAMPLE lookups: each one indexes the chunk table and reaches into paged

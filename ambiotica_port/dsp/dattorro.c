@@ -1,4 +1,4 @@
-/* Dattorro plate reverb — see dattorro.h. */
+/* Dattorro plate reverb - see dattorro.h. */
 #include "dattorro.h"
 #include "fast_math.h"
 #include <stdlib.h>
@@ -103,7 +103,7 @@ dattorro_t* dattorro_create(double sample_rate) {
     for (int i = 0; i < 7; i++) { d->tapL[i] = scl(d, TAP_L[i][1]); d->tapR[i] = scl(d, TAP_R[i][1]); }
     if (!ok) { dattorro_destroy(d); return NULL; }
     d->dd1 = 0.70f; d->bw = 0.9995f; d->mod_depth = 0.5f;
-    d->hp_a = 1.0f - expf(-6.2831853f * 80.0f / internal);   /* 80 Hz sub-bass HP — matches the
+    d->hp_a = 1.0f - expf(-6.2831853f * 80.0f / internal);   /* 80 Hz sub-bass HP - matches the
                                                                 plugin reverb (R_HPF_LP_COEF): stops
                                                                 sub-80 Hz piling up in the tail */
     dattorro_set_decay(d, 0.5f);

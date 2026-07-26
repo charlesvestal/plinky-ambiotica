@@ -22,7 +22,7 @@ static short*         g_amb_ps_base = 0; static size_t g_amb_ps_cap = 0, g_amb_p
 
 /* Bump-allocate `bytes` from `base`, advancing `*used`, with the RETURNED
  * POINTER aligned to 8 bytes. Aligning the pointer (not just the size) is what
- * keeps float/int buffers naturally aligned on Cortex-M33 — sram_pool is a
+ * keeps float/int buffers naturally aligned on Cortex-M33 - sram_pool is a
  * char[] (alignment 1), so an unaligned buffer here faults on the device. */
 static void* amb_bump(unsigned char* base, size_t* used, size_t cap, size_t bytes) {
     size_t addr = (size_t)(base + *used);

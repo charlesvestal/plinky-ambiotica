@@ -13,7 +13,7 @@ static int failures = 0;
 } while (0)
 
 /* A zero length would divide by zero, and a scene saved before per-track length existed has
-   no "dlen" field at all — so anything out of range must read as the full 16. */
+   no "dlen" field at all - so anything out of range must read as the full 16. */
 static void test_length_is_clamped(void) {
     CHECK(track_len(0)  == DRUM_STEPS, "length 0 must default to %d", DRUM_STEPS);
     CHECK(track_len(17) == DRUM_STEPS, "length 17 must clamp to %d", DRUM_STEPS);
@@ -32,7 +32,7 @@ static void test_step_cycles_within_length(void) {
         }
 }
 
-/* A track's pass is a loop of ITS OWN length — that is what makes modulo mean "every N times
+/* A track's pass is a loop of ITS OWN length - that is what makes modulo mean "every N times
    round this track" rather than "every N times round a bar it may not share". */
 static void test_pass_counts_the_tracks_own_loop(void) {
     for (unsigned tick = 0; tick < 7; tick++)
@@ -45,7 +45,7 @@ static void test_pass_counts_the_tracks_own_loop(void) {
 }
 
 /* The whole point of the feature: unequal lengths drift apart and only realign at their
-   least common multiple. 16 against 7 is 112 ticks — seven bars. */
+   least common multiple. 16 against 7 is 112 ticks - seven bars. */
 static void test_polyrhythm_realigns_at_lcm(void) {
     unsigned realign = 0;
     for (unsigned tick = 1; tick < 1000; tick++)
@@ -59,7 +59,7 @@ static void test_polyrhythm_realigns_at_lcm(void) {
 }
 
 /* Length and modulo compose: a 1:2 condition on a 7-step track fires through its first seven
-   ticks, stays silent through the next seven, and so on — following the track, not the bar. */
+   ticks, stays silent through the next seven, and so on - following the track, not the bar. */
 static void test_modulo_follows_the_tracks_own_pass(void) {
     for (unsigned tick = 0; tick < 28; tick++) {
         unsigned pass = pass_of(tick, 7);

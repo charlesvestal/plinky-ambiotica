@@ -2,8 +2,8 @@
 
 A generative-ambient instrument for the [Plinky](https://plinkysynth.com) (Plinky 12 /
 RP2350). It takes Plinky's own voices and runs them through the **Ambiotica** ambient
-engine — a rolling looper, a granular scatter cloud, a freezing micro-loop, a lush plate
-reverb, and a bank of tuned-chord resonators — all as a single custom panel.
+engine - a rolling looper, a granular scatter cloud, a freezing micro-loop, a lush plate
+reverb, and a bank of tuned-chord resonators - all as a single custom panel.
 
 Play a few notes and let go; the sound blooms into a slow, in-key wash you can collapse
 into a drone or drain back to silence with a single gesture.
@@ -27,8 +27,8 @@ Plinky poly synth
 
 Two macro gestures ride on top and lerp many stages at once:
 
-- **Gravity** — collapse the whole engine into a slow, evolving drone.
-- **Event Horizon** — "let go": drain everything back to silence for the next phrase.
+- **Gravity** - collapse the whole engine into a slow, evolving drone.
+- **Event Horizon** - "let go": drain everything back to silence for the next phrase.
 
 ## Controls
 
@@ -39,9 +39,9 @@ labels. No physical side button is claimed.
 - **Left half (8 strings):** the play surface, tuned in **diatonic fourths** within the
   selected key and mode, so every cluster is an open in-key chord and sliding up a string
   walks the scale.
-- **Columns 8–14:** seven macro sliders — Orbit, Satellite, Constellate, Tail, Flux,
+- **Columns 8–14:** seven macro sliders - Orbit, Satellite, Constellate, Tail, Flux,
   Spectra, Mix.
-- **Column 15:** a bipolar slider — **up = Gravity**, **down = Event Horizon**.
+- **Column 15:** a bipolar slider - **up = Gravity**, **down = Event Horizon**.
 - **KEY ▲▼ / BANK ▲▼:** key around the circle of fifths, and mode
   (Ionian / Aeolian / Dorian / Lydian / Mixolydian). Both retune the surface and the
   Spectra wash.
@@ -51,7 +51,7 @@ labels. No physical side button is claimed.
 ### Drums
 
 An 8-track x0x sequencer on the TRACKS page, rendered **after** the chain so the pattern
-stays dry and legible under the wash — and costs no polyphony. Kick, snare, closed/open
+stays dry and legible under the wash - and costs no polyphony. Kick, snare, closed/open
 hat, clap, rim and two toms, synthesised at boot, with the shipped sampled kits and 16
 sliced breaks on **BANK**. Sampled hits play from the SDK's prefiltered mipmaps, so
 transposing a break up stays clean instead of aliasing.
@@ -63,14 +63,14 @@ the word that names it:
 |---|---|
 | **PATTERN** | press a step for a Euclidean rhythm of that many pulses; slide to rotate |
 | **FILL** | randomise a quarter of a track; tap again to build it up |
-| **PROB** | a step's chance of firing — 100 / 75 / 50 / 25% |
-| **MODULO** | play a step only every Nth time round — 1:2, 2:2 … 4:4 |
+| **PROB** | a step's chance of firing - 100 / 75 / 50 / 25% |
+| **MODULO** | play a step only every Nth time round - 1:2, 2:2 … 4:4 |
 | **LENGTH** | per-track loop length, for polyrhythms |
 | **MUTE** / **KEY** | mute a track / transpose the kit |
 
 PROB and MODULO share one gesture: the first tap on a step shows its value below the grid
 without changing it, and tapping again advances. Give tracks unequal lengths and they drift
-— 16 against 7 realigns only every 112 steps — with modulo counting each track's own loop.
+- 16 against 7 realigns only every 112 steps - with modulo counting each track's own loop.
 
 See [`ambiotica_port/panel/library_readme.md`](ambiotica_port/panel/library_readme.md) for
 the full panel manual.
@@ -95,7 +95,7 @@ sh amalgamate.sh          # -> plinky_ambiotica.cpp (gitignored; paste into the 
 ```
 
 A desktop harness compiles the same DSP natively for fast iteration and measurement
-(note: desktop RAM hides the RP2350's PSRAM cache latency — profile CPU on-device):
+(note: desktop RAM hides the RP2350's PSRAM cache latency - profile CPU on-device):
 
 ```sh
 cd ambiotica_port

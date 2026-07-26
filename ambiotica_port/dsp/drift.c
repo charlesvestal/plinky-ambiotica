@@ -1,4 +1,4 @@
-/* Ambiotica drift — see drift.h. */
+/* Ambiotica drift - see drift.h. */
 #include "drift.h"
 #include "fast_math.h"
 #include <stdlib.h>
@@ -118,7 +118,7 @@ void drift_process(drift_t *d,
         a += aa * (at - a);                 /* smooth knob changes (no zipper) */
 
         /* Nominal delay and modulation depth both scale with the smoothed
-         * amount, so the read head grows out from 0 as Drift comes up — no
+         * amount, so the read head grows out from 0 as Drift comes up - no
          * bypass click and no comb at low settings. */
         float ml = fast_sinf(DRIFT_TWO_PI * pl);
         float mr = fast_sinf(DRIFT_TWO_PI * pr);

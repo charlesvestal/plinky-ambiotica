@@ -1,8 +1,8 @@
-# Plinky 12 — System Notes for Panel Development
+# Plinky 12 - System Notes for Panel Development
 
 Working reference for building **panels** on the Plinky 12. Compiled from the
 public panel API dump (`llm.txt`) and direct answers from the Plinky devs
-(**mmalex**, **makingsoundmachines**) on Discord, 2026-07-22 — several of which
+(**mmalex**, **makingsoundmachines**) on Discord, 2026-07-22 - several of which
 are **undocumented** and marked ⭐.
 
 ---
@@ -13,7 +13,7 @@ are **undocumented** and marked ⭐.
 |---|---|
 | MCU | **RP2350** (dual ARM Cortex-M33), the Raspberry Pi Pico 2 chip |
 | PSRAM | **8 MB** external QSPI (shared scratch for panels) |
-| Display | **16×16 RGB LED grid** — this is the *entire* screen |
+| Display | **16×16 RGB LED grid** - this is the *entire* screen |
 | Input | Every pad is **pressure-sensitive** (full multitouch) + 4 side buttons + **accelerometer** |
 | Audio | Stereo in/out, 32 kHz, 64-sample DSP blocks |
 | I/O | TRS MIDI in + 2 TRS MIDI out, USB MIDI, CV/clock/reset, **SD card** |
@@ -36,7 +36,7 @@ A panel is a C++ class derived from `panel_t`. Override only the hooks you need.
 | `setup_default_panel_state()` | core0 | once | build default song/panel state after settings load |
 | `on_serialise / on_serialise_settings` | core0 | save/load | durable state / durable prefs (JSON) |
 
-⭐ **Compute budget (mmalex):** *"go for your life on core0 — it only blocks UI."*
+⭐ **Compute budget (mmalex):** *"go for your life on core0 - it only blocks UI."*
 Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio**
 (audio is core1). `on_sequence` is core0 but IRQ context.
 ⭐ **core1 is DSP only.** You cannot run game/render logic there.
@@ -48,7 +48,7 @@ Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio*
 | Region | Size | Notes |
 |---|---|---|
 | Panel object arena | **128 KB** | your whole `panel_t` subclass instance + members (mutable state) live here. Always yours. |
-| Second 128 KB (shadow) | 128 KB | ⭐ borrowable on request — mmalex: *"panels get 256k, but the second 128k is … used-by-system-during-loads … hidden behind a 'get me the other 128k plz'"* (`get_panel_shadow_state`). Check the generation number; system may reclaim it during loads. |
+| Second 128 KB (shadow) | 128 KB | ⭐ borrowable on request - mmalex: *"panels get 256k, but the second 128k is … used-by-system-during-loads … hidden behind a 'get me the other 128k plz'"* (`get_panel_shadow_state`). Check the generation number; system may reclaim it during loads. |
 | core0 temp scratch | 4 KB | `temp_alloc` / `make_temp_object<T>` (strict LIFO, brief) |
 | PSRAM scratch | **~8 MB** | `get_psram_ptr()` / `get_psram_size()` |
 
@@ -62,10 +62,10 @@ Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio*
 
 **PSRAM specifics** (⭐ mmalex):
 - Use it however you like; `get_psram_ptr()` = start, `get_psram_size()` = usable bytes.
-- **It is slow.** It *loves sequential reads* and *hates scattered reads/writes* — read/write **linearly, in order**, wherever possible.
+- **It is slow.** It *loves sequential reads* and *hates scattered reads/writes* - read/write **linearly, in order**, wherever possible.
 - The **last 128 KB** is the system FX delay buffer. `get_psram_size()` already subtracts it.
 - You can use the **whole 8 MB** *if you don't use the system's `do_fx` in your DSP*. Otherwise everything except that last 128 KB is yours; the system touches nothing else.
-- ⭐ **Reliability (mmalex):** RP2350+PSRAM has known glitch-under-heavy-load reports in the wild (the SparkFun-popularised init runs it *out of datasheet spec*; mmalex filed a bug). Plinky runs it **in-spec** and every unit gets a PSRAM RAM-check, "but… idk why, I don't treat it as trustworthy as normal RAM lol. it's certainly an order of magnitude slower." **Treat PSRAM as slow, sequential-friendly, belt-and-suspenders storage — not a drop-in for SRAM.**
+- ⭐ **Reliability (mmalex):** RP2350+PSRAM has known glitch-under-heavy-load reports in the wild (the SparkFun-popularised init runs it *out of datasheet spec*; mmalex filed a bug). Plinky runs it **in-spec** and every unit gets a PSRAM RAM-check, "but… idk why, I don't treat it as trustworthy as normal RAM lol. it's certainly an order of magnitude slower." **Treat PSRAM as slow, sequential-friendly, belt-and-suspenders storage - not a drop-in for SRAM.**
 
 ---
 
@@ -85,9 +85,9 @@ Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio*
 ## 5. Storage & file I/O
 
 - ⭐ **ELM-Chan FatFs is available** (mmalex: *"there's not a general fatfs api but there is! elmchan fatfs is almost certainly included before your code and you can just use it. i forgot to document this."*). So `f_open` / `f_read` / `f_lseek` / `FIL` work from panel code → you can read arbitrary files (e.g. large binary assets) from the SD card.
-- `read_rgb_ppm(filename, w, h, dest)` — loads an 8-bit binary RGB PPM (`P6`) from SD.
+- `read_rgb_ppm(filename, w, h, dest)` - loads an 8-bit binary RGB PPM (`P6`) from SD.
 - Durable state: `on_serialise(...)` (song-like state) and `on_serialise_settings(...)` (prefs) via the JSON serialiser in `save_and_load.h`; loaded/saved through the panel loader. `serialise_psram_binary_footer(...)` appends large PSRAM ranges to the save file without base64 overhead.
-- ⭐ mmalex recommends leaning on the system's `on_serialise` + built-in **song-slot save/load UI** — if only because it "presents as familiar to other Plinky users." The save system recently grew a **fast lossy codec** (`PSRAM_BINARY_FOOTER_CODEC_LOSSY_STEREO_8BIT`) that dumps PSRAM to SD alongside a save in ~1s; `worm` demonstrates it. Note it "abuses things slightly": `on_serialise` fields are JSON, but the PSRAM dumper appends a **raw binary tail after the JSON** (deliberately — base64 would be a 5:4 size increase).
+- ⭐ mmalex recommends leaning on the system's `on_serialise` + built-in **song-slot save/load UI** - if only because it "presents as familiar to other Plinky users." The save system recently grew a **fast lossy codec** (`PSRAM_BINARY_FOOTER_CODEC_LOSSY_STEREO_8BIT`) that dumps PSRAM to SD alongside a save in ~1s; `worm` demonstrates it. Note it "abuses things slightly": `on_serialise` fields are JSON, but the PSRAM dumper appends a **raw binary tail after the JSON** (deliberately - base64 would be a 5:4 size increase).
 - Getting files onto the device: eject the physical SD, copy, reinsert (trivial).
 
 ---
@@ -102,7 +102,7 @@ Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio*
 ## 7. Emulator / dev workflow
 
 - There are **web and emulator builds** (guarded by `WASM` / `EMU`), with an **emulated 8 MiB PSRAM**.
-- ⭐ **The emulator simulates an SD card** — it even ships an image of some smaller real-SD presets. **Reads work; writes may currently fail** (a read-only issue mmalex is fixing). Fine for read-only assets; savegame-style writes are not reliable yet.
+- ⭐ **The emulator simulates an SD card** - it even ships an image of some smaller real-SD presets. **Reads work; writes may currently fail** (a read-only issue mmalex is fixing). Fine for read-only assets; savegame-style writes are not reliable yet.
 - Practical loop: prototype heavy/algorithmic work as a **native desktop program** first (full speed, real files, no hardware), then port the thin Plinky glue into a panel and validate in the emulator, then on hardware.
 
 ---
@@ -122,7 +122,7 @@ Learned building the Ambiotica ambient engine (a full effects chain in the ~2 ms
 core1 block). Reusable for any DSP-heavy panel:
 
 - **PSRAM is reached through a tiny (~8 KB) XIP cache.** Section 3 already notes PSRAM
-  loves sequential and hates scattered access — the sharper truth is that even a *few
+  loves sequential and hates scattered access - the sharper truth is that even a *few
   concurrent scattered read streams* (e.g. several granular grains each reading a random
   spot in a big buffer, plus a write head) evict each other, so *every* access re-misses.
   A stage can be arithmetically trivial and still cost 100+ µs purely in miss latency.
@@ -132,12 +132,12 @@ core1 block). Reusable for any DSP-heavy panel:
   watch `dsp MAX` and dropped blocks).
 - **Levers that worked, all measured on-device:** store big audio buffers as **interleaved
   int16** (halves bytes and puts L+R in one cache line); minimize **concurrent scattered
-  read streams** (fewer overlapping grains — 50 % Hann overlap is constant-amplitude, so it
+  read streams** (fewer overlapping grains - 50 % Hann overlap is constant-amplitude, so it
   drops a stream for free); **half-rate** slow textures (reverbs, wash clouds); use a
   **window LUT** instead of per-sample trig; and **throttle coefficient re-pushes** during
   slow macro ramps (recomputing ~18 setters every 2 ms block is invisible to per-stage
   timers but spikes the total).
-- Reliability: a smeared wash hides a lot — if a scattered-read stage is inaudible under
+- Reliability: a smeared wash hides a lot - if a scattered-read stage is inaudible under
   the reverb, cutting it is free CPU.
 
 ---
@@ -146,4 +146,4 @@ core1 block). Reusable for any DSP-heavy panel:
 
 - Exact server-side source-size limit (and whether/how it's raised on request).
 - Emulator SD **write** support timeline (mmalex "will fix").
-- Whether the panel toolchain can link more than one translation unit (assume **no** — single `.cpp`).
+- Whether the panel toolchain can link more than one translation unit (assume **no** - single `.cpp`).

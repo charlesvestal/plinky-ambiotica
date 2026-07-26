@@ -1,4 +1,4 @@
-/* Dattorro plate reverb (JAES 1997, "Effect Design Part 1" — Griesinger figure-8
+/* Dattorro plate reverb (JAES 1997, "Effect Design Part 1" - Griesinger figure-8
  * tank). Chosen over parallel combs for lushness-per-byte: each in-loop allpass
  * multiplies echo density for only its own delay line, so density grows far faster
  * per allocated sample than in a comb bank, and there is no comb periodicity to
@@ -10,14 +10,14 @@
  * upsamples 16->32k out.
  *
  * The two decay-diffusion-1 allpasses are modulated by slow ~1 Hz LFOs (interpolated
- * reads) to break the tank's metallic ringing — cheap in CPU, free in memory. */
+ * reads) to break the tank's metallic ringing - cheap in CPU, free in memory. */
 #ifndef AMB_DATTORRO_H
 #define AMB_DATTORRO_H
 
 /* dattorro_process is one of the heaviest core1 stages (~215us/block, measured). PLINKY_DSP_RAM_FUNC un-inlines it and
  * places its code in SRAM, exempting it from the shared XIP cache. Fallback so the desktop
  * harness and older firmware still build. NOTE: the SRAM code region is small and
- * granular/looper already live there — if this stops LINKING, drop the wrapper. */
+ * granular/looper already live there - if this stops LINKING, drop the wrapper. */
 #ifndef PLINKY_DSP_RAM_FUNC
 #define PLINKY_DSP_RAM_FUNC(f) f
 #endif

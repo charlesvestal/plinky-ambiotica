@@ -32,10 +32,10 @@ static inline lsamp_t st(float v) { return v; }
 struct looper_s {
     lsamp_t *buf_L;
     lsamp_t *buf_R;
-    int    buf_capacity;   /* allocated size — sets the max loop length */
+    int    buf_capacity;   /* allocated size - sets the max loop length */
     int    loop_len;       /* active read offset; <= buf_capacity */
     int    write_pos;
-    /* Smoothed feedback — abrupt knob changes would otherwise inject a
+    /* Smoothed feedback - abrupt knob changes would otherwise inject a
      * step into the buffer and echo forever. */
     float  fb_target;
     float  fb_current;
@@ -65,7 +65,7 @@ struct looper_s {
 #define LOOPER_SMOOTH_COEF   0.9989f  /* ~20 ms time constant @ 44.1 kHz */
 #define LOOPER_CROSSFADE_LEN 512      /* ~11.6 ms linear crossfade */
 
-/* Padé-3 tanh approximation — smooth soft-saturation for the feedback path.
+/* Padé-3 tanh approximation - smooth soft-saturation for the feedback path.
  * Cheap (5 muls + 2 adds inside range) and bounded to ±1.0. Replaces hard
  * clip which produced clicky edges when sustained input + fb=1 saturated
  * the buffer. */
@@ -96,7 +96,7 @@ void looper_set_loop_len(looper_t *l, int loop_len_samples) {
     if (loop_len_samples < 1) loop_len_samples = 1;
     if (loop_len_samples > l->buf_capacity) loop_len_samples = l->buf_capacity;
 
-    /* If a crossfade is already running, queue the new value — don't
+    /* If a crossfade is already running, queue the new value - don't
      * disrupt the in-flight transition. */
     if (l->crossfade_remaining > 0) {
         if (loop_len_samples != l->loop_len_pending) {
@@ -142,7 +142,7 @@ void looper_set_reverse(looper_t *l, float amount_0_1) {
 }
 
 /* Event Horizon: scale the active loop window (the last loop_len samples ending
- * at write_pos) by `factor` once per block — actively decays the captured loop so
+ * at write_pos) by `factor` once per block - actively decays the captured loop so
  * lowering Horizon empties the buffer over time (a global "let-go"/feedback pull),
  * not just ducks the output. factor >= 1 is a no-op. RT-safe (no alloc). */
 void looper_leak(looper_t *l, float factor) {
@@ -162,7 +162,7 @@ void looper_set_layer(looper_t *l, float layer_0_1) {
     if (!l) return;
     if (layer_0_1 < 0.0f) layer_0_1 = 0.0f;
     if (layer_0_1 > 1.0f) layer_0_1 = 1.0f;
-    /* knob^2 curve for perceptual feel — soft start, lush mid, very long top.
+    /* knob^2 curve for perceptual feel - soft start, lush mid, very long top.
      * Capped below unity so the looper never fully freezes (fb=1 -> (1-fb)=0
      * stops capturing input): at 100% it's a long-sustain loop that still
      * takes new input. Soft-clip in process() guards against runaway. */
@@ -200,7 +200,7 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         float loopR = ld(l->buf_R[read_pos_a]);
 
         /* During crossfade, blend with read at the pending loop_len.
-         * Linear (gain-equal) crossfade — the two read positions are highly
+         * Linear (gain-equal) crossfade - the two read positions are highly
          * correlated (same buffer, shifted by a few samples) so equal-power
          * cosine/sine causes a 3 dB hump mid-fade. Linear stays flat. */
         if (l->crossfade_remaining > 0) {
@@ -228,7 +228,7 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
 
         /* Write input + feedback back into the buffer at write_pos.
          * Normalized feedback formula: buf = (1-fb)*in + fb*old. At steady
-         * state buffer content converges to input level — no buildup, no
+         * state buffer content converges to input level - no buildup, no
          * runaway. At fb=1.0 the input term goes to zero, naturally freezing
          * the buffer (true looper). soft_sat kept as safety against
          * transient peaks. */
@@ -250,7 +250,7 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         const int rev_active = l->reverse_current > 0.0005f;
         /* On reverse ONSET, re-anchor the backward read window to "now". rev_counter
          * free-runs even while reverse is off, so without this the heads would read
-         * from a stale anchor at non-zero Hann gain for up to one loop — the seam
+         * from a stale anchor at non-zero Hann gain for up to one loop - the seam
          * masking that keeps steady-state reverse clickless doesn't cover turn-on
          * (an audible click when Dilate engages over a loud loop). Start head 0 at
          * phase 0 (gain 0) and both anchors at the write head so the first reads are

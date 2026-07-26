@@ -1,4 +1,4 @@
-/* Ambiotica looper — Stage 1 of the chain.
+/* Ambiotica looper - Stage 1 of the chain.
  *
  * 30-second stereo ring buffer with always-on rolling capture. Loop Layer
  * knob maps to feedback gain (0..0.95), which controls both (a) how much
@@ -14,7 +14,7 @@
 /* looper_process is the biggest remaining core1 stage (~245us/block, measured). The SDK's
  * PLINKY_DSP_RAM_FUNC un-inlines it and places its code in SRAM, exempting it from the
  * shared XIP cache. Fallback so the desktop harness and older firmware still build.
- * NOTE: the SRAM code region is small — if this stops LINKING, drop the wrapper. */
+ * NOTE: the SRAM code region is small - if this stops LINKING, drop the wrapper. */
 #ifndef PLINKY_DSP_RAM_FUNC
 #define PLINKY_DSP_RAM_FUNC(f) f
 #endif
@@ -45,7 +45,7 @@ void      looper_clear(looper_t *l);
 
 /* Process stereo block. Reads from in_l/in_r and writes them into the
  * capture ring (with feedback). out_l/out_r receive ONLY the loop signal
- * (fb × delayed_read) — no dry. The caller is responsible for mixing dry
+ * (fb × delayed_read) - no dry. The caller is responsible for mixing dry
  * back in. in and out may NOT alias. */
 void      PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                          const float *in_l, const float *in_r,

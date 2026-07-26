@@ -1,15 +1,15 @@
-/* Ambiotica-on-Plinky — panel.
+/* Ambiotica-on-Plinky - panel.
  *
  * Play surface (left half) drives the built-in synth; its dry bus feeds the Ambiotica
  * chain (full_chain.h), which runs on core1 in on_dsp() and owns the output (the
- * built-in FX are silenced — Ambiotica IS the FX). See PORT_NOTES.md for the
+ * built-in FX are silenced - Ambiotica IS the FX). See PORT_NOTES.md for the
  * core1-budget story. Build config: amb_config.h (LOOPER_I16) concatenated by
  * amalgamate.sh; per-module flags live in their own files (shimmer/cloud off in
  * microloop.c). Reverb is always the Dattorro plate.
  *
  * Laid out for the CHORDS overlay: the play UI occupies rows UI_Y..UI_Y1 (the middle 12,
  * the only rows the overlay draws pads for) and the reserved rows carry control pads under
- * their printed labels — KEY / BANK set key and mode, SYNTH and PRESET jump to the stock
+ * their printed labels - KEY / BANK set key and mode, SYNTH and PRESET jump to the stock
  * editor pages, SCALE comes back. No physical side button is claimed. See the two layout
  * enums below.
  */
@@ -23,60 +23,60 @@
 #define AMB_IN_GAIN 0.12f
 
 /* Slider column order (col 8..14). The two loopers sit together (Orbit = main loop,
-   Satellite = micro-loop) with the granular scatter after them — grouped for legibility
+   Satellite = micro-loop) with the granular scatter after them - grouped for legibility
    rather than strict signal-chain order (looper -> granular -> microloop). */
 enum { FX_ORBIT, FX_SATELLITE, FX_CONSTELLATE, FX_TAIL, FX_FLUX, FX_SPECTRA, FX_MIX, FX_N };
 
 /* Vertical layout. The panel is designed for the CHORDS grid, which claims the top two
    and bottom two rows for its own control rows, so ALL of our UI lives in the middle 12
    (rows 2..13) and the four reserved rows are left dark by leds_clear().
-   Sliders simply shrink to UI_H. The play surface is NOT compressed — do_play_surface
+   Sliders simply shrink to UI_H. The play surface is NOT compressed - do_play_surface
    keeps one scale step per pad (string_pos = h-1-rely), so a shorter h just lifts each
    string's bottom (lowest) note up two rows and drops the top two notes. */
 enum {
     UI_Y      = 2,                      /* first usable row */
     UI_H      = 12,                     /* usable height */
     UI_Y1     = UI_Y + UI_H - 1,        /* last usable row (13) */
-    UI_MID_UP = UI_Y + UI_H / 2 - 1,    /* upper centre row (7)  — bipolar zero, upper half */
-    UI_MID_DN = UI_Y + UI_H / 2,        /* lower centre row (8)  — bipolar zero, lower half */
+    UI_MID_UP = UI_Y + UI_H / 2 - 1,    /* upper centre row (7)  - bipolar zero, upper half */
+    UI_MID_DN = UI_Y + UI_H / 2,        /* lower centre row (8)  - bipolar zero, lower half */
     UI_HALF   = UI_H / 2 - 1,           /* rows of travel from centre to either end (5) */
 };
 
 /* Control pads. The Chords overlay is PRINTED on the hardware, so a pad keeps its label
-   whatever page is showing — which is why the back button can sit at the same physical
+   whatever page is showing - which is why the back button can sit at the same physical
    spot (SCALE) on all three pages. We light only the pads whose printed label matches
    what we actually do; every other reserved pad stays dark, including the row-15
-   transport corner (we have no sequencer). No physical side button is claimed — they
+   transport corner (we have no sequencer). No physical side button is claimed - they
    keep their stock BPM / page-cycle behaviour. */
 enum {
-    CTL_TOP    = 0,     /* top control row — the stock page strip (AUDIO IN..MIDI) */
-    CTL_TOP2   = 1,     /* second control row — SEQUENCE / CONDITION / GENERATE labels */
+    CTL_TOP    = 0,     /* top control row - the stock page strip (AUDIO IN..MIDI) */
+    CTL_TOP2   = 1,     /* second control row - SEQUENCE / CONDITION / GENERATE labels */
     /* Row 1 carries the stock CONDITION and GENERATE groups, and both mean here what they
-       mean on Chords. PROB is a condition — "a step is triggered or not, depending on a
-       percentage chance". FILL is generate — "styles on how to fill the sequence" — which
+       mean on Chords. PROB is a condition - "a step is triggered or not, depending on a
+       percentage chance". FILL is generate - "styles on how to fill the sequence" - which
        is exactly what a reroll does, so that is where randomise lives.
        NB Chords has no reroll pad; the (12,15) circle is RECORD, not a reroll. Blocks and
        Toadstep both have a dedicated reroll key, but their silkscreens are not ours. */
-    /* "MODULO" (row 1, col 11) — the other half of CONDITION, and the reason the ratios are
+    /* "MODULO" (row 1, col 11) - the other half of CONDITION, and the reason the ratios are
        NOT crammed into PROB's ring: the manual gives each pad its own meaning, so putting
        "play the 2nd of every 4" anywhere but here would light one pad with another's job
        while leaving this one dark. */
-    /* "LENGTH" (row 1, col 1) — printed in the sequencer row and naming a value the machine
+    /* "LENGTH" (row 1, col 1) - printed in the sequencer row and naming a value the machine
        used to hardcode. Hold it and press a step to set that track's loop length to that
        column, exactly the press-a-column gesture PATTERN uses. */
     COL_LENGTH = 1,
     COL_MODULO = 11,
-    COL_PROB   = 12,    /* "PROB" (row 1) — hold to see and edit per-step probability */
-    COL_REROLL = 14,    /* "FILL" (row 1) — hold + tap a target to randomise it */
-    /* "PATTERN" (row 1, col 13) — the other half of GENERATE, and FILL's opposite number:
+    COL_PROB   = 12,    /* "PROB" (row 1) - hold to see and edit per-step probability */
+    COL_REROLL = 14,    /* "FILL" (row 1) - hold + tap a target to randomise it */
+    /* "PATTERN" (row 1, col 13) - the other half of GENERATE, and FILL's opposite number:
        press a step to replace a track with a Euclidean rhythm of that many pulses, then
        slide to rotate it. FILL is random and builds up, PATTERN is ordered and replaces.
-       Position verified against the physical faceplate — NOT against panel_art/chords.png,
+       Position verified against the physical faceplate - NOT against panel_art/chords.png,
        which is a stale revision (it prints SHUFFLE at row 1 col 9 where hardware prints
        MELODY, and 6/7/8/9 at row 0 cols 8-11 where hardware prints FWD/REV/RND/PING).
        Cols 11-15 are identical in both, so this run of pads is safe. */
     COL_PATTERN = 13,
-    /* Column 15 rows 10-12 are printed MUTE / EDIT / ROOT — the side controls of the stock
+    /* Column 15 rows 10-12 are printed MUTE / EDIT / ROOT - the side controls of the stock
        45-chord palette. On the PLAY page that column is our Gravity/Event Horizon slider,
        so they are only claimed on the drums page, where the column is genuinely free.
        Only MUTE is lit: EDIT would want per-track level/pan (we bake those per voice) and
@@ -84,20 +84,20 @@ enum {
        it has a function that matches its label. */
     COL_MUTE   = 15,
     ROW_MUTE   = UI_Y + DRUM_TRACKS,   /* row 10, beside where the chord palette starts */
-    CTL_UP     = 14,    /* bottom row A — the printed ▲ / upper-label row */
-    CTL_DN     = 15,    /* bottom row B — the printed ▼ / lower-label row */
-    COL_KEY    = 0,     /* "KEY"    ▲/▼ — key, around the circle of fifths */
-    COL_BANK   = 6,     /* "BANK"   ▲/▼ — mode (Ionian/Aeolian/Dorian/Lydian/Mixolydian) */
-    COL_SCALE  = 8,     /* "SCALE"  (row 14) — back to the play surface */
-    COL_PRESET = 9,     /* "PRESET" (row 0)  — synth preset browser page */
-    COL_SONG   = 10,    /* "SONG"   (row 15) — whole-scene (panel) save/load page */
-    COL_SYNTH  = 11,    /* "SYNTH"  (row 15) — synth editor page */
-    COL_TRACKS = 9,     /* "TRACKS" (row 14) — drum sequencer page */
-    COL_SAVE   = 12,    /* "SAVE"   (row 14) — commit, on the picker pages only */
-    COL_LOAD   = 13,    /* "LOAD"   (row 14) — commit, on the picker pages only */
-    COL_X      = 13,    /* printed × (row 15) — the stock SHIFT key. The Chords manual:
+    CTL_UP     = 14,    /* bottom row A - the printed ▲ / upper-label row */
+    CTL_DN     = 15,    /* bottom row B - the printed ▼ / lower-label row */
+    COL_KEY    = 0,     /* "KEY"    ▲/▼ - key, around the circle of fifths */
+    COL_BANK   = 6,     /* "BANK"   ▲/▼ - mode (Ionian/Aeolian/Dorian/Lydian/Mixolydian) */
+    COL_SCALE  = 8,     /* "SCALE"  (row 14) - back to the play surface */
+    COL_PRESET = 9,     /* "PRESET" (row 0)  - synth preset browser page */
+    COL_SONG   = 10,    /* "SONG"   (row 15) - whole-scene (panel) save/load page */
+    COL_SYNTH  = 11,    /* "SYNTH"  (row 15) - synth editor page */
+    COL_TRACKS = 9,     /* "TRACKS" (row 14) - drum sequencer page */
+    COL_SAVE   = 12,    /* "SAVE"   (row 14) - commit, on the picker pages only */
+    COL_LOAD   = 13,    /* "LOAD"   (row 14) - commit, on the picker pages only */
+    COL_X      = 13,    /* printed × (row 15) - the stock SHIFT key. The Chords manual:
                            "hold it and tap one of the other pads" to reset or delete. */
-    COL_STOP   = 14,    /* printed ▢ (row 15) — the stock transport corner */
+    COL_STOP   = 14,    /* printed ▢ (row 15) - the stock transport corner */
     COL_PLAY   = 15,    /* printed ▷ (row 15) */
 };
 
@@ -119,7 +119,7 @@ enum { SET_SOURCE = -1, SET_IN_LEVEL = -2, SET_N = 2 };
 
 /* NOTE: keep this name SHORT. The class name becomes the panel name (when no @Name is
  * set), the runtime prefixes it with "u_", and the file picker stores folder names in
- * char[17] — 16 chars plus NUL. "ambiotica_panel" made "u_ambiotica_panel", 17 chars,
+ * char[17] - 16 chars plus NUL. "ambiotica_panel" made "u_ambiotica_panel", 17 chars,
  * one over: the folder scan truncated and failed forever, so no slot was ever
  * selectable, so the save that would have created /PLINKY/u_<panel>/ could never fire.
  * "u_ambiotica" is 11. It also matches the community-panels key. Diagnosed by mmalex. */
@@ -130,11 +130,11 @@ struct ambiotica : panel_t {
     bool dsp_ok = false;
 
     /* x0x sequencer. The PATTERN lives here rather than in drums_t so it serialises with the
-       scene — drums_t is in PSRAM, which on_serialise never sees. Flat rather than [t][s] so
+       scene - drums_t is in PSRAM, which on_serialise never sees. Flat rather than [t][s] so
        it round-trips through one FIELD_BASE64. A byte per step is velocity, 0 = off. */
     unsigned char   pattern[DRUM_TRACKS * DRUM_STEPS] = {0};
     clock_divider_t drum_clock;
-    /* MODULO is a SECOND condition per step, independent of probability — Chords prints both
+    /* MODULO is a SECOND condition per step, independent of probability - Chords prints both
        under CONDITION and its manual keeps them apart ("Modulo to have individual steps only
        play once out of N times, Probability to set a chance percentage"). So it gets its own
        byte per step rather than stealing range from the probability byte: 0 = none, else
@@ -143,7 +143,7 @@ struct ambiotica : panel_t {
     unsigned char   pattern_mod[DRUM_TRACKS * DRUM_STEPS] = {0};
     /* Per-track loop length, 1..16. Tracks share one monotonic tick and derive their own
        position from it (see step_of/pass_of), so unequal lengths drift against each other and
-       only realign at their least common multiple — 16 against 7 is 112 ticks. Defaults to a
+       only realign at their least common multiple - 16 against 7 is 112 ticks. Defaults to a
        full bar, which is exactly how the machine behaved before this existed. */
     unsigned char   drum_len[DRUM_TRACKS] = {
         DRUM_STEPS, DRUM_STEPS, DRUM_STEPS, DRUM_STEPS,
@@ -153,10 +153,10 @@ struct ambiotica : panel_t {
     signed char     len_sel  = -1;     /* track whose length a LENGTH hold last set, -1 = none */
     unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing, 3 modifier used */
     /* Live PATTERN (Euclid) gesture. Unlike every other modifier on this page it spans more
-       than one frame — the press locks the pulse count, the drag rotates — so it needs to
+       than one frame - the press locks the pulse count, the drag rotates - so it needs to
        remember what it started on. eu_track < 0 means no gesture is running. */
     signed char     eu_track  = -1;    /* track the gesture owns; other rows are ignored */
-    signed char     eu_anchor = 0;     /* column pressed — rotation is measured from here */
+    signed char     eu_anchor = 0;     /* column pressed - rotation is measured from here */
     signed char     eu_last   = -1;    /* last column visited, so we regenerate only on change */
     unsigned char   eu_k      = 0;     /* pulse count, locked at press */
     unsigned char   drum_mute = 0;     /* bit per track; muted tracks stop triggering */
@@ -165,7 +165,7 @@ struct ambiotica : panel_t {
     int             drum_kit = -1;      /* -1 = the generated kit; else an index into kKits */
     int             drum_transpose = 0;   /* semitones, applied to the whole kit */
     /* Selection is deliberately separate from what is LOADED. Loading a kit runs the chunk
-       planner, which blocks core0 for tens of ms — so scrolling a 20-entry ring must not
+       planner, which blocks core0 for tens of ms - so scrolling a 20-entry ring must not
        load every entry it passes. BANK moves drum_kit_sel and arms a timer; only when the
        timer expires does the selection become real. */
     int             drum_kit_sel = -1;
@@ -175,7 +175,7 @@ struct ambiotica : panel_t {
     full_params fx;      /* target macros (set from the sliders in on_ui) */
     full_params fx_sm;   /* per-block-smoothed macros actually fed to the chain (de-click) */
     fc_state    st;
-    /* Dattorro reverb + harmony + drift + bloom live here (fast SRAM) — their
+    /* Dattorro reverb + harmony + drift + bloom live here (fast SRAM) - their
      * scattered delay-line access is too slow in PSRAM. Fits the 128 KB panel arena.
      * Looper/micro-loop/granular (big, sequential-ish) stay in PSRAM. */
     unsigned char sram_pool[88 * 1024];
@@ -188,7 +188,7 @@ struct ambiotica : panel_t {
        blocks (24 of the 32), the_xy_pad the XY block, picker the preset browser. Its
        edit()/saveload() wrappers hardcode a layout that doesn't match this overlay. */
     preset_pages_t presets;
-    file_picker_t  scene_picker;               /* whole-panel save/load — its own picker, since it
+    file_picker_t  scene_picker;               /* whole-panel save/load - its own picker, since it
                                                   caches a different folder listing to presets' */
     bool           scene_dirs_made = false;    /* /PLINKY/u_<panel>/ created (once, on first visit) */
     int            scene_commit_wait = 0;      /* frames left to wait for a staged scene load to complete */
@@ -203,7 +203,7 @@ struct ambiotica : panel_t {
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
 
-    /* visualization taps — written in on_dsp (core1 audio), read in on_ui.
+    /* visualization taps - written in on_dsp (core1 audio), read in on_ui.
        Each reactive slider is a SELF-CALIBRATING meter: env = fast envelope,
        pk = slow-release peak-hold. on_ui maps env/pk -> brightness (meter_bri),
        so every column pulses across the full brightness range regardless of the
@@ -240,7 +240,7 @@ struct ambiotica : panel_t {
         fx.bpm = 120.f; fx.loop_length_bars = 2.f; fx.key = 0; fx.chord = 0; fx.bloom = 0.4f;
         fx.gravity = 0.f; fx.horizon = 1.f;   /* neutral: no gravity, full sustain */
         /* Explicit, not inherited. Every other control gets its default here, and relying on
-           the arena being pre-zeroed is an assumption about someone else's code — the
+           the arena being pre-zeroed is an assumption about someone else's code - the
            "blank panel" action routes through this function too, so an empty grid has to be
            stated rather than assumed. */
         memset(pattern, 0, sizeof pattern);
@@ -254,7 +254,7 @@ struct ambiotica : panel_t {
         fx_sm = fx;   /* start the smoother at the target so nothing ramps up from 0 on boot */
 
         /* Ambiotica IS the FX and owns the output (on_dsp returns true), so do_fx never
-         * runs — but zero the synth voices' reverb/delay sends defensively so nothing can
+         * runs - but zero the synth voices' reverb/delay sends defensively so nothing can
          * bleed into a native bus. */
         set_param_packed(VOICE_PARAM_REVERB_SEND, 0, &synth_presets[synth_preset]);
         set_param_packed(VOICE_PARAM_DELAY_SEND,  0, &synth_presets[synth_preset]);
@@ -268,7 +268,7 @@ struct ambiotica : panel_t {
 
     /* Allocate the chain. Split out of setup_default_panel_state because a panel LOAD has
        to redo it: the system zeroes and constructs a staged panel, deserialises into it and
-       memcpys it over us — and setup_default_panel_state() does NOT run on that staged copy
+       memcpys it over us - and setup_default_panel_state() does NOT run on that staged copy
        (only the init slot gets that). So after a load every module pointer is NULL, dsp_ok
        is false and sram_pool is zeroed; on_dsp falls to its passthrough branch and the whole
        engine is silently gone. Observed as dsp time collapsing from ~1750us to ~139us.
@@ -276,7 +276,7 @@ struct ambiotica : panel_t {
        state. The arena cursors reset here, and allocation order is deterministic, so the
        modules land back at the same addresses. */
     void build_dsp(bool first_boot) {
-        g_amb_zero_big = first_boot ? 1 : 0;   /* see alloc_prelude.h — skip the 4 MB clear on rebuild */
+        g_amb_zero_big = first_boot ? 1 : 0;   /* see alloc_prelude.h - skip the 4 MB clear on rebuild */
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
         const int sr = (int) AMB_SR;
@@ -301,12 +301,12 @@ struct ambiotica : panel_t {
         /* Deliberately NO *_reset() here on a rebuild. looper_reset alone memsets
          * buf_capacity * 2 channels = ~4 MB of PSRAM, and granular/microloop add more.
          * Blasting that much QSPI from core0 starves core1, which fetches its code and its
-         * buffers over the same bus — measured as a 658 ms audio block and an instant
+         * buffers over the same bus - measured as a 658 ms audio block and an instant
          * overrun. (An earlier attempt to skip the clear in the allocator achieved nothing
          * precisely because these calls redid it.)
          * It is also unnecessary: *_create() callocs each module struct, those are below
-         * AMB_BIG_ALLOC so they are still zeroed, and the logical state — write_pos,
-         * crossfade, envelopes — is therefore already clean. Only the raw audio in the big
+         * AMB_BIG_ALLOC so they are still zeroed, and the logical state - write_pos,
+         * crossfade, envelopes - is therefore already clean. Only the raw audio in the big
          * rings is stale, and that is the previous scene's wash, which the loop overwrites
          * as it records. Continuity there is a fair trade for not stalling the instrument. */
     }
@@ -342,7 +342,7 @@ struct ambiotica : panel_t {
 
     /* Reroll + SYNTH. Randomises the CURRENT preset's parameters rather than loading a
        random preset: it needs no bank enumeration, and it is what Toadstep's reroll does on
-       its synth pages. The list and its ranges are deliberately curated — pitch, octave and
+       its synth pages. The list and its ranges are deliberately curated - pitch, octave and
        volume are left alone because randomising those breaks tuning and levels rather than
        making a new sound, and the envelope ranges lean long because this is an ambient box. */
     void reroll_synth() {
@@ -360,7 +360,7 @@ struct ambiotica : panel_t {
     }
 
     /* A step's byte IS its probability: 0 = off, 127 = always, less = sometimes. Velocity is
-       held constant so the control stays one-dimensional — "how often", not "how loud".
+       held constant so the control stays one-dimensional - "how often", not "how loud".
        This is the thing that stops an ambient pattern repeating identically forever, and it
        is why both Blocks and Toadstep put probability on their step editors. */
     void fire_drum_step() {
@@ -375,7 +375,7 @@ struct ambiotica : panel_t {
         }
     }
 
-    /* Musical timing, on core0's high-priority timer — it keeps running while the foreground
+    /* Musical timing, on core0's high-priority timer - it keeps running while the foreground
        thread is blocked on SD, which matters here because a scene save stalls on_ui for 70 ms+
        and the groove must not stutter through it.
        drums_trigger only writes two ints per voice, which core1 reads; a torn read costs at
@@ -392,7 +392,7 @@ struct ambiotica : panel_t {
             drum_tick = 0;   /* every track back to its own step 0, and to its first pass */
         } else {
             /* Skip forward over any steps a stall swallowed rather than firing them all at
-               once — a burst of stacked hits reads as a glitch, a skipped step does not. One
+               once - a burst of stacked hits reads as a glitch, a skipped step does not. One
                monotonic counter means a stall cannot desynchronise tracks of different
                lengths from each other, which separate per-track counters would allow. */
             drum_tick += (unsigned int)edges;
@@ -408,14 +408,14 @@ struct ambiotica : panel_t {
         eh_flushed = false;
         preview_mix = 0.f;
         /* The scene carried its own presets, so the tracks' slices point at whatever it
-           loaded — re-derive them rather than trusting the pointers we just overwrote. */
+           loaded - re-derive them rather than trusting the pointers we just overwrote. */
         refresh_drum_slices();
         printf("SCENE: load committed, dsp_ok=%d\n", (int)dsp_ok);
     }
 
     void push_fx_from_ui() {
-        /* Mirrors the plugin's MacroMap.h::deriveStages exactly — same curves and
-         * knob DIRECTIONS — so each control behaves identically (timbre aside). */
+        /* Mirrors the plugin's MacroMap.h::deriveStages exactly - same curves and
+         * knob DIRECTIONS - so each control behaves identically (timbre aside). */
         const float orbit  = fx_val[FX_ORBIT]       / 127.f;
         const float tex    = fx_val[FX_CONSTELLATE] / 127.f;
         const float sat    = fx_val[FX_SATELLITE]   / 127.f;
@@ -440,7 +440,7 @@ struct ambiotica : panel_t {
 
         /* Gravity + Event Horizon macros (mirror MacroMap::deriveStages). Gravity is the
          * master "collapse to the drone": as it rises it lerps every stage toward its
-         * drone target — the loop bed swells, reverb maxes, the micro-loop freezes, the
+         * drone target - the loop bed swells, reverb maxes, the micro-loop freezes, the
          * chord rings, grains thicken. Event Horizon lerps them back toward "clear",
          * applied LAST so it overrides Gravity. grav_sm ramps over ~2 s (plugin value). */
         grav_sm += 0.010f * (fx.gravity - grav_sm);            /* ~2 s (plugin gravitySmooth) */
@@ -479,7 +479,7 @@ struct ambiotica : panel_t {
     }
 
     /* play-surface glow: breathes with the wash. (Grain activity now pulses the
-       Constellate slider instead of sparkling here — see on_ui.) */
+       Constellate slider instead of sparkling here - see on_ui.) */
     static unsigned char viz_brightness(void* user, int si, int sp, int x, int y, int note) {
         (void)si; (void)sp; (void)note; (void)x; (void)y;
         ambiotica* self = (ambiotica*)user;
@@ -503,14 +503,14 @@ struct ambiotica : panel_t {
     }
 
     /* Leaving page 0 stops do_play_surface running, so nothing would ever send the
-       note-offs for pads still held as the page scrolled away — release them here or
+       note-offs for pads still held as the page scrolled away - release them here or
        they hang for as long as you stay on the editor. */
     void release_all_voices() {
         for (int v = 0; v < 16; v++) if (voices_active & (1u << v)) synth_note_up(v);
         voices_active = voices_seen = 0;
     }
 
-    /* Nav bar — the same four physical pads on every page, so the way between them never
+    /* Nav bar - the same four physical pads on every page, so the way between them never
        moves. The pad for the page you are ON breathes; the others sit dim, so "where am I"
        and "where can I go" both read at a glance. Every page draws its content at +UI_Y, so
        the control rows are always free and the whole bar fits on all four pages.
@@ -520,13 +520,13 @@ struct ambiotica : panel_t {
     /* scroll_to_page ANIMATES, and the incoming page slides upward under whatever finger is
        still down from the tap that started it. Anything that pad passes over fires:
          - nav pads sit on rows 0/14, so tapping TRACKS could land on the preset browser
-         - worse, the drums grid sweeps past too, and TRACKS is column 9 — so holding it
+         - worse, the drums grid sweeps past too, and TRACKS is column 9 - so holding it
            wrote step 10 on nearly every track as the rows went by
        So freeze ALL touch-driven input until the scroll has finished. Everything still
        draws; only actions are suppressed.
        There is no "page settled" callback, but the state is exact: get_scroll_y_16() is the
        live position in 1/16 LED units and page N sits at y = N*16, so it has settled when
-       that equals N*256. That is better than guessing a duration — it releases input the
+       that equals N*256. That is better than guessing a duration - it releases input the
        instant the grid stops rather than a fixed time later.
        The ceiling exists because scroll_settled() rests on my reading of those units: if it
        is wrong and never returns true, input would be dead forever. With the ceiling the
@@ -541,7 +541,7 @@ struct ambiotica : panel_t {
         uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
         const bool armed = !input_frozen();
         if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away, ISOLATED,
-                   page == PAGE_PRESET || page == PAGE_SCENE ? "Cancel — back to play" : "Play surface")
+                   page == PAGE_PRESET || page == PAGE_SCENE ? "Cancel - back to play" : "Play surface")
             && armed) {
             if (page == PAGE_PRESET) presets.picker.on_done();
             if (page == PAGE_SCENE)  scene_picker.on_done();
@@ -577,7 +577,7 @@ struct ambiotica : panel_t {
             nav_goto(PAGE_PRESET);
         if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene") && armed)
             nav_goto(PAGE_SCENE);
-        /* × — the printed shift key, on every page. Drawn with set_led and read with raw
+        /* × - the printed shift key, on every page. Drawn with set_led and read with raw
            touch rather than as a widget, so holding it modifies other pads instead of
            consuming the press itself. */
         bool xh = shift_held(page_y);
@@ -594,7 +594,7 @@ struct ambiotica : panel_t {
             else    nav_goto(PAGE_DRUMS);
         }
 
-        /* Transport on the printed corner, on every page — the groove has to be startable
+        /* Transport on the printed corner, on every page - the groove has to be startable
            from wherever you are, and these are the pads users already expect it on. */
         bool playing = is_transport_playing();
         if (button(COL_PLAY, page_y + CTL_DN,
@@ -608,7 +608,7 @@ struct ambiotica : panel_t {
         }
     }
 
-    /* x0x grid: the whole pattern at once — 8 tracks down, 16 steps across — rather than the
+    /* x0x grid: the whole pattern at once - 8 tracks down, 16 steps across - rather than the
        classic one-track-at-a-time, because we have the rows and seeing it all beats paging.
        Colour is per track (hue) so rows stay tellable apart; every 4th step is dimly lit as a
        beat ruler; the playhead brightens its whole column. */
@@ -616,20 +616,20 @@ struct ambiotica : panel_t {
        what is on someone's card from outside, but the panel can: this reports which slots
        hold kits (is_kit = the preset name contains "kit" as a delimited word), how many
        slices carry sample data, and how long the underlying tape is. That is exactly what
-       the drum engine needs to point tracks at real samples — one kit preset's 8 slices map
+       the drum engine needs to point tracks at real samples - one kit preset's 8 slices map
        onto our 8 tracks. User-triggered so it costs nothing until you go looking. */
     /* Sampled kits that ship on the stock SD card. Each bank is one tape plus up to 64
-       one-slice presets — one drum per preset — so a kit costs us 8 of the 12 preset slots,
+       one-slice presets - one drum per preset - so a kit costs us 8 of the 12 preset slots,
        loaded into 1..8 with slot 0 left for the play surface.
        NOT included: procedural/Transistor_Kit, whose presets start with '!' and have an
-       empty tape — the firmware synthesises those through the synth engine, so there is no
+       empty tape - the firmware synthesises those through the synth engine, so there is no
        sample memory for us to read and they would have to go through the wash. */
     struct drum_kit_t {
         const char* category;
         const char* bank;
         int         preset_in_bank;   /* <0 = one-shot kit (8 presets -> 8 tracks);
                                          >=0 = SLICED: this one preset, cut into 8 */
-        const char* label;            /* 4 chars — all that fits across 16 columns in FONT_4 */
+        const char* label;            /* 4 chars - all that fits across 16 columns in FONT_4 */
         const char* name;             /* full name, for the help line / second screen */
     };
     static constexpr drum_kit_t kKits[] = {
@@ -664,18 +664,18 @@ struct ambiotica : panel_t {
     void refresh_drum_slices() {
         if (!drums) return;
         /* build_dsp() makes a fresh drums_t at unity, so a loaded scene's transpose has to be
-           pushed back in here — this runs after every rebuild and every kit change. */
+           pushed back in here - this runs after every rebuild and every kit change. */
         drums_set_pitch(drums, (float)drum_transpose);
         const bool sliced = drum_kit >= 0 && kKits[drum_kit].preset_in_bank >= 0;
-        /* A sliced break is one continuous performance, so the hat choke — which makes a kit
-           sound like a kit — would just cut adjacent eighths off each other. */
+        /* A sliced break is one continuous performance, so the hat choke - which makes a kit
+           sound like a kit - would just cut adjacent eighths off each other. */
         drums_set_choke(drums, !sliced);
 
         if (sliced) {
             const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE];
             const synth_preset_slice_t* sl = &p->slice[0];
             if (preset_slice_has_sample_data(sl)) {
-                /* Slice offsets are RELATIVE to sample_data_va — confirmed on device, where
+                /* Slice offsets are RELATIVE to sample_data_va - confirmed on device, where
                    sample_data_va reads 8421376 and mip-0 playback is correct, which an
                    absolute address could not be. Kept as offsets from here on so the chops
                    can be handed to drums_set_sample_mipped and reach the prefiltered
@@ -683,7 +683,7 @@ struct ambiotica : panel_t {
                 unsigned int a = sl->start_read_only, b = sl->end_read_only;
                 /* Length comes from the preset's OWN chop grid, not from the track count.
                    The breaks ship no explicit chop_count, so they fall through to
-                   PRESET_DEFAULT_CHOP_COUNT (16) — sixteenths. Cutting the bar into
+                   PRESET_DEFAULT_CHOP_COUNT (16) - sixteenths. Cutting the bar into
                    DRUM_TRACKS instead gave eighths, twice the intended length, and every
                    hit ran into the next.
                    Chops are CONTIGUOUS rather than spread across the bar: tracks 0..7 are
@@ -742,7 +742,7 @@ struct ambiotica : panel_t {
 
     /* kit = -1 is our generated kit; 0..kNumKits-1 load a sampled bank into slots 1..8.
        NB loading presets runs the system's chunk planner, which blocks core0 for tens of ms
-       and drops a step or two — a between-takes gesture, not a performance one. */
+       and drops a step or two - a between-takes gesture, not a performance one. */
     void load_drum_kit(int kit) {
         kit = wrap_kit(kit);
         drum_kit = drum_kit_sel = kit;
@@ -757,8 +757,8 @@ struct ambiotica : panel_t {
         }
         refresh_drum_slices();
 #ifdef AMB_PROFILE
-        /* Both layouts put a sampled slice at DRUM_PRESET_BASE — the break in the sliced
-           case, track 0's one-shot otherwise — so one probe covers both. */
+        /* Both layouts put a sampled slice at DRUM_PRESET_BASE - the break in the sliced
+           case, track 0's one-shot otherwise - so one probe covers both. */
         if (kit >= 0) {
             const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE];
             if (preset_slice_has_sample_data(&p->slice[0])) report_mips(p, &p->slice[0]);
@@ -791,14 +791,14 @@ struct ambiotica : panel_t {
 #ifdef AMB_PROFILE
     /* Mip probe. Answers the two things the SDK reference does not: where a slice lives in
        mip space, and whether the mip pyramid is even RESIDENT.
-       The addressing is settled by argument already — get_mip_va(p,0,false) IS
+       The addressing is settled by argument already - get_mip_va(p,0,false) IS
        sample_data_va, so today's working mip-0 playback proves start_read_only cannot be an
        absolute VA unless sample_data_va is 0, and in that case both readings are the same
        number. Either way base(m) + (off >> m) holds. This prints sample_data_va so the
        argument becomes a measurement.
        Residency is the real risk: "Plinky will try to load only the needed parts of each
        bank's sample data", and reading far past a sample "may get crashes". So sample each
-       mip and report its peak — all-zero above mip 0 means the pyramid is not paged in and
+       mip and report its peak - all-zero above mip 0 means the pyramid is not paged in and
        mipmapping must stay off. Reads stay inside the computed mip region, which is inside
        the tape, so the probe itself cannot run off the end. */
     void report_mips(const synth_preset_t* p, const synth_preset_slice_t* sl) {
@@ -832,8 +832,8 @@ struct ambiotica : panel_t {
         report_presets();
         bool playing = is_transport_playing();
         /* Tap toggles, drag paints. The FIRST pad of a gesture decides the mode from its own
-           state — land on an empty step and the whole drag writes, land on a lit one and it
-           erases — and that mode is held until every finger lifts. That is what makes a tap
+           state - land on an empty step and the whole drag writes, land on a lit one and it
+           erases - and that mode is held until every finger lifts. That is what makes a tap
            behave like a toggle while a drag stays coherent: without the latch, each pad the
            finger crossed would flip on its own and a swipe would just invert the row.
            × forces erase regardless, so you can scrub out a run that starts on a gap. */
@@ -860,7 +860,7 @@ struct ambiotica : panel_t {
             int y = page_y + UI_Y + t;
             for (int s = 0; s < DRUM_STEPS; s++) {
                 int idx = t * DRUM_STEPS + s;
-                /* Frozen during a page transition — otherwise the finger still down from the
+                /* Frozen during a page transition - otherwise the finger still down from the
                    TRACKS tap writes a step on every row the grid slides past it. */
                 if (!input_frozen() && get_touch_down(s, y)) {
                     any_down = true;
@@ -890,7 +890,7 @@ struct ambiotica : panel_t {
                            phase moves live under the finger.
                            This is the ONE modifier here that must keep acting while
                            drum_paint == 3, so the press and the drag are two separate
-                           conditions rather than the usual single !drum_paint guard —
+                           conditions rather than the usual single !drum_paint guard -
                            with that guard you would get pulse selection and no rotation.
                            eu_track pins the gesture to the row it started on, so a finger
                            wandering vertically cannot silently rewrite a second track. */
@@ -911,7 +911,7 @@ struct ambiotica : panel_t {
                            already set to; each further tap on that same step advances the
                            ring. Without the inspect step there is no way to read a value
                            without changing it, and modulo in particular is invisible on the
-                           surface — 1:4 and 2:4 light identically except on the pass they
+                           surface - 1:4 and 2:4 light identically except on the pass they
                            are due. Moving to another step goes back to inspecting.
                            Only lit steps cycle: an empty step has nothing to make less
                            likely or less frequent, so this never turns steps on by accident. */
@@ -927,7 +927,7 @@ struct ambiotica : panel_t {
                         if (!drum_paint) drum_paint = pattern[idx] ? 2 : 1;   /* latch on first contact */
                         /* Mode 3 means a MODIFIER owns this gesture, so releasing that
                            modifier while the finger is still down must not degrade into
-                           painting — the latch is "held until every finger lifts", and that
+                           painting - the latch is "held until every finger lifts", and that
                            has to include the case where the modifier goes up first. Without
                            this guard, lifting PATTERN mid-drag repaints every step the finger
                            then crosses, overwriting the pattern it just generated. The same
@@ -947,11 +947,11 @@ struct ambiotica : panel_t {
                 if (beyond) {
                     /* Past this track's loop point. Content is kept and shown faintly rather
                        than erased, so shortening a track and lengthening it again is
-                       lossless — and while LENGTH is held the boundary is where the row
+                       lossless - and while LENGTH is held the boundary is where the row
                        visibly stops. */
                     c = vel ? DIMMESTEST(WHITE) : 0;
                 } else if (muted) {
-                    /* A muted track still shows its pattern, just dimmed — you need to see
+                    /* A muted track still shows its pattern, just dimmed - you need to see
                        what you are about to bring back in. Red while MUTE is held, so the
                        gesture reads before you commit to it. */
                     c = vel ? (mute_mod ? DIMMER(RED) : DIMMESTEST(WHITE)) : 0;
@@ -979,7 +979,7 @@ struct ambiotica : panel_t {
             set_help_text("Euclid #fc2#*%d/%d#. rot %+d", eu_k, DRUM_STEPS,
                           ((eu_last - eu_anchor + 8) & 15) - 8);
 
-        /* BANK ▲▼ cycles kits here — which is what the pad is actually printed for. On the
+        /* BANK ▲▼ cycles kits here - which is what the pad is actually printed for. On the
            play page the same pads pick the musical mode; context decides, and both readings
            are honest. The generated kit sits in the ring as -1, so it is always reachable
            and the panel still works with no samples loaded. */
@@ -987,7 +987,7 @@ struct ambiotica : panel_t {
         if (button(COL_BANK, page_y + CTL_UP, kitcol, ISOLATED, "Kit up"))   arm_kit(drum_kit_sel + 1);
         if (button(COL_BANK, page_y + CTL_DN, kitcol, ISOLATED, "Kit down")) arm_kit(drum_kit_sel - 1);
 
-        /* KEY ▲▼ transposes the kit here — the same pads that move the musical key on the
+        /* KEY ▲▼ transposes the kit here - the same pads that move the musical key on the
            play page, doing the pitch job on this one. Resampling, so pitching a break up
            shortens it too: chops get tighter as they get higher, which is the useful
            direction. × + KEY returns to unity rather than making you count back. */
@@ -1006,7 +1006,7 @@ struct ambiotica : panel_t {
             set_help_text("Kit: #fc2#*%s#.", kit_name(drum_kit_sel));
         }
 
-        /* What the selected step is set to, in the four free rows below the grid — drawn over
+        /* What the selected step is set to, in the four free rows below the grid - drawn over
            the kit label because if you are holding a CONDITION pad, that is what you are
            reading. Colour follows the pad you are holding, so the number needs no units. */
         if (len_sel >= 0 && len_mod) {
@@ -1046,16 +1046,16 @@ struct ambiotica : panel_t {
     /* Stock synth-parameter editor. Offset by UI_Y so its two 5-high slider banks and the
        flag-button row land on the printed pad circles (rows 2..12) and the control rows
        stay clear. NB it also exposes DELAY_SEND / REVERB_SEND and the MIX params, which do
-       nothing here — on_dsp owns the output, so the native FX buses never run. */
+       nothing here - on_dsp owns the output, so the native FX buses never run. */
     /* Synth page laid out to match the STOCK CHORDS synth page, not preset_pages_t::edit()
        (whose two-16-wide-banks layout is toadstep's). The Chords manual gives the regions
-       exactly — upper sliders 0,2..16,7 · lower 0,7..8,14 · XY pad 9,7..16,14 — which
+       exactly - upper sliders 0,2..16,7 · lower 0,7..8,14 · XY pad 9,7..16,14 - which
        leaves col 8 rows 7..13 as the XY button column, hence XY_BUTTONS_ON_LEFT.
        The payoff is the same one as the control pads: every printed label on the hardware
        is CORRECT for us. The order below is read straight off the overlay silkscreen.
        Slider colours come from each param's own metadata (col = 0), so the printed colour
        groups (the red ADSR cluster, etc.) line up for free.
-       Not included: the SIMPLE/TUNE/CHOP/LOOP/SYNC/LPG flag buttons that edit() adds —
+       Not included: the SIMPLE/TUNE/CHOP/LOOP/SYNC/LPG flag buttons that edit() adds -
        the Chords layout has no printed home for them inside rows 2..13. */
     void draw_synth_page() {
         static const int kTop[16] = {           /* rows 2..6, 16 sliders 5 high */
@@ -1105,7 +1105,7 @@ struct ambiotica : panel_t {
 
     /* Panel settings pages (right-up from the play surface), drawn in the stock system style
        so they navigate the way the built-in pages do. The left buttons edit the value.
-       These are panel PREFERENCES — they persist via on_serialise_settings and come back on
+       These are panel PREFERENCES - they persist via on_serialise_settings and come back on
        boot, unlike the scene, which is saved per slot by on_serialise. */
     void draw_settings_page(int page) {
         if (page == SET_SOURCE) {
@@ -1120,11 +1120,11 @@ struct ambiotica : panel_t {
                 (void)save_settings_to_sd(false);
             }
         }
-        /* anything further up is a global system page — leave it alone, it draws itself. */
+        /* anything further up is a global system page - leave it alone, it draws itself. */
     }
 
     /* The two file-picker pages, built from the picker's own pieces rather than the stock
-       saveload() wrapper — that wrapper hardcodes its buttons to (14,15)/(15,15), which on
+       saveload() wrapper - that wrapper hardcodes its buttons to (14,15)/(15,15), which on
        this overlay is the transport corner. Here the grid sits at +UI_Y (on the printed pad
        circles, file grid + hue row) and the commit buttons land under the printed SAVE and
        LOAD. Both self-colour: dark when the action isn't available, so an empty slot can't
@@ -1139,8 +1139,8 @@ struct ambiotica : panel_t {
                and clearing current_file_idx again right after a tap, so the save/load buttons
                light for one frame and go dark). make_dirs() is the SDK's fix for this. Run it
                after the first panel_picker call so the picker's root is already set, and only
-               once — it touches the SD card. */
-            /* The folder is created BY SAVING — the runtime makes it on demand, so there is
+               once - it touches the SD card. */
+            /* The folder is created BY SAVING - the runtime makes it on demand, so there is
                nothing to provision up front. It only looked broken because the old 17-char
                panel name overflowed the picker's char[17], which killed the scan and left
                the save button dark. One-shot print of the name and its length so a future
@@ -1148,11 +1148,11 @@ struct ambiotica : panel_t {
                breaking save/load again. */
             /* (Was printing the panel name and its length here. Answered: 'u_ambiotica',
                11 of the 16 the picker's char[17] allows. Dropped to keep the log quiet
-               around a load — see the note in on_ui.) */
+               around a load - see the note in on_ui.) */
             done  = scene_picker.panel_save_button(COL_SAVE, page_y + CTL_UP);
             /* panel_load_button only STAGES the load. Do NOT finalise here: the documented
                precondition is is_panel_load_staged(), which "returns true while a staged
-               panel load is COMPLETE and waiting for a commit request" — committing in the
+               panel load is COMPLETE and waiting for a commit request" - committing in the
                same frame as the button races the deserialise. Poll for it instead (top of
                on_ui), which also works after we scroll back to the play surface. */
             if (scene_picker.panel_load_button(COL_LOAD, page_y + CTL_UP)) {
@@ -1184,7 +1184,7 @@ struct ambiotica : panel_t {
             g_stage_n = 0;
         }
 #endif
-        /* The WHOLE panel object must fit the 128 KB panel arena — and a panel LOAD builds a
+        /* The WHOLE panel object must fit the 128 KB panel arena - and a panel LOAD builds a
            SECOND copy in the shadow arena before memcpying it over us. So an oversized object
            is invisible during normal play and only corrupts memory when you load, which is
            the symptom being chased (commit never completes, USB dies). sram_pool is the
@@ -1194,11 +1194,11 @@ struct ambiotica : panel_t {
            printing periodically. Every observed failure has been a MID-TOKEN truncation of
            the log during the heaviest burst the firmware emits (plantime prints a long line
            per preset slot, and mask=0xfff is twelve of them), which looks like the USB CDC
-           stream giving out rather than a hang — so our own output is now kept to the bare
+           stream giving out rather than a hang - so our own output is now kept to the bare
            minimum around a load, to stop us adding to that pressure.
            Kept at a 30 s trickle because the arena is the tightest budget we have and it is
            the one number worth watching as features land. NB it measures the panel OBJECT
-           (members) only — sample buffers live in PSRAM and code lives in flash, neither of
+           (members) only - sample buffers live in PSRAM and code lives in flash, neither of
            which is counted here. */
         static unsigned size_report_us = 0;
         size_report_us += (unsigned)dt_us;
@@ -1221,7 +1221,7 @@ struct ambiotica : panel_t {
                 scene_commit_wait = 0;
                 bool accepted = scene_picker.request_panel_load_finalise();
                 printf("SCENE: finalise accepted=%d\n", (int)accepted);
-                /* The docs say to "return immediately if it accepts" — an accepted request
+                /* The docs say to "return immediately if it accepts" - an accepted request
                    queues a swap of this whole panel object, so carrying on to draw widgets
                    and touch the picker means running against state about to be replaced. */
                 if (accepted) return;
@@ -1236,7 +1236,7 @@ struct ambiotica : panel_t {
         float nt = nav_phase < 0.5f ? nav_phase * 2.f : 2.f - nav_phase * 2.f;
         nav_pulse = nt * nt * (3.f - 2.f * nt);
 
-        /* Page dispatch. Negative pages are the system's own settings UI — return without
+        /* Page dispatch. Negative pages are the system's own settings UI - return without
            clearing so it keeps its own drawing. The chain runs on core1 regardless of the
            page, so the wash keeps going while you edit the synth or browse presets. */
         /* Orbit and Satellite are bar-length delays derived from bpm (see fc_push_params), so
@@ -1285,7 +1285,7 @@ struct ambiotica : panel_t {
         for (int v = 0; v < 16; v++) if (released & (1u << v)) synth_note_up(v);
         voices_active = voices_seen;
         static const char* nm[FX_N] = { "Orbit","Satellite","Constellate","Tail","Flux","Spectra","Mix" };
-        /* Tail + Flux flash IN SYNC on one LFO whose rate tracks the Flux mod rate — the
+        /* Tail + Flux flash IN SYNC on one LFO whose rate tracks the Flux mod rate - the
            modulation pair, at a speed distinct from the loop meters. */
         float tail = fx_val[FX_TAIL] / 127.f, flux = fx_val[FX_FLUX] / 127.f;
         shimmer_phase += (float)dt_us * 1e-6f * (0.35f + fx.mod_rate * 2.2f); shimmer_phase -= (float)(int)shimmer_phase;
@@ -1309,7 +1309,7 @@ struct ambiotica : panel_t {
             fx_val[i] = (unsigned char)last_widget_new_value();
 
             /* Orbit & Satellite each carry a white "star" that falls down its own column
-               once per loop cycle — a per-column clock. When Satellite is at FREEZE the
+               once per loop cycle - a per-column clock. When Satellite is at FREEZE the
                micro-loop isn't cycling, so the star stops falling and instead bounces
                fast up/down between three rows (held in place) to read as "frozen". */
             if (i == FX_SATELLITE && fx.micro_hold >= 0.9f) {
@@ -1364,7 +1364,7 @@ struct ambiotica : panel_t {
 
     /* Core-1 audio hook (new API). Base renders the synth into mix_buffers_out;
      * we run Ambiotica on its dry stereo bus, write final int16 to audiobuf_out,
-     * and return true to own the output (bypass the built-in FX — Ambiotica IS
+     * and return true to own the output (bypass the built-in FX - Ambiotica IS
      * the FX). Running on core1 means an overrun crackles rather than locking the
      * UI/USB, so this is where the heavy chain belongs.
      *
@@ -1385,7 +1385,7 @@ struct ambiotica : panel_t {
         }
 
         /* Preset auditions must be heard CLEAN. The picker previews by playing the built-in
-           synth, so it lands in the same dry bus we swallow — there is no separate preview
+           synth, so it lands in the same dry bus we swallow - there is no separate preview
            bus to route around. Left alone it is not just soaked in the wash: the looper
            CAPTURES it, so browsing a bank smears audition blips through the pad for minutes.
            So while the audition sounds, gate the chain's INPUT (it hears silence and its tail
@@ -1403,7 +1403,7 @@ struct ambiotica : panel_t {
             sR[i] = mix_buffers_out->dry[2*i+1] * k;
         }
         /* External input (settings page: src = line / mic, in = level). Summed into the same
-           bus as the synth so the whole chain — looper, grains, plate, Spectra — processes it.
+           bus as the synth so the whole chain - looper, grains, plate, Spectra - processes it.
            Default src is "off", which is the historical synth-only behaviour. Watch the level
            on "mic": the chain feeds back through the looper, so a hot mic can run away. */
         if (audio_source && audiobuf_in) {
@@ -1421,7 +1421,7 @@ struct ambiotica : panel_t {
            discrete params pass through (their DSP crossfades/snaps handle those). */
         const float ps = 0.06f;
         /* Ramp toward the target, then SNAP when within a deadband so fx_sm settles
-           bit-exactly on fx — otherwise the one-pole asymptote never equals the
+           bit-exactly on fx - otherwise the one-pole asymptote never equals the
            target and fc_push_params' memcmp gate would re-run powf/expf every block
            (the DSP budget is tight). During an active move it re-pushes as intended. */
         #define AMB_SM(f) { float d_ = fx.f - fx_sm.f; fx_sm.f += ps * d_; \
@@ -1439,7 +1439,7 @@ struct ambiotica : panel_t {
            Gate on the SMOOTHED horizon, not the raw tap: by the time it settles to the
            bottom the drain has already silenced the loop and micro-loop (micro hold has
            reached 0), so the flush clears quiet buffers. Flushing on the raw tap instead
-           cleared them mid-drain, into a still-live signal that instantly refilled — the
+           cleared them mid-drain, into a still-live signal that instantly refilled - the
            short frozen-loop "buzz". Hysteresis so it can't re-fire on the edge; the
            reverb is left out so its tail decays gracefully rather than being cut. */
         if (fx_sm.horizon < 0.04f) {
@@ -1459,7 +1459,7 @@ struct ambiotica : panel_t {
         fc_render_block(&st, looper, granular, microloop, harmony, bloom, drift,
                         &fx_sm, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
 
-        /* Drums go in HERE — into the chain's output, after the wash, never into sL/sR.
+        /* Drums go in HERE - into the chain's output, after the wash, never into sL/sR.
            That is the whole point: the looper, the grains and the plate never see them, so
            the pattern stays dry and legible while the wash does whatever it likes behind it.
            It also means drums cost no polyphony: they are our own playback, not synth voices. */
@@ -1513,7 +1513,7 @@ struct ambiotica : panel_t {
 
     /* The scene: everything the SONG page save/loads per slot. Macro positions, the tuning,
        and the synth + mix presets, so a loaded slot sounds exactly like it was saved.
-       Derived state is rebuilt after a read — fx is a function of the raw slider bytes, and
+       Derived state is rebuilt after a read - fx is a function of the raw slider bytes, and
        fx_sm is snapped to it so nothing audibly ramps in from the old scene. */
     bool on_serialise(serialiser_t& s, int version) override {
         (void)version;
@@ -1541,14 +1541,14 @@ struct ambiotica : panel_t {
         FIELD("mode",    o.mode_sel,               0,  4);
         FIELD_BASE64("drums", o.pattern, pattern_bytes, (int)sizeof(o.pattern));
         /* Separate field, so a scene written before modulo existed just omits it and loads
-           with no conditions set — which is exactly how it used to sound. */
+           with no conditions set - which is exactly how it used to sound. */
         FIELD_BASE64("dmod",  o.pattern_mod, mod_bytes, (int)sizeof(o.pattern_mod));
         FIELD_BASE64("dlen",  o.drum_len, len_bytes, (int)sizeof(o.drum_len));
         FIELD("kit",     o.drum_kit,               -1, 8);
         FIELD("dmute",   o.drum_mute,              0u, 255u);
         FIELD("dtrans", o.drum_transpose,        -24, 24);
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
-         * preset-install planner on a scene load — that happens for every staged panel load
+         * preset-install planner on a scene load - that happens for every staged panel load
          * regardless of what we serialise. So they are not implicated in the load failure,
          * and a scene should carry its sound. */
         FIELD_SYNTH_PRESET("preset", 0);
@@ -1558,7 +1558,7 @@ struct ambiotica : panel_t {
         return true;
     }
 
-    /* Panel PREFERENCES — not part of a scene. These follow the box, not the slot, and the
+    /* Panel PREFERENCES - not part of a scene. These follow the box, not the slot, and the
        system reloads them automatically at boot. */
     bool on_serialise_settings(serialiser_t& s, int version) override {
         (void)version;

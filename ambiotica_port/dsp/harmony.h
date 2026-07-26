@@ -1,8 +1,8 @@
-/* Ambiotica harmony — tuned resonator bank ("comb the wash into a chord").
+/* Ambiotica harmony - tuned resonator bank ("comb the wash into a chord").
  *
  * A small bank of damped, tuned feedback combs (Karplus-Strong-style
  * resonators). Fed the broadband reverb/wet bus, each comb rings at a chord
- * frequency, pulling a sustained, smooth, pitched chord out of the wash — a
+ * frequency, pulling a sustained, smooth, pitched chord out of the wash - a
  * lush harmonic layer, not bleepy pitched grains.
  *
  *   amount = 0  → bypass (output == input)

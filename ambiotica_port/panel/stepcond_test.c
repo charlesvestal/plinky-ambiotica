@@ -22,7 +22,7 @@ static const char* kModRing[] = {
 };
 #define MOD_RING_N ((int)(sizeof kModRing / sizeof kModRing[0]))
 
-/* PROB keeps the short ring it always had — adding modulo must not lengthen it. */
+/* PROB keeps the short ring it always had - adding modulo must not lengthen it. */
 static void test_prob_ring_is_a_closed_cycle(void) {
     unsigned char p = 127;
     for (int i = 0; i < PROB_N; i++) {
@@ -62,7 +62,7 @@ static void test_off_step_never_fires(void) {
             CHECK(!step_fires(0, m, pass, 0), "off step fired with mod=%d pass=%u", m, pass);
 }
 
-/* With no modulo set, behaviour must be byte-for-byte what it was before this feature —
+/* With no modulo set, behaviour must be byte-for-byte what it was before this feature -
    that is what keeps every existing saved scene sounding the same. */
 static void test_no_modulo_is_pure_probability(void) {
     for (unsigned int pass = 0; pass < 8; pass++) {
@@ -108,7 +108,7 @@ static void test_each_condition_fires_once_per_cycle(void) {
     }
 }
 
-/* Modulo is deterministic — it must ignore the dice completely. */
+/* Modulo is deterministic - it must ignore the dice completely. */
 static void test_modulo_ignores_the_roll(void) {
     for (int i = 1; i <= COND_N; i++)
         for (unsigned int pass = 0; pass < 12; pass++) {

@@ -1,7 +1,7 @@
 /* Unit test for euclid_fill.
  *
  * panel.cpp cannot be compiled by the desktop harness (harness/build.sh compiles the DSP
- * sources plus main.c only) and does not compile standalone — it has no #includes and only
+ * sources plus main.c only) and does not compile standalone - it has no #includes and only
  * type-checks after amalgamation. So the generator lives in its own header, which the
  * amalgamation inlines ahead of panel.cpp and this test includes directly.
  *
@@ -92,7 +92,7 @@ static void test_known_pattern_and_shift_direction(void) {
           show(t));
 }
 
-/* Pulses carry 127 — "always fires" — matching what hand-painting writes in panel.cpp.
+/* Pulses carry 127 - "always fires" - matching what hand-painting writes in panel.cpp.
    Rests must be exactly 0, since fire_drum_step treats any non-zero byte as a hit. */
 static void test_pulse_values(void) {
     unsigned char t[DRUM_STEPS];
