@@ -59,6 +59,14 @@ enum {
        Toadstep both have a dedicated reroll key, but their silkscreens are not ours. */
     COL_PROB   = 12,    /* "PROB" (row 1) — hold to see and edit per-step probability */
     COL_REROLL = 14,    /* "FILL" (row 1) — hold + tap a target to randomise it */
+    /* "PATTERN" (row 1, col 13) — the other half of GENERATE, and FILL's opposite number:
+       press a step to replace a track with a Euclidean rhythm of that many pulses, then
+       slide to rotate it. FILL is random and builds up, PATTERN is ordered and replaces.
+       Position verified against the physical faceplate — NOT against panel_art/chords.png,
+       which is a stale revision (it prints SHUFFLE at row 1 col 9 where hardware prints
+       MELODY, and 6/7/8/9 at row 0 cols 8-11 where hardware prints FWD/REV/RND/PING).
+       Cols 11-15 are identical in both, so this run of pads is safe. */
+    COL_PATTERN = 13,
     /* Column 15 rows 10-12 are printed MUTE / EDIT / ROOT — the side controls of the stock
        45-chord palette. On the PLAY page that column is our Gravity/Event Horizon slider,
        so they are only claimed on the drums page, where the column is genuinely free.
@@ -119,6 +127,13 @@ struct ambiotica : panel_t {
     clock_divider_t drum_clock;
     int             drum_step = 0;
     unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing, 3 modifier used */
+    /* Live PATTERN (Euclid) gesture. Unlike every other modifier on this page it spans more
+       than one frame — the press locks the pulse count, the drag rotates — so it needs to
+       remember what it started on. eu_track < 0 means no gesture is running. */
+    signed char     eu_track  = -1;    /* track the gesture owns; other rows are ignored */
+    signed char     eu_anchor = 0;     /* column pressed — rotation is measured from here */
+    signed char     eu_last   = -1;    /* last column visited, so we regenerate only on change */
+    unsigned char   eu_k      = 0;     /* pulse count, locked at press */
     unsigned char   drum_mute = 0;     /* bit per track; muted tracks stop triggering */
     bool            mute_hit_track = false;  /* did this MUTE hold actually toggle anything? */
     bool            preset_report_done = false;   /* one-shot preset/kit dump (see report_presets) */
@@ -279,6 +294,7 @@ struct ambiotica : panel_t {
     bool shift_held(int page_y)  const { return get_touch_down(COL_X,      page_y + CTL_DN)  != 0; }
     bool reroll_held(int page_y) const { return get_touch_down(COL_REROLL, page_y + CTL_TOP2) != 0; }
     bool prob_held(int page_y)   const { return get_touch_down(COL_PROB,   page_y + CTL_TOP2) != 0; }
+    bool euclid_held(int page_y) const { return get_touch_down(COL_PATTERN, page_y + CTL_TOP2) != 0; }
 
     /* xorshift32. Only ever drives UI-level randomisation, never audio, so it needs to be
        cheap and non-repeating rather than statistically good. */
@@ -509,6 +525,13 @@ struct ambiotica : panel_t {
         bool rr = reroll_held(page_y);
         set_led(COL_REROLL, page_y + CTL_TOP2, rr ? PURPLE : DIMMESTEST(PURPLE));
         set_led(COL_PROB,   page_y + CTL_TOP2, prob_held(page_y) ? CYAN : DIMMESTEST(CYAN));
+        /* PATTERN, GENERATE's other half. GREEN keeps it distinct from FILL's PURPLE beside
+           it and PROB's CYAN, so the three modifiers on this row read apart at a glance.
+           Drums page ONLY, unlike FILL beside it: reroll does something everywhere (⭕ +
+           SYNTH), but Euclid generates into the step grid and has no meaning off this page.
+           A pad stays dark until it has a function that matches its label. */
+        if (page == PAGE_DRUMS)
+            set_led(COL_PATTERN, page_y + CTL_TOP2, euclid_held(page_y) ? GREEN : DIMMESTEST(GREEN));
 
         if (button(COL_SYNTH,  page_y + CTL_DN,
                    rr ? PURPLE : (page == PAGE_SYNTH ? here : away), ISOLATED,
@@ -729,6 +752,7 @@ struct ambiotica : panel_t {
         bool erase_mod = shift_held(page_y);
         bool prob_mod  = prob_held(page_y);
         bool rr_mod    = reroll_held(page_y);
+        bool eu_mod    = euclid_held(page_y);
         /* MUTE: hold + tap a track toggles it; a tap on its own unmutes everything, which is
            how every Plinky panel's mute behaves. "On its own" is tracked across the hold
            rather than guessed at, so a hold that did toggle something does not also
@@ -755,6 +779,28 @@ struct ambiotica : panel_t {
                         /* ⭕ + a track randomises a quarter of it. Latched through drum_paint
                            so a held finger rerolls once rather than every frame. */
                         if (!drum_paint) { drum_paint = 3; reroll_track(t); }
+                    } else if (eu_mod) {
+                        /* PATTERN + press = a Euclidean rhythm of (column + 1) pulses,
+                           replacing the track. Keep holding and slide along the row to
+                           rotate it; the grid redraws from pattern[] every frame, so the
+                           phase moves live under the finger.
+                           This is the ONE modifier here that must keep acting while
+                           drum_paint == 3, so the press and the drag are two separate
+                           conditions rather than the usual single !drum_paint guard —
+                           with that guard you would get pulse selection and no rotation.
+                           eu_track pins the gesture to the row it started on, so a finger
+                           wandering vertically cannot silently rewrite a second track. */
+                        if (!drum_paint) {
+                            drum_paint = 3;
+                            eu_track  = (signed char)t;
+                            eu_anchor = (signed char)s;
+                            eu_last   = (signed char)s;
+                            eu_k      = (unsigned char)(s + 1);
+                            euclid_fill(&pattern[t * DRUM_STEPS], eu_k, 0);
+                        } else if (eu_track == (signed char)t && eu_last != (signed char)s) {
+                            eu_last = (signed char)s;
+                            euclid_fill(&pattern[t * DRUM_STEPS], eu_k, s - eu_anchor);
+                        }
                     } else if (prob_mod) {
                         /* PROB + a step cycles 100/75/50/25%. Only lit steps have a
                            probability to cycle — an empty step has nothing to make less
@@ -762,7 +808,16 @@ struct ambiotica : panel_t {
                         if (!drum_paint) { drum_paint = 3; if (pattern[idx]) pattern[idx] = next_prob(pattern[idx]); }
                     } else {
                         if (!drum_paint) drum_paint = pattern[idx] ? 2 : 1;   /* latch on first contact */
-                        pattern[idx] = (erase_mod || drum_paint == 2) ? 0 : 127;
+                        /* Mode 3 means a MODIFIER owns this gesture, so releasing that
+                           modifier while the finger is still down must not degrade into
+                           painting — the latch is "held until every finger lifts", and that
+                           has to include the case where the modifier goes up first. Without
+                           this guard, lifting PATTERN mid-drag repaints every step the finger
+                           then crosses, overwriting the pattern it just generated. The same
+                           leak applied to FILL, PROB and MUTE; it was simply hard to reach
+                           before a modifier gesture involved dragging. */
+                        if (drum_paint != 3)
+                            pattern[idx] = (erase_mod || drum_paint == 2) ? 0 : 127;
                     }
                 }
                 unsigned char vel = pattern[idx];
@@ -786,7 +841,12 @@ struct ambiotica : panel_t {
                 set_led(s, y, c);
             }
         }
-        if (!any_down) drum_paint = 0;   /* gesture ends only when the grid is fully released */
+        /* The gesture ends only when the grid is fully released. eu_track is cleared in the
+           same breath so a PATTERN drag cannot resume against a row the finger has left. */
+        if (!any_down) { drum_paint = 0; eu_track = -1; }
+        else if (eu_track >= 0)
+            set_help_text("Euclid #fc2#*%d/%d#. rot %+d", eu_k, DRUM_STEPS,
+                          ((eu_last - eu_anchor + 8) & 15) - 8);
 
         /* BANK ▲▼ cycles kits here — which is what the pad is actually printed for. On the
            play page the same pads pick the musical mode; context decides, and both readings
