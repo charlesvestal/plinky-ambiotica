@@ -53,8 +53,24 @@ labels. No physical side button is claimed.
 An 8-track x0x sequencer on the TRACKS page, rendered **after** the chain so the pattern
 stays dry and legible under the wash — and costs no polyphony. Kick, snare, closed/open
 hat, clap, rim and two toms, synthesised at boot, with the shipped sampled kits and 16
-sliced breaks on **BANK**. Drag to write steps; **PROB** sets how often a step fires;
-**FILL** randomises a track; **MUTE** mutes one; **KEY** transposes the kit.
+sliced breaks on **BANK**. Sampled hits play from the SDK's prefiltered mipmaps, so
+transposing a break up stays clean instead of aliasing.
+
+Drag to write steps. The sequencer then uses the printed sequencer row, each control under
+the word that names it:
+
+| Pad | |
+|---|---|
+| **PATTERN** | press a step for a Euclidean rhythm of that many pulses; slide to rotate |
+| **FILL** | randomise a quarter of a track; tap again to build it up |
+| **PROB** | a step's chance of firing — 100 / 75 / 50 / 25% |
+| **MODULO** | play a step only every Nth time round — 1:2, 2:2 … 4:4 |
+| **LENGTH** | per-track loop length, for polyrhythms |
+| **MUTE** / **KEY** | mute a track / transpose the kit |
+
+PROB and MODULO share one gesture: the first tap on a step shows its value below the grid
+without changing it, and tapping again advances. Give tracks unequal lengths and they drift
+— 16 against 7 realigns only every 112 steps — with modulo counting each track's own loop.
 
 See [`ambiotica_port/panel/library_readme.md`](ambiotica_port/panel/library_readme.md) for
 the full panel manual.
