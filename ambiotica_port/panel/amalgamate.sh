@@ -38,6 +38,7 @@ trap 'rm -f "$BODY"' EXIT
     strip "$HARN/full_chain.h"
     for c in $MODULES; do strip "$DSP/$c.c"; done
     strip "$HN/euclid.h"              # after drums.h (needs DRUM_STEPS), before its caller
+    strip "$HN/stepcond.h"
     strip "$HN/panel.cpp"
 } | python3 "$HN/strip_comments.py" /dev/stdin > "$BODY"
 
