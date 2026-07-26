@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../dsp/drums.h"
 #include "stepcond.h"
 
 static int failures = 0;
