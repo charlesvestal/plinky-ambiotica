@@ -735,6 +735,14 @@ struct ambiotica : panel_t {
                     load_preset_from_filename_with_category(DRUM_PRESET_BASE + t, k.category, k.bank, t);
         }
         refresh_drum_slices();
+#ifdef AMB_PROFILE
+        /* Both layouts put a sampled slice at DRUM_PRESET_BASE — the break in the sliced
+           case, track 0's one-shot otherwise — so one probe covers both. */
+        if (kit >= 0) {
+            const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE];
+            if (preset_slice_has_sample_data(&p->slice[0])) report_mips(p, &p->slice[0]);
+        }
+#endif
     }
 
     void report_presets() {
@@ -758,6 +766,39 @@ struct ambiotica : panel_t {
                    (unsigned)p->tape_length_samples, p->name, p->bank_category, p->bank_filename);
         }
     }
+
+#ifdef AMB_PROFILE
+    /* Mip probe. Answers the two things the SDK reference does not: where a slice lives in
+       mip space, and whether the mip pyramid is even RESIDENT.
+       The addressing is settled by argument already — get_mip_va(p,0,false) IS
+       sample_data_va, so today's working mip-0 playback proves start_read_only cannot be an
+       absolute VA unless sample_data_va is 0, and in that case both readings are the same
+       number. Either way base(m) + (off >> m) holds. This prints sample_data_va so the
+       argument becomes a measurement.
+       Residency is the real risk: "Plinky will try to load only the needed parts of each
+       bank's sample data", and reading far past a sample "may get crashes". So sample each
+       mip and report its peak — all-zero above mip 0 means the pyramid is not paged in and
+       mipmapping must stay off. Reads stay inside the computed mip region, which is inside
+       the tape, so the probe itself cannot run off the end. */
+    void report_mips(const synth_preset_t* p, const synth_preset_slice_t* sl) {
+        unsigned int off0 = sl->start_read_only, off1 = sl->end_read_only;
+        printf("MIP sample_data_va=%u tape=%u slice=[%u,%u) len=%u\n",
+               (unsigned)p->sample_data_va, (unsigned)p->tape_length_samples,
+               off0, off1, off1 - off0);
+        for (unsigned m = 0; m <= 8; m++) {
+            unsigned int base = get_mip_va(p, m, false);
+            unsigned int va   = base + (off0 >> m);
+            unsigned int n    = (off1 - off0) >> m;
+            int peak = 0;
+            for (unsigned k = 0; k < 128 && k < n; k++) {
+                int v = (int)(int16_t)READ_SAMPLE(va + (n * k) / 128u);
+                if (v < 0) v = -v;
+                if (v > peak) peak = v;
+            }
+            printf("  mip%u base=%u va=%u len=%u peak=%d\n", m, base, va, n, peak);
+        }
+    }
+#endif
 
     void draw_drums_page() {
         const int page_y = PAGE_DRUMS * 16;
