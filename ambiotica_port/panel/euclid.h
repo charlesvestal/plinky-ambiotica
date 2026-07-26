@@ -28,7 +28,7 @@
  * a generated track and a drawn one are indistinguishable to fire_drum_step and to PROB.
  * Rests are written as 0, which fully replaces whatever the track held before.
  */
-static void euclid_fill(unsigned char* dst, int k, int rot) {
+static inline void euclid_fill(unsigned char* dst, int k, int rot) {
     for (int i = 0; i < DRUM_STEPS; i++) {
         int j = (i - rot) & (DRUM_STEPS - 1);
         dst[i] = ((j * k) % DRUM_STEPS) < k ? 127 : 0;
