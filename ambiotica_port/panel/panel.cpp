@@ -151,12 +151,17 @@ struct ambiotica : panel_t {
     unsigned int    drum_tick = 0;     /* monotonic 16ths since transport start */
     short           cond_sel = -1;     /* step being inspected by a PROB/MODULO hold, -1 = none */
     signed char     len_sel  = -1;     /* track whose length a LENGTH hold last set, -1 = none */
-    unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing, 3 modifier used */
+    /* Gesture latch. The mode is decided by the first pad touched and held until every
+       finger lifts, which is what makes a tap behave like a toggle while a drag stays
+       coherent. PAINT_MOD means a modifier owns the gesture, so the paint path stays out. */
+    enum { PAINT_NONE = 0, PAINT_ON = 1, PAINT_ERASE = 2, PAINT_MOD = 3 };
+    unsigned char   drum_paint = PAINT_NONE;
     /* Live PATTERN (Euclid) gesture. Unlike every other modifier on this page it spans more
        than one frame - the press locks the pulse count, the drag rotates - so it needs to
        remember what it started on. eu_track < 0 means no gesture is running. */
     signed char     eu_track  = -1;    /* track the gesture owns; other rows are ignored */
-    signed char     eu_anchor = 0;     /* column pressed - rotation is measured from here */
+    /* The column pressed is always eu_k - 1, so rotation is measured from there rather than
+       stored twice. */
     signed char     eu_last   = -1;    /* last column visited, so we regenerate only on change */
     unsigned char   eu_k      = 0;     /* pulse count, locked at press */
     unsigned char   drum_mute = 0;     /* bit per track; muted tracks stop triggering */
@@ -243,8 +248,7 @@ struct ambiotica : panel_t {
            the arena being pre-zeroed is an assumption about someone else's code - the
            "blank panel" action routes through this function too, so an empty grid has to be
            stated rather than assumed. */
-        memset(pattern, 0, sizeof pattern);
-        memset(pattern_mod, 0, sizeof pattern_mod);
+        clear_drum_pattern();
         drum_kit = drum_kit_sel = -1;   /* generated kit */
         drum_mute = 0;
         drum_kit_arm_us = 0;
@@ -317,12 +321,10 @@ struct ambiotica : panel_t {
        to the panel we just replaced. */
     /* Raw touch, not a widget: a modifier has to be readable by OTHER pads on the same frame,
        and it must not swallow its own press. */
-    bool shift_held(int page_y)  const { return get_touch_down(COL_X,      page_y + CTL_DN)  != 0; }
-    bool reroll_held(int page_y) const { return get_touch_down(COL_REROLL, page_y + CTL_TOP2) != 0; }
-    bool prob_held(int page_y)   const { return get_touch_down(COL_PROB,   page_y + CTL_TOP2) != 0; }
-    bool modulo_held(int page_y) const { return get_touch_down(COL_MODULO, page_y + CTL_TOP2) != 0; }
-    bool length_held(int page_y) const { return get_touch_down(COL_LENGTH, page_y + CTL_TOP2) != 0; }
-    bool euclid_held(int page_y) const { return get_touch_down(COL_PATTERN, page_y + CTL_TOP2) != 0; }
+    bool shift_held(int page_y) const { return get_touch_down(COL_X, page_y + CTL_DN) != 0; }
+    /* Every sequencer modifier lives on row 1, so one accessor covers all of them. Adding a
+       modifier pad is then one row in kModPads below, not three edits in three places. */
+    bool mod_held(int col, int page_y) const { return get_touch_down(col, page_y + CTL_TOP2) != 0; }
 
     /* xorshift32. Only ever drives UI-level randomisation, never audio, so it needs to be
        cheap and non-repeating rather than statistically good. */
@@ -337,7 +339,20 @@ struct ambiotica : panel_t {
         for (int k = 0; k < DRUM_STEPS / 4; k++) {
             int s = (int)(rnd() % DRUM_STEPS);
             pattern[t * DRUM_STEPS + s] = (rnd() & 1) ? (unsigned char)(64 + (rnd() % 64)) : 0;
+            /* A rerolled step is a new step, so it must not inherit the modulo condition of
+               whatever used to be there - otherwise FILL quietly hands a fresh hit a "play
+               every 4th time" it was never given. */
+            pattern_mod[t * DRUM_STEPS + s] = 0;
         }
+    }
+
+    /* The three per-step arrays are one logical object, so "empty pattern" is stated once.
+       Written separately in three places, they diverged: the blank-panel reset used to leave
+       the previous scene's track lengths behind. */
+    void clear_drum_pattern() {
+        memset(pattern, 0, sizeof pattern);
+        memset(pattern_mod, 0, sizeof pattern_mod);
+        memset(drum_len, DRUM_STEPS, sizeof drum_len);
     }
 
     /* Reroll + SYNTH. Randomises the CURRENT preset's parameters rather than loading a
@@ -367,10 +382,13 @@ struct ambiotica : panel_t {
         for (int t = 0; t < DRUM_TRACKS; t++) {
             if (drum_mute & (1u << t)) continue;   /* muted: no trigger, tails ring out */
             /* Each track reads its own position and its own pass out of the shared tick, so
-               a 7-step hat runs a 7-step loop and its modulo counts sevens. */
-            int i = t * DRUM_STEPS + (int)step_of(drum_tick, drum_len[t]);
-            if (!step_fires(pattern[i], pattern_mod[i], pass_of(drum_tick, drum_len[t]), rnd()))
-                continue;
+               a 7-step hat runs a 7-step loop and its modulo counts sevens. One division
+               yields both: the quotient is the pass, the remainder is the step. */
+            const unsigned int L = track_len(drum_len[t]), pass = drum_tick / L;
+            int i = t * DRUM_STEPS + (int)(drum_tick - pass * L);
+            if (!pattern[i]) continue;
+            if (!mod_due(pattern_mod[i], pass)) continue;   /* deterministic: costs no roll */
+            if (!step_fires(pattern[i], 0, 0, rnd())) continue;
             drums_trigger(drums, t, 100);
         }
     }
@@ -538,6 +556,12 @@ struct ambiotica : panel_t {
     void nav_goto(int page) { scroll_to_page(page); nav_cooldown_us = NAV_FREEZE_CEILING_US; }
 
     void draw_nav(int page_y, int page) {
+        /* Which row-1 pads light on the drums page, and in what colour. */
+        struct mod_pad_t { int col; uint32_t col_on; };
+        static const mod_pad_t kModPads[] = {
+            { COL_PATTERN, GREEN }, { COL_MODULO, ORANGE },
+            { COL_PROB,    CYAN  }, { COL_LENGTH, YELLOW },
+        };
         uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
         const bool armed = !input_frozen();
         if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away, ISOLATED,
@@ -547,25 +571,23 @@ struct ambiotica : panel_t {
             if (page == PAGE_SCENE)  scene_picker.on_done();
             nav_goto(PAGE_PLAY);
         }
-        /* ⭕ reroll and PROB, on their printed pads. Read with raw touch and drawn with
+        /* The row-1 modifiers, on their printed pads. Read with raw touch and drawn with
            set_led for the same reason × is: a modifier has to be legible to OTHER pads on
-           the same frame and must not swallow its own press. */
-        bool rr = reroll_held(page_y);
+           the same frame and must not swallow its own press.
+           FILL is drawn on every page because ⭕ + SYNTH works from anywhere; the rest edit
+           the step grid and would be lying about themselves off the drums page. */
+        bool rr = mod_held(COL_REROLL, page_y);
         set_led(COL_REROLL, page_y + CTL_TOP2, rr ? PURPLE : DIMMESTEST(PURPLE));
-        set_led(COL_PROB,   page_y + CTL_TOP2, prob_held(page_y) ? CYAN : DIMMESTEST(CYAN));
-        /* PATTERN, GENERATE's other half. GREEN keeps it distinct from FILL's PURPLE beside
-           it and PROB's CYAN, so the three modifiers on this row read apart at a glance.
-           Drums page ONLY, unlike FILL beside it: reroll does something everywhere (⭕ +
-           SYNTH), but Euclid generates into the step grid and has no meaning off this page.
-           A pad stays dark until it has a function that matches its label. */
-        if (page == PAGE_DRUMS) {
-            set_led(COL_PATTERN, page_y + CTL_TOP2, euclid_held(page_y) ? GREEN : DIMMESTEST(GREEN));
-            /* MODULO, CONDITION's other half. Drums page only for the same reason as PATTERN:
-               it edits the step grid and means nothing anywhere else. */
-            set_led(COL_MODULO, page_y + CTL_TOP2, modulo_held(page_y) ? ORANGE : DIMMESTEST(ORANGE));
-            /* LENGTH, over in the SEQUENCE group. Drums page only, like the rest. */
-            set_led(COL_LENGTH, page_y + CTL_TOP2, length_held(page_y) ? YELLOW : DIMMESTEST(YELLOW));
-        }
+        /* The step-grid modifiers, drums page only: each edits the pattern and would be
+           lying about itself anywhere else, and a pad stays dark until it has a function
+           that matches its label. Colours are all distinct so the row reads apart at a
+           glance - PROB's CYAN beside MODULO's ORANGE, PATTERN's GREEN beside FILL's PURPLE,
+           LENGTH's YELLOW over in the SEQUENCE group. */
+        if (page == PAGE_DRUMS)
+            for (unsigned i = 0; i < sizeof kModPads / sizeof kModPads[0]; i++)
+                set_led(kModPads[i].col, page_y + CTL_TOP2,
+                        mod_held(kModPads[i].col, page_y) ? kModPads[i].col_on
+                                                          : DIMMESTEST(kModPads[i].col_on));
 
         if (button(COL_SYNTH,  page_y + CTL_DN,
                    rr ? PURPLE : (page == PAGE_SYNTH ? here : away), ISOLATED,
@@ -586,11 +608,7 @@ struct ambiotica : panel_t {
         if (button(COL_TRACKS, page_y + CTL_UP,
                    xh ? RED : (page == PAGE_DRUMS ? here : away), ISOLATED,
                    xh ? "Clear the whole pattern" : "Drum sequencer") && armed) {
-            if (xh) {
-                memset(pattern, 0, sizeof pattern);
-                memset(pattern_mod, 0, sizeof pattern_mod);
-                memset(drum_len, DRUM_STEPS, sizeof drum_len);   /* back to full bars too */
-            }
+            if (xh) clear_drum_pattern();
             else    nav_goto(PAGE_DRUMS);
         }
 
@@ -678,7 +696,7 @@ struct ambiotica : panel_t {
                 /* Slice offsets are RELATIVE to sample_data_va - confirmed on device, where
                    sample_data_va reads 8421376 and mip-0 playback is correct, which an
                    absolute address could not be. Kept as offsets from here on so the chops
-                   can be handed to drums_set_sample_mipped and reach the prefiltered
+                   can be handed to drums_set_sample and reach the prefiltered
                    octaves; see dsp/mipmap.h. */
                 unsigned int a = sl->start_read_only, b = sl->end_read_only;
                 /* Length comes from the preset's OWN chop grid, not from the track count.
@@ -696,10 +714,9 @@ struct ambiotica : panel_t {
                 for (int t = 0; t < DRUM_TRACKS; t++) {
                     unsigned int s0 = a + chop * t;
                     unsigned int s1 = s0 + chop;
-                    if (s0 >= b) { drums_set_sample(drums, t, 0, 0); continue; }  /* short sample */
+                    if (s0 >= b) { drums_clear_sample(drums, t); continue; }  /* short sample */
                     if (s1 > b) s1 = b;
-                    drums_set_sample_mipped(drums, t, p->sample_data_va,
-                                            p->tape_length_samples, s0, s1);
+                    drums_set_sample(drums, t, p->sample_data_va, p->tape_length_samples, s0, s1);
                 }
                 return;
             }
@@ -708,10 +725,10 @@ struct ambiotica : panel_t {
             const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE + t];
             const synth_preset_slice_t* sl = &p->slice[0];
             if (drum_kit >= 0 && preset_slice_has_sample_data(sl))
-                drums_set_sample_mipped(drums, t, p->sample_data_va, p->tape_length_samples,
-                                        sl->start_read_only, sl->end_read_only);
+                drums_set_sample(drums, t, p->sample_data_va, p->tape_length_samples,
+                                 sl->start_read_only, sl->end_read_only);
             else
-                drums_set_sample(drums, t, 0, 0);   /* clear: fall back to the generated voice */
+                drums_clear_sample(drums, t);       /* fall back to the generated voice */
         }
     }
 
@@ -756,6 +773,20 @@ struct ambiotica : panel_t {
                     load_preset_from_filename_with_category(DRUM_PRESET_BASE + t, k.category, k.bank, t);
         }
         refresh_drum_slices();
+        /* dsp/mipmap.h REIMPLEMENTS the SDK's get_mip_va, because drums.c also builds in the
+           desktop harness where the SDK does not exist. Cross-check the copy against the real
+           thing on every sampled kit load: nine integer compares, silent unless they diverge,
+           and deliberately NOT behind AMB_PROFILE - a guard that only runs in a build nobody
+           flashes guards nothing. */
+        if (kit >= 0) {
+            const synth_preset_t* mp = &synth_presets[DRUM_PRESET_BASE];
+            if (preset_slice_has_sample_data(&mp->slice[0]))
+                for (unsigned m = 0; m <= 8; m++) {
+                    unsigned int ours = mip_base(mp->sample_data_va, mp->tape_length_samples, m);
+                    unsigned int sdk  = get_mip_va(mp, m, false);
+                    if (ours != sdk) printf("!! mip%u MISMATCH ours=%u sdk=%u\n", m, ours, sdk);
+                }
+        }
 #ifdef AMB_PROFILE
         /* Both layouts put a sampled slice at DRUM_PRESET_BASE - the break in the sliced
            case, track 0's one-shot otherwise - so one probe covers both. */
@@ -808,12 +839,6 @@ struct ambiotica : panel_t {
                off0, off1, off1 - off0);
         for (unsigned m = 0; m <= 8; m++) {
             unsigned int base = get_mip_va(p, m, false);
-            /* dsp/mipmap.h REIMPLEMENTS get_mip_va, because drums.c also builds in the
-               desktop harness where the SDK does not exist. Cross-check the copy against the
-               real thing here, so a future SDK change shows up as a loud mismatch on the next
-               kit load rather than as quietly wrong sample addresses. */
-            unsigned int ours = mip_base(p->sample_data_va, p->tape_length_samples, m);
-            if (ours != base) printf("  !! mip%u MISMATCH ours=%u sdk=%u\n", m, ours, base);
             unsigned int va   = base + (off0 >> m);
             unsigned int n    = (off1 - off0) >> m;
             int peak = 0;
@@ -838,15 +863,16 @@ struct ambiotica : panel_t {
            finger crossed would flip on its own and a swipe would just invert the row.
            × forces erase regardless, so you can scrub out a run that starts on a gap. */
         bool erase_mod = shift_held(page_y);
-        bool prob_mod  = prob_held(page_y);
-        bool rr_mod    = reroll_held(page_y);
-        bool eu_mod    = euclid_held(page_y);
-        bool mod_mod   = modulo_held(page_y);
-        bool len_mod   = length_held(page_y);
+        bool prob_mod  = mod_held(COL_PROB,    page_y);
+        bool rr_mod    = mod_held(COL_REROLL,  page_y);
+        bool eu_mod    = mod_held(COL_PATTERN, page_y);
+        bool mod_mod   = mod_held(COL_MODULO,  page_y);
+        bool len_mod   = mod_held(COL_LENGTH,  page_y);
         if (!len_mod) len_sel = -1;
         /* The selection belongs to a single hold: let go of both CONDITION pads and the next
            tap inspects again rather than silently advancing whatever was last touched. */
         if (!prob_mod && !mod_mod) cond_sel = -1;
+        const bool any_mod = mute_mod || rr_mod || len_mod || eu_mod || prob_mod || mod_mod;
         /* MUTE: hold + tap a track toggles it; a tap on its own unmutes everything, which is
            how every Plinky panel's mute behaves. "On its own" is tracked across the hold
            rather than guessed at, so a hold that did toggle something does not also
@@ -858,52 +884,52 @@ struct ambiotica : panel_t {
         bool any_down  = false;
         for (int t = 0; t < DRUM_TRACKS; t++) {
             int y = page_y + UI_Y + t;
+            /* Per-track, not per-pad. drum_len[] is a RUNTIME divisor, so step_of/pass_of
+               compile to real udiv instructions rather than the mask euclid_fill gets from
+               its constant - 256 of them per frame if left in the inner loop. One division
+               yields both: quotient is the pass, remainder is the head. */
+            const unsigned int tlen = track_len(drum_len[t]);
+            const unsigned int tpass = drum_tick / tlen;
+            const int head_s = playing ? (int)(drum_tick - tpass * tlen) : -1;
+            const int hue = (t * 2 + 1) & 15;
+            const bool muted = (drum_mute & (1u << t)) != 0;
             for (int s = 0; s < DRUM_STEPS; s++) {
                 int idx = t * DRUM_STEPS + s;
                 /* Frozen during a page transition - otherwise the finger still down from the
                    TRACKS tap writes a step on every row the grid slides past it. */
                 if (!input_frozen() && get_touch_down(s, y)) {
                     any_down = true;
+                    /* One latch for every gesture on this page. `press` means "first pad
+                       since the last full release"; PAINT_MOD means a modifier owns the
+                       gesture from here, which is what stops it degrading into painting if
+                       the modifier is released while the finger is still down. Each branch
+                       below then states only its action. */
+                    const bool press = !drum_paint;
+                    if (any_mod) drum_paint = PAINT_MOD;
                     if (mute_mod) {
-                        if (!drum_paint) {
-                            drum_paint = 3; mute_hit_track = true;
-                            drum_mute ^= (unsigned char)(1u << t);
-                        }
+                        if (press) { mute_hit_track = true; drum_mute ^= (unsigned char)(1u << t); }
                     } else if (rr_mod) {
-                        /* ⭕ + a track randomises a quarter of it. Latched through drum_paint
-                           so a held finger rerolls once rather than every frame. */
-                        if (!drum_paint) { drum_paint = 3; reroll_track(t); }
+                        /* FILL + a track randomises a quarter of it, once per press. */
+                        if (press) reroll_track(t);
                     } else if (len_mod) {
                         /* LENGTH + press a step = that track loops to there. Press-a-column
                            like PATTERN rather than tap-to-cycle like PROB, because the value
                            IS the column: no inspect step is needed when the grid already
                            shows the answer by going dark past the loop point. */
-                        if (!drum_paint) {
-                            drum_paint = 3;
-                            drum_len[t] = (unsigned char)(s + 1);
-                            len_sel = (signed char)t;
-                        }
+                        if (press) { drum_len[t] = (unsigned char)(s + 1); len_sel = (signed char)t; }
                     } else if (eu_mod) {
                         /* PATTERN + press = a Euclidean rhythm of (column + 1) pulses,
-                           replacing the track. Keep holding and slide along the row to
-                           rotate it; the grid redraws from pattern[] every frame, so the
-                           phase moves live under the finger.
-                           This is the ONE modifier here that must keep acting while
-                           drum_paint == 3, so the press and the drag are two separate
-                           conditions rather than the usual single !drum_paint guard -
-                           with that guard you would get pulse selection and no rotation.
-                           eu_track pins the gesture to the row it started on, so a finger
-                           wandering vertically cannot silently rewrite a second track. */
-                        if (!drum_paint) {
-                            drum_paint = 3;
-                            eu_track  = (signed char)t;
-                            eu_anchor = (signed char)s;
-                            eu_last   = (signed char)s;
-                            eu_k      = (unsigned char)(s + 1);
-                            euclid_fill(&pattern[t * DRUM_STEPS], eu_k, 0);
-                        } else if (eu_track == (signed char)t && eu_last != (signed char)s) {
+                           replacing the track; keep holding and slide along the row to
+                           rotate it. The press locks the pulse count and the column it
+                           started on, which is pulses - 1, so the drag rotation is just how
+                           far the finger has moved from there. eu_track pins the gesture to
+                           its row, so a finger wandering vertically cannot rewrite a second
+                           track. The grid redraws from pattern[] every frame, so the phase
+                           moves live under the finger. */
+                        if (press) { eu_track = (signed char)t; eu_k = (unsigned char)(s + 1); eu_last = -1; }
+                        if (eu_track == (signed char)t && eu_last != (signed char)s) {
                             eu_last = (signed char)s;
-                            euclid_fill(&pattern[t * DRUM_STEPS], eu_k, s - eu_anchor);
+                            euclid_fill(&pattern[t * DRUM_STEPS], eu_k, s - (eu_k - 1));
                         }
                     } else if (prob_mod || mod_mod) {
                         /* The two CONDITION pads share one gesture. The FIRST tap on a step
@@ -915,34 +941,26 @@ struct ambiotica : panel_t {
                            are due. Moving to another step goes back to inspecting.
                            Only lit steps cycle: an empty step has nothing to make less
                            likely or less frequent, so this never turns steps on by accident. */
-                        if (!drum_paint) {
-                            drum_paint = 3;
+                        if (press) {
                             if (cond_sel != (short)idx)      cond_sel = (short)idx;
                             else if (pattern[idx]) {
                                 if (prob_mod) pattern[idx]     = next_prob(pattern[idx]);
                                 else          pattern_mod[idx] = next_mod(pattern_mod[idx]);
                             }
                         }
-                    } else {
-                        if (!drum_paint) drum_paint = pattern[idx] ? 2 : 1;   /* latch on first contact */
-                        /* Mode 3 means a MODIFIER owns this gesture, so releasing that
-                           modifier while the finger is still down must not degrade into
-                           painting - the latch is "held until every finger lifts", and that
-                           has to include the case where the modifier goes up first. Without
-                           this guard, lifting PATTERN mid-drag repaints every step the finger
-                           then crosses, overwriting the pattern it just generated. The same
-                           leak applied to FILL, PROB and MUTE; it was simply hard to reach
-                           before a modifier gesture involved dragging. */
-                        if (drum_paint != 3)
-                            pattern[idx] = (erase_mod || drum_paint == 2) ? 0 : 127;
+                    } else if (drum_paint != PAINT_MOD) {
+                        /* Plain painting. Skipped entirely once a modifier owns the gesture,
+                           so letting go of PATTERN mid-drag cannot repaint the steps the
+                           finger then crosses. */
+                        if (press) drum_paint = pattern[idx] ? PAINT_ERASE : PAINT_ON;
+                        pattern[idx] = (erase_mod || drum_paint == PAINT_ERASE) ? 0 : 127;
                     }
                 }
                 unsigned char vel = pattern[idx];
-                /* Each track has its own head now, so a 7-step track visibly wraps while a
+                /* Each track has its own head, so a 7-step track visibly wraps while a
                    16-step one is still crossing the bar. */
-                bool head = playing && s == (int)step_of(drum_tick, drum_len[t]);
-                bool beyond = s >= (int)track_len(drum_len[t]);
-                bool muted = (drum_mute & (1u << t)) != 0;
+                bool head = (s == head_s);
+                bool beyond = s >= (int)tlen;
                 uint32_t c;
                 if (beyond) {
                     /* Past this track's loop point. Content is kept and shown faintly rather
@@ -962,9 +980,11 @@ struct ambiotica : panel_t {
                        so a 1:4 visibly breathes across four bars instead of looking like a
                        plain hit that mysteriously does not sound. */
                     int sh = 3 + (vel * 6) / 127; if (head) sh += 4; if (sh > 15) sh = 15;
-                    if (!mod_due(pattern_mod[idx], pass_of(drum_tick, drum_len[t])))
+                    /* Guarded so an unconditioned step - almost all of them - does not even
+                       evaluate the check. */
+                    if (pattern_mod[idx] && !mod_due(pattern_mod[idx], tpass))
                         sh = sh > 6 ? sh - 4 : 2;
-                    c = palette[sh][(t * 2 + 1) & 15];
+                    c = palette[sh][hue];
                 }
                 else if (head)         c = DIMMER(WHITE);               /* playhead over an empty step */
                 else if ((s & 3) == 0) c = DIMMESTEST(WHITE);           /* beat ruler */
@@ -974,10 +994,10 @@ struct ambiotica : panel_t {
         }
         /* The gesture ends only when the grid is fully released. eu_track is cleared in the
            same breath so a PATTERN drag cannot resume against a row the finger has left. */
-        if (!any_down) { drum_paint = 0; eu_track = -1; }
+        if (!any_down) { drum_paint = PAINT_NONE; eu_track = -1; }
         else if (eu_track >= 0)
             set_help_text("Euclid #fc2#*%d/%d#. rot %+d", eu_k, DRUM_STEPS,
-                          ((eu_last - eu_anchor + 8) & 15) - 8);
+                          ((eu_last - (eu_k - 1) + 8) & 15) - 8);
 
         /* BANK ▲▼ cycles kits here - which is what the pad is actually printed for. On the
            play page the same pads pick the musical mode; context decides, and both readings
@@ -1009,14 +1029,11 @@ struct ambiotica : panel_t {
         /* What the selected step is set to, in the four free rows below the grid - drawn over
            the kit label because if you are holding a CONDITION pad, that is what you are
            reading. Colour follows the pad you are holding, so the number needs no units. */
-        if (len_sel >= 0 && len_mod) {
+        if (len_sel >= 0) {                 /* cleared above whenever LENGTH is not held */
             unsigned int L = track_len(drum_len[len_sel]);
-            char buf[4];
-            if (L >= 10) { buf[0] = (char)('0' + L / 10); buf[1] = (char)('0' + L % 10); buf[2] = 0; }
-            else         { buf[0] = (char)('0' + L); buf[1] = 0; }
-            leds_draw_string(0, page_y + UI_Y + DRUM_TRACKS, FONT_4, YELLOW, buf);
+            leds_draw_string(0, page_y + UI_Y + DRUM_TRACKS, FONT_4, YELLOW, dec_label(L));
             set_help_text("Track length: #fc2#*%u#. steps", L);
-        } else if (cond_sel >= 0 && (prob_mod || mod_mod)) {
+        } else if (cond_sel >= 0) {         /* likewise cleared when neither CONDITION pad is */
             const char* txt = prob_mod ? prob_label(pattern[cond_sel])
                                        : mod_label(pattern_mod[cond_sel]);
             leds_draw_string(0, page_y + UI_Y + DRUM_TRACKS, FONT_4,

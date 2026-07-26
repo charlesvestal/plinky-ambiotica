@@ -21,28 +21,38 @@ typedef struct {
     float        pan;       /* -1 = hard L, +1 = hard R; kept narrow for a centred kit */
 } drum_sample_t;
 
+/* Everything drums_render needs for a sounding voice, resolved once at trigger. The render
+ * loop is DATA bound, not instruction bound (see the note above drums_render), so the point
+ * is not the arithmetic saved but that the per-block path reads one struct instead of
+ * reaching into drum_source_t as well. */
 typedef struct {
     float pos;              /* fractional read head, in units of THIS voice's mip; <0 = idle */
     float amp;              /* velocity, 0..1 */
-    unsigned char mip;      /* octave chosen at trigger; 0 = the unfiltered original */
+    float rate;             /* playback rate already divided down for the chosen mip */
+    unsigned int va0;       /* slice start in the chosen mip; 0 = play the generated buffer */
+    int   len;              /* slice length in the chosen mip */
 } drum_voice_t;
 
-/* A track either plays its generated 8-bit buffer or a slice of preset-owned sample memory.
- * va_end > va_start selects the latter. Sample memory is 16-bit and paged behind
- * chunk_location_ptrs, so it is read through READ_SAMPLE rather than a raw pointer - the
- * chunk a slice lives in can move. */
-/* base_va/tape_len/off are what mipmap.h needs to find the same slice in a prefiltered
- * octave. tape_len 0 means "no pyramid known for this track" - the generated kit, and any
- * caller still using the plain drums_set_sample - in which case playback stays on mip 0. */
+/* A track either plays its generated 8-bit buffer or a slice of preset-owned sample memory;
+ * len != 0 selects the latter. Sample memory is 16-bit and paged behind chunk_location_ptrs,
+ * so it is read through READ_SAMPLE rather than a raw pointer - the chunk a slice lives in
+ * can move.
+ * The slice is described the way the preset system gives it to us - base plus a relative
+ * offset - which is exactly what mipmap.h needs to find the same audio in a prefiltered
+ * octave. Storing an absolute mip-0 address as well would be storing base_va + off twice,
+ * and every consumer would then have to special-case mip 0 to decide which to believe. */
 typedef struct {
-    unsigned int va_start, va_end;      /* mip 0, absolute */
-    unsigned int base_va, tape_len, off;
+    unsigned int base_va;   /* the preset's sample_data_va */
+    unsigned int tape_len;  /* the preset's tape_length_samples */
+    unsigned int off;       /* slice start, relative to base_va */
+    unsigned int len;       /* slice length in mip-0 samples; 0 = generated buffer */
 } drum_source_t;
 
 struct drums_s {
     drum_sample_t s[DRUM_TRACKS];
     drum_voice_t  v[DRUM_TRACKS];   /* one voice per track - a retrigger cuts its predecessor */
     drum_source_t src[DRUM_TRACKS]; /* zeroed = use the generated buffer */
+    unsigned int  mip;              /* octave for the current rate, from drums_set_pitch */
     int           choke;            /* closed hat cuts open hat - a kit thing, not a break thing */
     float         rate;             /* read speed; 1 = unity, 2 = an octave up */
 };
@@ -202,13 +212,23 @@ void drums_trigger(drums_t* d, int track, int velocity) {
     /* A closed hat chokes the open hat - the one piece of cross-track behaviour worth
        having, and the thing that makes a hat pattern sound like a hat pattern. */
     if (d->choke && track == DRUM_CHAT) d->v[DRUM_OHAT].pos = -1.0f;
-    d->v[track].pos = 0.0f;
-    d->v[track].amp = (float)velocity * (1.0f / 127.0f);
-    /* Pick the octave ONCE, here, rather than per block: pos is measured in the chosen mip's
-       samples, so a mip that changed under a sounding voice would jump the read head. Pitch
-       is a between-takes gesture, so a note that outlives a transpose simply finishes in the
-       octave it started in - more or less anti-aliased than ideal, never wrong. */
-    d->v[track].mip = (unsigned char)(d->src[track].tape_len ? mip_for_rate(d->rate) : 0u);
+    drum_voice_t* v = &d->v[track];
+    const drum_source_t* src = &d->src[track];
+    v->pos = 0.0f;
+    v->amp = (float)velocity * (1.0f / 127.0f);
+    /* Resolve the octave ONCE, here, rather than per block: pos is measured in the chosen
+       mip's samples, so a mip that changed under a sounding voice would jump the read head.
+       Pitch is a between-takes gesture, so a note that outlives a transpose finishes in the
+       octave it started in - more or less anti-aliased than ideal, never wrong.
+       d->mip is precomputed in drums_set_pitch; this runs on core0's high-priority sequencer
+       timer up to eight times per 16th, so it must not do a float search. */
+    unsigned int mip = src->len ? d->mip : 0u;
+    v->va0  = src->len ? mip_va(src->base_va, src->tape_len, src->off, mip) : 0u;
+    v->len  = src->len ? (int)mip_len(src->len, mip) : d->s[track].len;
+    /* A mip is an octave down per level, so the read head walks it that much slower to land
+       on the same pitch. At an exact octave this is bit-exact 1.0f and drums_render's integer
+       fast path still fires. */
+    v->rate = d->rate * (1.0f / (float)(1u << mip));
 }
 
 void drums_set_pitch(drums_t* d, float semitones) {
@@ -218,6 +238,9 @@ void drums_set_pitch(drums_t* d, float semitones) {
     if (semitones < -24.f) semitones = -24.f;
     if (semitones >  24.f) semitones =  24.f;
     d->rate = powf(2.0f, semitones / 12.0f);
+    /* Every track shares this rate, so the octave choice is global. Deciding it here keeps
+       the float search out of drums_trigger, which runs on the sequencer timer. */
+    d->mip = mip_for_rate(d->rate);
 }
 
 void drums_all_off(drums_t* d) {
@@ -225,25 +248,23 @@ void drums_all_off(drums_t* d) {
     for (int t = 0; t < DRUM_TRACKS; t++) d->v[t].pos = -1.0f;
 }
 
-void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int va_end) {
+void drums_clear_sample(drums_t* d, int track) {
     if (!d || track < 0 || track >= DRUM_TRACKS) return;
-    if (va_end <= va_start) { d->src[track].va_start = d->src[track].va_end = 0; }
-    else                    { d->src[track].va_start = va_start; d->src[track].va_end = va_end; }
-    d->src[track].base_va = d->src[track].tape_len = d->src[track].off = 0;   /* no pyramid */
+    drum_source_t* src = &d->src[track];
+    src->base_va = src->tape_len = src->off = src->len = 0;
     d->v[track].pos = -1.0f;   /* a voice mid-flight would keep indexing the old source */
 }
 
-void drums_set_sample_mipped(drums_t* d, int track, unsigned int sample_data_va,
-                             unsigned int tape_length, unsigned int off_start,
-                             unsigned int off_end) {
+void drums_set_sample(drums_t* d, int track, unsigned int sample_data_va,
+                      unsigned int tape_length, unsigned int off_start,
+                      unsigned int off_end) {
     if (!d || track < 0 || track >= DRUM_TRACKS) return;
-    if (off_end <= off_start || !tape_length) { drums_set_sample(d, track, 0, 0); return; }
+    if (off_end <= off_start || !tape_length) { drums_clear_sample(d, track); return; }
     drum_source_t* src = &d->src[track];
-    src->va_start = mip_va(sample_data_va, tape_length, off_start, 0);
-    src->va_end   = mip_va(sample_data_va, tape_length, off_end,   0);
     src->base_va  = sample_data_va;
     src->tape_len = tape_length;
     src->off      = off_start;
+    src->len      = off_end - off_start;
     d->v[track].pos = -1.0f;
 }
 
@@ -253,15 +274,12 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
         drum_voice_t* v = &d->v[t];
         if (v->pos < 0) continue;
         const drum_sample_t* s = &d->s[t];
-        const drum_source_t* src = &d->src[t];
-        const int sampled = (src->va_end > src->va_start);
-        /* Reading mip m at rate/2^m is the same pitch with the aliasing already filtered out.
-           At an exact octave this lands on rate 1.0 and falls into the integer fast path
-           below, so an octave-up break gets cheaper AND cleaner at the same time. */
-        const unsigned int mip = sampled ? v->mip : 0u;
-        const unsigned int va0 = mip ? mip_va(src->base_va, src->tape_len, src->off, mip)
-                                     : src->va_start;
-        const int len = sampled ? (int)mip_len(src->va_end - src->va_start, mip) : s->len;
+        /* Everything below was resolved at trigger, so this loop never touches drum_source_t
+           - one struct in the working set instead of two, which is what matters for a loop
+           that is data bound rather than instruction bound. */
+        const unsigned int va0 = v->va0;
+        const int sampled = (va0 != 0u);
+        const int len = v->len;
         /* 8-bit generated buffers run +/-127, preset sample memory is 16-bit; normalise here
            so per-track gain and velocity mean the same thing either way. */
         /* Per-track gain/pan are trims baked for the GENERATED kit; applying the synthesised
@@ -273,13 +291,10 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
         float gl = g * (1.0f - pan) * 0.5f;
         float gr = g * (1.0f + pan) * 0.5f;
         /* Resampled read head. Linear interpolation between neighbouring samples: without it
-           a transposed drum picks up hard quantisation noise on top of the aliasing. The
-           SDK does precompute prefiltered mipmaps for exactly this (get_mip_va), which would
-           beat interpolation when pitching well above unity - but how a slice's offsets map
-           into mip space is undocumented, so mip 0 it is until that is worth confirming. */
-        /* The mip is already an octave down per level, so the read head walks it that
-           much slower to land on the same pitch. */
-        const float rate = mip ? d->rate * (1.0f / (float)(1u << mip)) : d->rate;
+           a transposed drum picks up hard quantisation noise on top of the aliasing. Sampled
+           sources also read from the SDK's prefiltered octave for the current pitch, chosen
+           at trigger, so pitching well above unity does not alias - see dsp/mipmap.h. */
+        const float rate = sampled ? v->rate : d->rate;
         float pos = v->pos;
         const float last = (float)(len - 1);
         /* Unity pitch is the common case - the kit is untransposed unless you ask - and
