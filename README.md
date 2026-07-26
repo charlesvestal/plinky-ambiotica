@@ -93,7 +93,7 @@ sh harness/build.sh       # -> amb_harness_float / amb_harness_i16
 ambiotica_port/
   dsp/            looper, granular, microloop, reverb (modal), dattorro, harmony, bloom, drift, lfo
   harness/        full_chain.h (signal chain) + a native render harness
-  panel/          panel.cpp (Plinky glue) + amalgamate.sh + UI_MANUAL.md
+  panel/          panel.cpp (Plinky glue) + amalgamate.sh + library_readme.md
   PORT_NOTES.md   porting notes
 SYSTEM_NOTES.md   general Plinky-12 panel-development reference
 ```
