@@ -65,15 +65,20 @@ static inline unsigned char next_mod(unsigned char m) {
     return (unsigned char)(m >= (unsigned char)COND_N ? 0 : m + 1);
 }
 
-/* Labels are built by hand rather than with snprintf: the panel runtime is not a hosted C
-   library, and these are at most three characters. Four is all that fits across 16 columns
-   in FONT_4, which every label here respects. */
-static inline const char* prob_label(unsigned char p) {
+/* Four characters is all that fits across 16 columns in FONT_4, which every label here
+   respects. Each returns its own function-local buffer, so two labels can be live at once
+   but the same one cannot - fine, since the readout shows one value at a time. */
+static inline const char* dec_label(unsigned int n) {
     static char buf[8];
-    int pct = (p * 100) / 127;          /* 127/96/64/32 -> 100/75/50/25 */
-    if (pct >= 100) { buf[0] = '1'; buf[1] = '0'; buf[2] = '0'; buf[3] = 0; }
-    else            { buf[0] = (char)('0' + pct / 10); buf[1] = (char)('0' + pct % 10); buf[2] = 0; }
+    if (n >= 100) { buf[0] = (char)('0' + n / 100); buf[1] = (char)('0' + (n / 10) % 10);
+                    buf[2] = (char)('0' + n % 10);  buf[3] = 0; }
+    else if (n >= 10) { buf[0] = (char)('0' + n / 10); buf[1] = (char)('0' + n % 10); buf[2] = 0; }
+    else              { buf[0] = (char)('0' + n); buf[1] = 0; }
     return buf;
+}
+
+static inline const char* prob_label(unsigned char p) {
+    return dec_label((unsigned int)((p * 100) / 127));   /* 127/96/64/32 -> 100/75/50/25 */
 }
 
 static inline const char* mod_label(unsigned char m) {
@@ -98,10 +103,9 @@ static inline int mod_due(unsigned char m, unsigned int pass) {
    Both conditions must pass, and modulo is evaluated first because it is deterministic: a
    step that is not due this pass must not burn a roll deciding something it cannot do. */
 static inline int step_fires(unsigned char p, unsigned char m, unsigned int pass, unsigned int roll) {
-    if (!p) return 0;
-    if (!mod_due(m, pass)) return 0;
-    if (p < 127 && roll % 127u >= p) return 0;
-    return 1;
+    /* roll % 127 is at most 126, so p == 127 always wins the comparison and needs no special
+       case. Modulo is checked first because it is deterministic. */
+    return p && mod_due(m, pass) && roll % 127u < p;
 }
 
 #endif
