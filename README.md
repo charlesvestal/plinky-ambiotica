@@ -32,18 +32,32 @@ Two macro gestures ride on top and lerp many stages at once:
 
 ## Controls
 
-- **Left half (8 strings):** the play surface. Each string is a **chord tone** stacked in
-  octaves, so playing across strings voices the selected chord and sliding along a string
-  stays in the key's scale — always in key.
-- **Columns 8–14:** seven macro sliders — Orbit, Constellate, Satellite, Tail, Flux,
+Laid out for the **Chords** faceplate: the play UI occupies rows 2–13 (the only rows that
+overlay draws pads for) and the reserved rows carry control pads under their printed
+labels. No physical side button is claimed.
+
+- **Left half (8 strings):** the play surface, tuned in **diatonic fourths** within the
+  selected key and mode, so every cluster is an open in-key chord and sliding up a string
+  walks the scale.
+- **Columns 8–14:** seven macro sliders — Orbit, Satellite, Constellate, Tail, Flux,
   Spectra, Mix.
 - **Column 15:** a bipolar slider — **up = Gravity**, **down = Event Horizon**.
-- **Side buttons:** left pair moves the **key** around the circle of fifths; right pair
-  cycles the **chord** (min / maj / sus4 / 5th / oct). Both re-voice the surface and the
-  Spectra chord, and recolor the play surface.
+- **KEY ▲▼ / BANK ▲▼:** key around the circle of fifths, and mode
+  (Ionian / Aeolian / Dorian / Lydian / Mixolydian). Both retune the surface and the
+  Spectra wash.
+- **Pages** on their printed pads: **TRACKS** (drums), **SYNTH** (editor), **PRESET**,
+  **SONG** (save/load a whole scene), **SCALE** to come back.
 
-See [`ambiotica_port/panel/UI_MANUAL.md`](ambiotica_port/panel/UI_MANUAL.md) for the full
-manual and a quick-start pad recipe.
+### Drums
+
+An 8-track x0x sequencer on the TRACKS page, rendered **after** the chain so the pattern
+stays dry and legible under the wash — and costs no polyphony. Kick, snare, closed/open
+hat, clap, rim and two toms, synthesised at boot, with the shipped sampled kits and 16
+sliced breaks on **BANK**. Drag to write steps; **PROB** sets how often a step fires;
+**FILL** randomises a track; **MUTE** mutes one; **KEY** transposes the kit.
+
+See [`ambiotica_port/panel/library_readme.md`](ambiotica_port/panel/library_readme.md) for
+the full panel manual.
 
 ## Install (drop-in)
 
