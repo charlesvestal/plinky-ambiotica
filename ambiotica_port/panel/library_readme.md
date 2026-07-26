@@ -4,9 +4,9 @@ A generative-ambient instrument. Play a few notes and let go — a rolling loope
 granular scatter cloud, a freezing micro-loop, a Dattorro plate reverb and a bank of
 tuned resonators bloom them into a slow wash that stays in key.
 
-> **This panel needs the CHORDS faceplate.** Every control sits under the printed word that
-> describes it — that is the whole design. On any other overlay the pads still work, but the
-> labels around them will describe something else entirely.
+> **Designed for the Chords faceplate.** Every control sits under the printed word that
+> describes it, so the overlay itself documents the panel. It runs on any Plinky 12 — on a
+> different faceplate you just lose that correspondence.
 
 Ambiotica owns the audio output: the built-in FX are silenced and the whole chain runs
 on core 1.
