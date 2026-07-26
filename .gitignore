@@ -15,6 +15,10 @@ ambiotica_port/harness/*.o
 ambiotica_port/panel/plinky_ambiotica*.cpp
 ambiotica_port/panel/*.o
 
+# compiled unit tests (rebuild via panel/tests.sh)
+ambiotica_port/panel/euclid_test
+ambiotica_port/panel/stepcond_test
+
 # Plinky IDE API reference — third-party (plinky12.com), NOT redistributable.
 # Fetch the latest from the site when needed; never commit it.
 llm.txt
