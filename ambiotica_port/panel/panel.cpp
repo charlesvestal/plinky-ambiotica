@@ -59,6 +59,14 @@ enum {
        Toadstep both have a dedicated reroll key, but their silkscreens are not ours. */
     COL_PROB   = 12,    /* "PROB" (row 1) — hold to see and edit per-step probability */
     COL_REROLL = 14,    /* "FILL" (row 1) — hold + tap a target to randomise it */
+    /* Column 15 rows 10-12 are printed MUTE / EDIT / ROOT — the side controls of the stock
+       45-chord palette. On the PLAY page that column is our Gravity/Event Horizon slider,
+       so they are only claimed on the drums page, where the column is genuinely free.
+       Only MUTE is lit: EDIT would want per-track level/pan (we bake those per voice) and
+       ROOT's obvious job, resetting transpose, is already x + KEY. A pad stays dark until
+       it has a function that matches its label. */
+    COL_MUTE   = 15,
+    ROW_MUTE   = UI_Y + DRUM_TRACKS,   /* row 10, beside where the chord palette starts */
     CTL_UP     = 14,    /* bottom row A — the printed ▲ / upper-label row */
     CTL_DN     = 15,    /* bottom row B — the printed ▼ / lower-label row */
     COL_KEY    = 0,     /* "KEY"    ▲/▼ — key, around the circle of fifths */
@@ -110,7 +118,9 @@ struct ambiotica : panel_t {
     unsigned char   pattern[DRUM_TRACKS * DRUM_STEPS] = {0};
     clock_divider_t drum_clock;
     int             drum_step = 0;
-    unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing */
+    unsigned char   drum_paint = 0;    /* gesture mode: 0 idle, 1 painting on, 2 erasing, 3 modifier used */
+    unsigned char   drum_mute = 0;     /* bit per track; muted tracks stop triggering */
+    bool            mute_hit_track = false;  /* did this MUTE hold actually toggle anything? */
     bool            preset_report_done = false;   /* one-shot preset/kit dump (see report_presets) */
     int             drum_kit = -1;      /* -1 = the generated kit; else an index into kKits */
     int             drum_transpose = 0;   /* semitones, applied to the whole kit */
@@ -195,6 +205,7 @@ struct ambiotica : panel_t {
            stated rather than assumed. */
         memset(pattern, 0, sizeof pattern);
         drum_kit = drum_kit_sel = -1;   /* generated kit */
+        drum_mute = 0;
         drum_kit_arm_us = 0;
         drum_step = 0;
         set_drum_transpose(0);
@@ -314,6 +325,7 @@ struct ambiotica : panel_t {
        is why both Blocks and Toadstep put probability on their step editors. */
     void fire_drum_step() {
         for (int t = 0; t < DRUM_TRACKS; t++) {
+            if (drum_mute & (1u << t)) continue;   /* muted: no trigger, tails ring out */
             unsigned char p = pattern[t * DRUM_STEPS + drum_step];
             if (!p) continue;
             if (p < 127 && (int)(rnd() % 127u) >= p) continue;   /* rolled a miss */
@@ -717,6 +729,14 @@ struct ambiotica : panel_t {
         bool erase_mod = shift_held(page_y);
         bool prob_mod  = prob_held(page_y);
         bool rr_mod    = reroll_held(page_y);
+        /* MUTE: hold + tap a track toggles it; a tap on its own unmutes everything, which is
+           how every Plinky panel's mute behaves. "On its own" is tracked across the hold
+           rather than guessed at, so a hold that did toggle something does not also
+           un-mute-all when released. */
+        const int mute_y = page_y + ROW_MUTE;
+        bool mute_mod = get_touch_down(COL_MUTE, mute_y) != 0;
+        if (get_touch_pressed(COL_MUTE, mute_y)) mute_hit_track = false;
+        if (get_touch_released(COL_MUTE, mute_y) && !mute_hit_track) drum_mute = 0;
         bool any_down  = false;
         for (int t = 0; t < DRUM_TRACKS; t++) {
             int y = page_y + UI_Y + t;
@@ -726,7 +746,12 @@ struct ambiotica : panel_t {
                    TRACKS tap writes a step on every row the grid slides past it. */
                 if (!input_frozen() && get_touch_down(s, y)) {
                     any_down = true;
-                    if (rr_mod) {
+                    if (mute_mod) {
+                        if (!drum_paint) {
+                            drum_paint = 3; mute_hit_track = true;
+                            drum_mute ^= (unsigned char)(1u << t);
+                        }
+                    } else if (rr_mod) {
                         /* ⭕ + a track randomises a quarter of it. Latched through drum_paint
                            so a held finger rerolls once rather than every frame. */
                         if (!drum_paint) { drum_paint = 3; reroll_track(t); }
@@ -742,8 +767,14 @@ struct ambiotica : panel_t {
                 }
                 unsigned char vel = pattern[idx];
                 bool head = playing && s == drum_step;
+                bool muted = (drum_mute & (1u << t)) != 0;
                 uint32_t c;
-                if (vel) {
+                if (muted) {
+                    /* A muted track still shows its pattern, just dimmed — you need to see
+                       what you are about to bring back in. Red while MUTE is held, so the
+                       gesture reads before you commit to it. */
+                    c = vel ? (mute_mod ? DIMMER(RED) : DIMMESTEST(WHITE)) : 0;
+                } else if (vel) {
                     /* Brightness carries probability, so holding PROB turns the grid into a
                        readout of how often each step fires rather than a separate page. */
                     int sh = 3 + (vel * 6) / 127; if (head) sh += 4; if (sh > 15) sh = 15;
@@ -783,6 +814,10 @@ struct ambiotica : panel_t {
             leds_draw_string(0, page_y + UI_Y + DRUM_TRACKS, FONT_4, BLUE, kit_label(drum_kit_sel));
             set_help_text("Kit: #fc2#*%s#.", kit_name(drum_kit_sel));
         }
+
+        /* Drawn after the kit-name overlay, which spans these rows while a kit is armed and
+           would otherwise paint over it. */
+        set_led(COL_MUTE, mute_y, drum_mute ? RED : (mute_mod ? DIMMER(RED) : DIMMESTEST(RED)));
 
         draw_nav(page_y, PAGE_DRUMS);
     }
@@ -1290,6 +1325,7 @@ struct ambiotica : panel_t {
         FIELD("mode",    o.mode_sel,               0,  4);
         FIELD_BASE64("drums", o.pattern, pattern_bytes, (int)sizeof(o.pattern));
         FIELD("kit",     o.drum_kit,               -1, 8);
+        FIELD("dmute",   o.drum_mute,              0u, 255u);
         FIELD("dtrans", o.drum_transpose,        -24, 24);
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
          * preset-install planner on a scene load — that happens for every staged panel load

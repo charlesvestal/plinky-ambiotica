@@ -50,6 +50,9 @@ identically.
 Hold **FILL** and tap a track to randomise a quarter of it; tap again to push it
 further. **FILL + SYNTH** rolls a new sound out of the current preset.
 
+Hold **MUTE** and tap a track to mute it; tap **MUTE** on its own to bring everything
+back. Muted tracks keep showing their pattern, dimmed.
+
 The kit deliberately sits **outside** the wash. Drums are mixed into the output after the
 chain, so the looper, grains and plate never touch them: the pattern stays dry and legible
 underneath whatever the ambience is doing. They also cost no polyphony — they are not synth
