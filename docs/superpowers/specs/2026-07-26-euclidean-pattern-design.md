@@ -145,6 +145,17 @@ Therefore:
   - `rot` moves the pulse set right, verified against a known case
 - The gesture itself is verified on hardware after flashing.
 
+## Found during implementation: the mode-3 paint leak
+
+The paint fallback wrote `pattern[idx]` unconditionally, guarding only the *latch* with
+`if (!drum_paint)`. So releasing a modifier while the finger was still down fell through to
+the paint branch with `drum_paint` still 3 and repainted every step the finger crossed.
+
+Pre-existing for FILL, PROB and MUTE, and contradicting the file's own comment that the mode
+"is held until every finger lifts" — but only easy to hit once a modifier gesture involves
+dragging, which PATTERN is the first to do. Fixed alongside: the paint branch now writes only
+when `drum_paint != 3`.
+
 ## Out of scope
 
 - Storing pulses/rotation as live per-track parameters. Deliberately rejected: it would
