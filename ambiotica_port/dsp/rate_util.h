@@ -22,7 +22,7 @@ static inline int amb_scale_samples(double ref_samples_at_44k, double sr) {
     return (int)(ref_samples_at_44k * (sr / AMB_REF_SAMPLE_RATE) + 0.5);
 }
 
-/* Same, keeping fractional precision — for sub-sample quantities like the
+/* Same, keeping fractional precision - for sub-sample quantities like the
  * reverb's modulation depth in samples. */
 static inline float amb_scale_samples_f(double ref_samples_at_44k, double sr) {
     if (sr == AMB_REF_SAMPLE_RATE) return (float)ref_samples_at_44k;

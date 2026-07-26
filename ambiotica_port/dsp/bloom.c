@@ -1,4 +1,4 @@
-/* Ambiotica bloom — see bloom.h. */
+/* Ambiotica bloom - see bloom.h. */
 #include "bloom.h"
 #include <stdlib.h>
 #include <math.h>
@@ -7,8 +7,8 @@
  * envelope; the slow follower's ATTACK is what the knob stretches. Both use a
  * fast release so that when a sound decays the ratio returns to 1 and tails are
  * never ducked. */
-#define BLOOM_FAST_T      0.0020f   /* 2 ms — fast envelope attack & release */
-#define BLOOM_SLOW_REL_T  0.0050f   /* 5 ms — slow follower release          */
+#define BLOOM_FAST_T      0.0020f   /* 2 ms - fast envelope attack & release */
+#define BLOOM_SLOW_REL_T  0.0050f   /* 5 ms - slow follower release          */
 #define BLOOM_SLOW_ATK_MIN 0.0020f  /* amount=0 → equals fast → bypass        */
 #define BLOOM_SLOW_ATK_MAX 2.0000f  /* amount=1 → ~2 s bowed swell            */
 #define BLOOM_GAIN_T      0.0050f   /* 5 ms smoothing on the applied gain     */
@@ -79,7 +79,7 @@ void bloom_process(bloom_t *b,
                    int frames) {
     if (!b || frames <= 0) return;
 
-    /* True bypass at amount 0 — identical to input (parity-safe default). */
+    /* True bypass at amount 0 - identical to input (parity-safe default). */
     if (b->amount <= 0.0f) {
         for (int n = 0; n < frames; n++) { out_l[n] = in_l[n]; out_r[n] = in_r[n]; }
         return;

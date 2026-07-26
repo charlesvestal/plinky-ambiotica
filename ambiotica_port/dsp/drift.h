@@ -1,4 +1,4 @@
-/* Ambiotica drift — slow stereo detune ("wow") for the wet bus.
+/* Ambiotica drift - slow stereo detune ("wow") for the wet bus.
  *
  * A pair of slowly-modulated fractional delay lines (left/right in quadrature)
  * impart a gentle, ever-wandering pitch drift of a few cents, so the texture

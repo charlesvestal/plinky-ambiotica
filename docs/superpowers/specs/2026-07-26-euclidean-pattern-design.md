@@ -13,7 +13,7 @@ or right to rotate the result. One pad, one continuous gesture, two numbers.
 ## Why PATTERN
 
 PATTERN is at **row 1, column 13**, inside the printed **GENERATE** group, immediately
-beside FILL at column 14 — which already carries our reroll. GENERATE on stock Chords is
+beside FILL at column 14 - which already carries our reroll. GENERATE on stock Chords is
 literally "styles on how to fill the sequence", so an ordered generator belongs there as
 plainly as the random one does.
 
@@ -21,7 +21,7 @@ The two then read as a deliberate pair with opposite characters:
 
 | pad | group | character | effect on the track |
 |-----|-------|-----------|---------------------|
-| FILL (col 14) | GENERATE | random, cumulative — a quarter per press | builds up |
+| FILL (col 14) | GENERATE | random, cumulative - a quarter per press | builds up |
 | PATTERN (col 13) | GENERATE | ordered, deterministic | replaces |
 
 **Position verified against the user's own faceplate on 2026-07-26**, not against
@@ -36,14 +36,14 @@ is confirmed at col 13.
 A new modifier predicate reading column 13 on `CTL_TOP2`, exactly parallel to the existing
 `reroll_held()` / `prob_held()` at `panel.cpp:280-281`.
 
-**Press** — step `s`, track row `t`, PATTERN held, `drum_paint == 0`:
+**Press** - step `s`, track row `t`, PATTERN held, `drum_paint == 0`:
 
 - latch `drum_paint = 3`, the established "modifier used" value, which blocks the paint path
 - pulse count `k = s + 1`; column 0 gives 1 pulse, column 15 gives all 16
 - store `eu_track = t`, `eu_anchor = s`, `eu_k = k`, `eu_last = s`
 - generate into track `t` at rotation 0
 
-**Drag** — while still held, when the finger reaches a different column `s'` **in row
+**Drag** - while still held, when the finger reaches a different column `s'` **in row
 `eu_track`**:
 
 - `rot = (s' - eu_anchor) & 15`
@@ -51,7 +51,7 @@ A new modifier predicate reading column 13 on `CTL_TOP2`, exactly parallel to th
 - touches on any other row are ignored for the life of the gesture, so a vertical wander
   cannot hijack a second track
 
-**Release** — the existing `if (!any_down) drum_paint = 0` at `panel.cpp:789` tears the
+**Release** - the existing `if (!any_down) drum_paint = 0` at `panel.cpp:789` tears the
 gesture down; `eu_track` is reset to `-1` in the same place so a stale gesture cannot resume
 against a track the finger has already left.
 
@@ -88,9 +88,9 @@ static void euclid_fill(unsigned char* dst, int k, int rot) {
 ```
 
 `DRUM_STEPS` is 16 (`ambiotica_port/dsp/drums.h:25`), so `& (DRUM_STEPS - 1)` is a valid
-mask — the same idiom already used for `drum_step` at `panel.cpp:354`.
+mask - the same idiom already used for `drum_step` at `panel.cpp:354`.
 
-`k = 5` yields pulses at 0, 4, 7, 10, 13 — spacings 4, 3, 3, 3, 3.
+`k = 5` yields pulses at 0, 4, 7, 10, 13 - spacings 4, 3, 3, 3, 3.
 
 Pulses are written at **127** (always fires), which is what hand-painting writes at
 `panel.cpp:765`. Rests are written as 0.
@@ -103,18 +103,18 @@ already covers the result. No scene-format change and no version bump.
 
 **No new locking.** Generation runs in `on_ui` on core0; `on_sequence` reads `pattern[]` from
 the high-priority timer. This is the identical risk profile as painting and reroll, which
-already write `pattern[]` from `on_ui` — worst case one step reads a stale byte for one
+already write `pattern[]` from `on_ui` - worst case one step reads a stale byte for one
 16th, which is inaudible.
 
 **PROB composes.** Generated steps sit at 127 and PROB can dial any of them down afterward.
 Regenerating the track wipes those edits, which is the intended "replace" semantics.
 
-**Mute is orthogonal** — it gates triggering in `fire_drum_step`, not pattern contents.
+**Mute is orthogonal** - it gates triggering in `fire_drum_step`, not pattern contents.
 
 ## 4. Feedback
 
 - The PATTERN pad is dim when idle and bright while held, mirroring `panel.cpp:510-511`.
-  Colour **GREEN** — distinct from FILL's PURPLE and PROB's CYAN, and already used in the
+  Colour **GREEN** - distinct from FILL's PURPLE and PROB's CYAN, and already used in the
   file.
 - The grid redraws from `pattern[]` every frame, so rotation animates live under the finger
   with no additional draw code.
@@ -129,7 +129,7 @@ buffers, no PSRAM, no allocation.
 ## 6. Testing
 
 **The desktop harness cannot test this.** `ambiotica_port/harness/build.sh` compiles
-`dsp/*.c` plus `main.c` only — `panel.cpp` is never built there, and it does not compile
+`dsp/*.c` plus `main.c` only - `panel.cpp` is never built there, and it does not compile
 standalone in any case (no `#include`s; it only type-checks after amalgamation).
 
 Therefore:
@@ -152,7 +152,7 @@ The paint fallback wrote `pattern[idx]` unconditionally, guarding only the *latc
 the paint branch with `drum_paint` still 3 and repainted every step the finger crossed.
 
 Pre-existing for FILL, PROB and MUTE, and contradicting the file's own comment that the mode
-"is held until every finger lifts" — but only easy to hit once a modifier gesture involves
+"is held until every finger lifts" - but only easy to hit once a modifier gesture involves
 dragging, which PATTERN is the first to do. Fixed alongside: the paint branch now writes only
 when `drum_paint != 3`.
 

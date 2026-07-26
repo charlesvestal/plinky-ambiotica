@@ -1,4 +1,4 @@
-/* Ambiotica bloom — input "attack removal" / auto-swell.
+/* Ambiotica bloom - input "attack removal" / auto-swell.
  *
  * A continuous transient suppressor: a fast amplitude follower and a
  * slow-attack follower run in parallel; the applied gain is the ratio

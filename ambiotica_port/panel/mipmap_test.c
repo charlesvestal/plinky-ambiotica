@@ -1,6 +1,6 @@
 /* Unit tests for mip addressing.
  *
- * The expected values here are NOT derived from the implementation — they were printed by
+ * The expected values here are NOT derived from the implementation - they were printed by
  * the on-device probe (report_mips, profile build) on 2026-07-26 while a DivBeats break was
  * loaded, and pasted in verbatim. So this test pins the maths to observed hardware behaviour
  * rather than to my reading of the SDK header. See tests.sh.
@@ -64,7 +64,7 @@ static void test_mip0_is_the_original(void) {
 }
 
 /* Each mip is the previous decimated by two: consecutive bases differ by tape/2^m, and the
-   whole pyramid fits in 2*tape — which is what TAPE_LENGTH_SAMPLES "including mips" means. */
+   whole pyramid fits in 2*tape - which is what TAPE_LENGTH_SAMPLES "including mips" means. */
 static void test_pyramid_halves_and_fits(void) {
     for (unsigned m = 0; m < 8; m++) {
         unsigned int step = mip_base(DEV_BASE, DEV_TAPE, m + 1) - mip_base(DEV_BASE, DEV_TAPE, m);
@@ -76,7 +76,7 @@ static void test_pyramid_halves_and_fits(void) {
 
 /* Overflow guard. get_mip_va does (tape * mip_offset) >> 8 in 32 bits; at the largest legal
    tape (TAPE_LENGTH_SAMPLES = 2<<21) and the largest offset (510) that is 2139095040, which
-   fits — but only just, so assert it rather than trusting it stays true. */
+   fits - but only just, so assert it rather than trusting it stays true. */
 static void test_no_overflow_at_max_tape(void) {
     unsigned int max_tape = 2u << 21;
     unsigned int top = mip_base(0, max_tape, 8);
@@ -98,7 +98,7 @@ static void test_mip_for_rate(void) {
 }
 
 /* +24 semitones is the panel's transpose limit, so this is the deepest mip reachable in
-   practice — worth pinning so a change to the clamp is visible here. */
+   practice - worth pinning so a change to the clamp is visible here. */
 static void test_panel_transpose_range(void) {
     CHECK(mip_for_rate(4.0f) == 2, "+24 semitones (rate 4) should land on mip 2");
     CHECK(mip_len(DEV_LEN, 2) == 28444u, "a break at +24 should read 28444 samples");

@@ -1,4 +1,4 @@
-/* Granular stage — 8-grain scheduler over a 2s capture ring. */
+/* Granular stage - 8-grain scheduler over a 2s capture ring. */
 #include "granular.h"
 #include "fast_math.h"
 #include "lfo.h"
@@ -17,21 +17,21 @@
 #define G_SAMPLE_RATE       44100
 /* 5 s capture ring. Must exceed 2*grain_max + max_scatter so a REVERSED grain
  * (reads backward `len` while write advances `len` = 2*len of travel, plus the
- * scatter offset) cannot lap the ring and meet the write head mid-grain — that
+ * scatter offset) cannot lap the ring and meet the write head mid-grain - that
  * crossing reads a full-buffer content jump at high envelope gain (an audible
  * click). 2*1.5s + 1s = 4s of travel, so 5s leaves margin. */
 #define G_BUF_SAMPLES       (5 * G_SAMPLE_RATE)       /* 5 s stereo capture */
 #define G_MAX_SCATTER_SAMP  G_SAMPLE_RATE             /* 1 s max scatter offset into the past */
 #ifndef G_MAX_GRAINS
-#define G_MAX_GRAINS        3     /* Granular is the heaviest core1 stage — each grain is a
+#define G_MAX_GRAINS        3     /* Granular is the heaviest core1 stage - each grain is a
                                      scattered PSRAM read stream, and the RP2350's small XIP
                                      cache thrashes on more than a few. 3 fits the ~2 ms budget
                                      with Gravity up + a synth voice. */
 #endif
-#define G_GRAIN_MIN_SAMPLES 4410                  /* 100 ms — long, smooth grains */
-#define G_GRAIN_MAX_SAMPLES 66150                 /* 1.5 s — stretched pad grains */
+#define G_GRAIN_MIN_SAMPLES 4410                  /* 100 ms - long, smooth grains */
+#define G_GRAIN_MAX_SAMPLES 66150                 /* 1.5 s - stretched pad grains */
 
-/* Pitch quantization set — universally consonant intervals.
+/* Pitch quantization set - universally consonant intervals.
  * Octaves and perfect fifths are tonally neutral (work in major, minor,
  * modal, drone). Avoiding thirds/sixths keeps Ambiotica from accidentally
  * imposing a key on the source material. */
@@ -49,7 +49,7 @@ typedef struct {
     float read_step;      /* per-sample increment = pitch ratio (negative = reversed) */
     int   age;            /* samples since spawn */
     int   length;         /* total samples in this grain */
-    float inv_length;     /* 1/length — precomputed so the window is a LUT read, not a divide */
+    float inv_length;     /* 1/length - precomputed so the window is a LUT read, not a divide */
     int   reversed;       /* Dilate: 1 = backward read + reverse-swell envelope */
 } grain_t;
 
@@ -68,7 +68,7 @@ static void g_hann_init(void) {
 
 /* Capture ring stored as INTERLEAVED int16 [L,R,L,R,...]: halves the PSRAM data vs
  * float and puts each frame's L+R in one cache line, so a grain read touches one
- * cache line instead of two separate arrays — cuts the PSRAM thrashing that made
+ * cache line instead of two separate arrays - cuts the PSRAM thrashing that made
  * granular the heaviest core1 stage. Quantization is inaudible under a grain cloud. */
 static inline float   g_ld(short v) { return (float)v * (1.0f / 32768.0f); }
 static inline short   g_st(float v) { v = v > 1.f ? 1.f : (v < -1.f ? -1.f : v);
@@ -88,14 +88,14 @@ struct granular_s {
     /* Rate-scaled grain-length bounds (equal G_GRAIN_*_SAMPLES at 44.1 kHz). */
     int     grain_min;
     int     grain_max;
-    int     max_scatter;   /* rate-scaled (1 s @44.1k) — decoupled from buf_len */
+    int     max_scatter;   /* rate-scaled (1 s @44.1k) - decoupled from buf_len */
 
     /* Params */
     float grain_size_0_1;
     float scatter_0_1;
     float reverse_0_1;       /* "Dilate": fraction of grains that play backward */
 
-    /* LFO modulation — wobbles each active grain's pitch in sync with
+    /* LFO modulation - wobbles each active grain's pitch in sync with
      * reverb's mod, giving coherent breathing across both stages. */
     lfo_t mod_lfo;
     float mod_depth_cents;   /* 0..100 cents (1 semitone) at full depth */
@@ -125,7 +125,7 @@ static int current_grain_length(const granular_t *g) {
 }
 
 static void spawn_grain(granular_t *g) {
-    /* Find a free slot — drop the spawn if none free. */
+    /* Find a free slot - drop the spawn if none free. */
     grain_t *gr = NULL;
     for (int i = 0; i < G_MAX_GRAINS; i++) {
         if (!g->grains[i].active) { gr = &g->grains[i]; break; }
@@ -137,7 +137,7 @@ static void spawn_grain(granular_t *g) {
     gr->inv_length = len > 0 ? 1.0f / (float)len : 1.0f;
     gr->age = 0;
 
-    /* Pitch — quantize to unison / ±octave / ±fifth (G_PITCH_STEPS).
+    /* Pitch - quantize to unison / ±octave / ±fifth (G_PITCH_STEPS).
      * Scatter controls probability of leaving unison; when it does, the
      * non-unison interval is picked uniformly from the four others.
      *   scatter=0   → 100% unison
@@ -156,7 +156,7 @@ static void spawn_grain(granular_t *g) {
     }
     gr->read_step = G_PITCH_STEPS[idx];
 
-    /* Start position — read from `len` samples behind write_pos so the
+    /* Start position - read from `len` samples behind write_pos so the
      * grain stays in valid past audio for its full duration (even at +1 oct
      * pitch the read just catches up to write at grain end). Scatter then
      * offsets the start by up to max_scatter (1 s) FURTHER INTO THE PAST.
@@ -176,7 +176,7 @@ static void spawn_grain(granular_t *g) {
     while (start >= g->buf_len)  start -= g->buf_len;
 
     /* Dilate: this grain plays BACKWARD. Forced to UNISON (read_step -1) so the
-     * reversed read stays in tune — the ±oct/±5th pitch scatter on a backward read
+     * reversed read stays in tune - the ±oct/±5th pitch scatter on a backward read
      * is what sounds out of key. Reads the last `len` samples from their end back
      * to the start (a clean, valid past-audio window). Probability = reverse_0_1,
      * so a bool toggle (0/1) flips the whole cloud. The reverse-swell envelope is
@@ -185,7 +185,7 @@ static void spawn_grain(granular_t *g) {
         gr->reversed = 1;
         gr->read_step = -1.0f;                          // unison, backward
         /* The backward read begins at the window END and moves AWAY from the
-         * advancing write head — but ONLY if the window sits behind write. A
+         * advancing write head - but ONLY if the window sits behind write. A
          * negative scatter would put the end ahead of write, so the backward read
          * would cross the write head mid-grain (reading a buffer-sized content jump
          * at high envelope gain → a click). Force the scatter into the past so the
@@ -308,7 +308,7 @@ void PLINKY_DSP_RAM_FUNC(granular_process)(granular_t *g,
         g->write_pos++;
         if (g->write_pos >= buf_len) g->write_pos = 0;
 
-        /* 2. Grain scheduler — fire every length/2 samples (50% overlap). */
+        /* 2. Grain scheduler - fire every length/2 samples (50% overlap). */
         g->samples_to_next--;
         if (g->samples_to_next <= 0) {
             spawn_grain(g);
@@ -318,7 +318,7 @@ void PLINKY_DSP_RAM_FUNC(granular_process)(granular_t *g,
 
         /* 3. Render active grains at HALF RATE. The scattered PSRAM grain reads are the
          *    XIP-cache hog, so render every 2nd sample (grains advance 2x to keep pitch &
-         *    length) and hold the sum between — halves the cache footprint; the reverb
+         *    length) and hold the sum between - halves the cache footprint; the reverb
          *    wash smears the 16 kHz. */
         if ((g->hr_tick ^= 1)) {
         float sum_l = 0.0f, sum_r = 0.0f;
@@ -334,7 +334,7 @@ void PLINKY_DSP_RAM_FUNC(granular_process)(granular_t *g,
             float yr = g_ld(g->buf[pi * 2 + 1]) * (1.0f - pf) + g_ld(g->buf[pi2 * 2 + 1]) * pf;
 
             /* Envelope. Forward: Hann (smooth, overlap-adds to ~1.0). Reversed
-             * (Dilate): a SWELL — amplitude rises across the grain then a quick
+             * (Dilate): a SWELL - amplitude rises across the grain then a quick
              * fade at the end, so it audibly blooms backward instead of just a
              * time-reversed Hann (which sounds barely reversed). */
             float phase = (float)gr->age * gr->inv_length;
@@ -344,7 +344,7 @@ void PLINKY_DSP_RAM_FUNC(granular_process)(granular_t *g,
                                       : fast_cosf(1.5707963f * ((phase - 0.85f) / 0.15f));
                 if (env < 0.f) env = 0.f;   /* fast-trig can dip <0 at grain edges -> click */
             } else {
-                /* Forward Hann from the LUT — no per-grain fast_cosf, exact 0 at edges. */
+                /* Forward Hann from the LUT - no per-grain fast_cosf, exact 0 at edges. */
                 int hi = (int)(phase * (float)G_HANN_N);
                 if (hi < 0) hi = 0; else if (hi > G_HANN_N) hi = G_HANN_N;
                 env = g_hann_lut[hi];

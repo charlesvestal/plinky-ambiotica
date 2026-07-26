@@ -1,4 +1,4 @@
-/* Micro-loop — short feedback delay that locks into freeze near max hold. */
+/* Micro-loop - short feedback delay that locks into freeze near max hold. */
 #include "microloop.h"
 #include "fast_math.h"
 #include "rate_util.h"
@@ -10,17 +10,17 @@
 /* The octave shimmer and the freeze granular cloud are compiled out on this target:
  * both random-access their buffers, so on the RP2350 they are dominated by scattered-
  * PSRAM cache-miss latency, and both are inaudible under the reverb wash. The code is
- * kept behind these guards for reference / a future cache-friendly freeze — comment a
+ * kept behind these guards for reference / a future cache-friendly freeze - comment a
  * line to re-enable that piece. */
 #define AMB_NO_SHIMMER
 #define AMB_NO_CLOUD
 
 #define M_SAMPLE_RATE       44100
-#define M_MIN_LEN_SAMPLES   4410     /* 100 ms @ 44.1 kHz — above phasing range */
-#define M_MAX_LEN_SAMPLES   264600   /* 6 s @ 44.1 kHz — fits 2 bars down to 80 BPM */
+#define M_MIN_LEN_SAMPLES   4410     /* 100 ms @ 44.1 kHz - above phasing range */
+#define M_MAX_LEN_SAMPLES   264600   /* 6 s @ 44.1 kHz - fits 2 bars down to 80 BPM */
 #define M_AUTO_FREEZE       0.95f    /* knob threshold for auto-engaged freeze */
-#define M_SMOOTH_COEF       0.9989f  /* ~20 ms — for fb / out_gain */
-#define M_CROSSFADE_LEN     2048     /* ~46 ms — equal-power crossfade between
+#define M_SMOOTH_COEF       0.9989f  /* ~20 ms - for fb / out_gain */
+#define M_CROSSFADE_LEN     2048     /* ~46 ms - equal-power crossfade between
                                          old and new read positions when loop_len
                                          changes. No pitch glide, no click. */
 #define M_GRAINS            8        /* voices in the freeze drone cloud       */
@@ -36,7 +36,7 @@ struct microloop_s {
                               (halves PSRAM data + one cache line per frame vs buf_L/buf_R) */
     int    buf_capacity;
     int    write_pos;
-    float  hold;       /* 0..1 — both loop length and blend amount */
+    float  hold;       /* 0..1 - both loop length and blend amount */
 
     /* Rate-scaled time constants (equal the M_* references at 44.1 kHz). */
     int    min_len;
@@ -50,7 +50,7 @@ struct microloop_s {
 
     /* Loop length (read offset, samples). The host drives a continuous tempo-
      * relative target; a length change RE-ANCHORS via an equal-power crossfade
-     * between the old and new FIXED read taps — the read pointer never sweeps,
+     * between the old and new FIXED read taps - the read pointer never sweeps,
      * so there is no pitch glide (and no click). Same approach as the looper.
      * Equal-power (not linear) because the two taps read decorrelated content
      * at different delays. Changes mid-fade queue, like the looper. */
@@ -99,7 +99,7 @@ static inline float micro_rng01(microloop_t *m) {
 static void micro_spawn_grain(microloop_t *m, int write_pos) {
     int gi = -1;
     for (int i = 0; i < M_GRAINS; i++) if (!m->grain[i].active) { gi = i; break; }
-    if (gi < 0) return;                       /* all busy — skip this spawn */
+    if (gi < 0) return;                       /* all busy - skip this spawn */
 
     int region = m->loop_len_current;
     if (region < m->min_len) region = m->min_len;
@@ -122,7 +122,7 @@ static void micro_spawn_grain(microloop_t *m, int write_pos) {
     m->grain[gi].gR = fast_sinf(theta);
 
     /* Schedule next spawn so ~2 grains overlap: Hann at 50% overlap is COLA (constant
-     * amplitude, no ripple) and drops a whole scattered-PSRAM read stream vs 3x — the
+     * amplitude, no ripple) and drops a whole scattered-PSRAM read stream vs 3x - the
      * same cache win as the main granular. */
     m->spawn_timer = len / 2; if (m->spawn_timer < 1) m->spawn_timer = 1;
 }
@@ -164,7 +164,7 @@ static inline float micro_shimmer (microloop_t *m, float in) {
     float p1 = m->shphase + L * 0.5f; if (p1 >= L) p1 -= L;
     float s0, s1;
     /* i is already in [0,shlen) after the while, so i%shlen==i and (i-1) only needs a
-     * single wrap — the modulo (integer divide, ~12 cyc each, 4x/sample) was dead cost. */
+     * single wrap - the modulo (integer divide, ~12 cyc each, 4x/sample) was dead cost. */
     { int bk=(int)m->shphase; float fr=m->shphase-(float)bk; int i=m->shwidx-bk; while(i<0)i+=m->shlen;
       int ip=i?i-1:m->shlen-1; float a=m->shbuf[i], b=m->shbuf[ip]; s0=a+(b-a)*fr; }
     { int bk=(int)p1; float fr=p1-(float)bk; int i=m->shwidx-bk; while(i<0)i+=m->shlen;
@@ -266,7 +266,7 @@ void microloop_set_hold(microloop_t *m, float hold_0_1) {
     /* Loop length is now set by the host (tempo-synced divisions) via
      * microloop_set_loop_len(); set_hold controls level / freeze / shimmer. */
 
-    /* Gain targets — process() ramps current → target per sample.
+    /* Gain targets - process() ramps current → target per sample.
      * Low/mid hold: a subtle 0.25×sqrt texture layer under the loop/reverb.
      * Near the top it swells into a prominent HELD PAD so the freeze/crystallize
      * actually sounds like the crystal glyph (held, frozen, pad). */
@@ -289,7 +289,7 @@ void microloop_set_hold(microloop_t *m, float hold_0_1) {
 /* Set the micro-loop length in samples (host computes a continuous, tempo-
  * relative length). A change RE-ANCHORS the read tap via an equal-power
  * crossfade in process() (no pitch glide). If a fade is already running, the
- * newest request is queued and applied when it finishes — so a continuous knob
+ * newest request is queued and applied when it finishes - so a continuous knob
  * sweep chain-fades through lengths without ever sweeping the read pointer. */
 void microloop_set_loop_len(microloop_t *m, int len) {
     if (!m) return;
@@ -314,12 +314,12 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
     /* Audio freeze disabled: the micro-loop ALWAYS keeps capturing input (no
      * buffer freeze) so the top of Satellite stays the same kind of looping, not
      * a frozen drone. The held-pad grain cloud still ramps in via `hold > 0.85`
-     * below (so the crystalline character — and the GUI crystal — remain). */
+     * below (so the crystalline character - and the GUI crystal - remain). */
     const int frozen = 0;
     const int buf_capacity = m->buf_capacity;
     int write_pos = m->write_pos;
 
-    /* Smoothed gains — ramp per sample toward target. */
+    /* Smoothed gains - ramp per sample toward target. */
     float fb_curr   = m->fb_current;
     float out_curr  = m->out_gain_current;
     const float fb_t  = m->fb_target;
@@ -337,7 +337,7 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
         out_curr = c * out_curr + ic * out_t;
 
         /* Read at the active (fixed) tap. A length change crossfades to the new
-         * tap over crossfade_len samples — both taps are at constant offsets, so
+         * tap over crossfade_len samples - both taps are at constant offsets, so
          * the read pointer never sweeps and there is no pitch glide. Equal-power
          * (cos/sin) because the two taps read decorrelated content. */
         int ra = write_pos - m->loop_len_current;
@@ -390,7 +390,7 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
         /* Seamless held-pad via the granular cloud. Hann-windowed overlapping
          * grains taper the edges so the sustained pad has no loop seam. Only
          * engaged in the top held-pad zone (hold > 0.85) and fully when frozen
-         * — short/medium delays keep the crisp DIRECT read so they stay
+         * - short/medium delays keep the crisp DIRECT read so they stay
          * discrete echoes, not a smeared reverb-like wash. */
         float cloud_target = frozen ? 1.0f : 0.0f;
         if (m->hold > 0.85f) {
@@ -402,7 +402,7 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
 #ifndef AMB_NO_CLOUD
         if (m->freeze_mix > 0.0001f) {
             /* Half-rate: the cloud is a smeared granular wash, so recompute it every
-             * other sample (advancing grains by 2) and hold between — halves its
+             * other sample (advancing grains by 2) and hold between - halves its
              * scattered PSRAM grain reads, the dominant cost, and is inaudible on a
              * wash. (Shimmer stays full-rate: it's octave-up, would alias at 16 kHz.) */
             if ((m->cloud_tick ^= 1))

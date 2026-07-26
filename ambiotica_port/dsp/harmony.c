@@ -1,4 +1,4 @@
-/* Ambiotica harmony — see harmony.h. */
+/* Ambiotica harmony - see harmony.h. */
 #include "harmony.h"
 #include "fast_math.h"
 #include <stdlib.h>
@@ -41,7 +41,7 @@ harmony_t* harmony_create(double sample_rate) {
         h->gL[v] = fast_cosf(th); h->gR[v] = fast_sinf(th);
     }
     h->n_voices = 0;
-    /* damping ~8 kHz one-pole — bright, long ring (still tames the very top) */
+    /* damping ~8 kHz one-pole - bright, long ring (still tames the very top) */
     h->damp_a   = 1.0f - expf(-6.2831853f * 8000.0f / (float) h->sr);
     h->amount_a = 1.0f - expf(-1.0f / (0.020f * (float) h->sr));     /* ~20 ms */
     h->fb       = 0.995f;           /* default ring length (see harmony_set_ring) */
@@ -77,7 +77,7 @@ void harmony_set_chord(harmony_t *h, const float *freqs, int n) {
         if (d < 2.0f) d = 2.0f;
         h->delay_target[v] = d;
         /* Newly-voiced note: SNAP the delay to pitch instead of gliding from the
-         * A3 create-time default — that glide was an audible downward swoop each
+         * A3 create-time default - that glide was an audible downward swoop each
          * time the chord first engaged. Voices already ringing still glide (so a
          * future key change bends smoothly rather than clicks). */
         if (v >= prev) h->delay[v] = d;

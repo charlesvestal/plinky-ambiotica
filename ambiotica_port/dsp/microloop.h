@@ -1,4 +1,4 @@
-/* Ambiotica micro-loop — Stage 3 of the chain.
+/* Ambiotica micro-loop - Stage 3 of the chain.
  *
  * 4-second stereo buffer. Runs parallel to the looper/granular path:
  * captures whatever input is fed in (typically the dry signal) and outputs
@@ -22,7 +22,7 @@
 /* microloop_process is one of the heaviest core1 stages (~240us/block, measured). PLINKY_DSP_RAM_FUNC un-inlines it and
  * places its code in SRAM, exempting it from the shared XIP cache. Fallback so the desktop
  * harness and older firmware still build. NOTE: the SRAM code region is small and
- * granular/looper already live there — if this stops LINKING, drop the wrapper. */
+ * granular/looper already live there - if this stops LINKING, drop the wrapper. */
 #ifndef PLINKY_DSP_RAM_FUNC
 #define PLINKY_DSP_RAM_FUNC(f) f
 #endif

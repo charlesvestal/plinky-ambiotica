@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build the Ambiotica desktop port harness in two variants:
-#   amb_harness_float  — looper bed stored as float (original)
-#   amb_harness_i16    — looper bed stored as int16 (-DLOOPER_I16)
+#   amb_harness_float  - looper bed stored as float (original)
+#   amb_harness_i16    - looper bed stored as int16 (-DLOOPER_I16)
 # DSP .c files are compiled with allocation redirected to the instrumented
 # bump allocator; main.c defines that allocator.
 set -e

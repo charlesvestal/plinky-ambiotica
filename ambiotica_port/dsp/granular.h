@@ -1,4 +1,4 @@
-/* Ambiotica granular — Stage 2 of the chain.
+/* Ambiotica granular - Stage 2 of the chain.
  *
  * 2-second stereo capture ring + 8-grain pool. Each grain reads a windowed
  * chunk of the captured audio at a position and pitch determined by Scatter
@@ -15,7 +15,7 @@
 
 /* granular_process is the heaviest core1 stage; mmalex's PLINKY_DSP_RAM_FUNC un-inlines
  * it and copies it into SRAM so its code is exempt from the shared XIP cache (which core0's
- * USB code otherwise hogs). Only defined by his newer firmware — no-op fallback here so the
+ * USB code otherwise hogs). Only defined by his newer firmware - no-op fallback here so the
  * current IDE (and the desktop harness) still build. NOTE: SRAM is very tight (~1.8 KB
  * free); if this ever fails to LINK on the new firmware, drop the wrapper. */
 #ifndef PLINKY_DSP_RAM_FUNC
@@ -37,15 +37,15 @@ void        granular_set_grain_size(granular_t *g, float size_0_1);
 void        granular_set_scatter(granular_t *g, float scatter_0_1);
 
 /* "Dilate": fraction of grains that play BACKWARD (0 = forward, 1 = all reversed).
- * Reads the same captured chunk in reverse — no extra buffering. */
+ * Reads the same captured chunk in reverse - no extra buffering. */
 void        granular_set_reverse(granular_t *g, float amount_0_1);
 
-/* Pitch mod depth — 0 = no pitch wobble, 1 = ±100 cents (1 semitone) sine
+/* Pitch mod depth - 0 = no pitch wobble, 1 = ±100 cents (1 semitone) sine
  * modulation on top of each grain's spawn pitch. Shares the chain's Mod LFO
  * with the reverb's diffusion modulation. */
 void        granular_set_mod_depth(granular_t *g, float depth_0_1);
 
-/* Direct Hz LFO rate — set by plugin to match reverb's base rate so the
+/* Direct Hz LFO rate - set by plugin to match reverb's base rate so the
  * grain pitch wobble and reverb breathing share a tempo. */
 void        granular_set_mod_rate_hz(granular_t *g, float hz);
 

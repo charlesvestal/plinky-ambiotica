@@ -8,12 +8,12 @@
 #ifndef AMBIOTICA_EUCLID_H
 #define AMBIOTICA_EUCLID_H
 
-#include "../dsp/drums.h"    /* DRUM_STEPS — stripped by amalgamate.sh */
+#include "../dsp/drums.h"    /* DRUM_STEPS - stripped by amalgamate.sh */
 
 /* Write a k-pulse Euclidean rhythm over DRUM_STEPS steps into dst, rotated right by rot.
  *
  * Bresenham/bucket form. Maximal evenness is what a Euclidean rhythm IS, so this lands on
- * the same necklace as Bjorklund without the recursion or the scratch arrays — which is why
+ * the same necklace as Bjorklund without the recursion or the scratch arrays - which is why
  * there is no allocation here and no reason for any.
  *
  * The pulse count is exactly k for every k in 1..DRUM_STEPS, including those sharing a
@@ -24,7 +24,7 @@
  * rot may be negative or beyond DRUM_STEPS; the mask wraps it either way (two's complement,
  * mandated by C23 and true on the RP2350), the same idiom drum_step already uses in panel.cpp.
  *
- * Pulses are written as 127 — "always fires" — matching what hand-painting a step writes, so
+ * Pulses are written as 127 - "always fires" - matching what hand-painting a step writes, so
  * a generated track and a drawn one are indistinguishable to fire_drum_step and to PROB.
  * Rests are written as 0, which fully replaces whatever the track held before.
  */
