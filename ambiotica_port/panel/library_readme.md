@@ -4,8 +4,12 @@ A generative-ambient instrument. Play a few notes and let go — a rolling loope
 granular scatter cloud, a freezing micro-loop, a Dattorro plate reverb and a bank of
 tuned resonators bloom them into a slow wash that stays in key.
 
+> **This panel needs the CHORDS faceplate.** Every control sits under the printed word that
+> describes it — that is the whole design. On any other overlay the pads still work, but the
+> labels around them will describe something else entirely.
+
 Ambiotica owns the audio output: the built-in FX are silenced and the whole chain runs
-on core 1. Designed for the **Chords** overlay, so the printed labels are correct.
+on core 1.
 
 ## Play surface
 
@@ -43,12 +47,38 @@ synthesised at boot as 8-bit samples, so there are no files to install.
 **Drag** across a row to write steps. Hold **×** (the printed shift key) and drag to scrub
 them out again; hold **×** and tap **TRACKS** to clear the whole pattern.
 
-Hold **PROB** and tap a lit step to cycle how often it fires — 100 / 75 / 50 / 25% —
-shown as its brightness. Probability is what keeps a long ambient pattern from repeating
-identically.
+### Generating — the printed GENERATE pads
+
+Hold **PATTERN** and press a step to replace that track with a Euclidean rhythm of that
+many pulses — press column 5 for five pulses, spread as evenly as sixteen steps allow.
+Keep holding and slide along the row to rotate it, so tracks can be phased against each
+other. PATTERN replaces; **FILL** builds up.
 
 Hold **FILL** and tap a track to randomise a quarter of it; tap again to push it
 further. **FILL + SYNTH** rolls a new sound out of the current preset.
+
+### Conditions — the printed CONDITION pads
+
+Both work the same way: the **first tap** on a step shows you what it is set to, in big
+digits below the grid, without changing it. Tap that same step again to advance.
+
+Hold **PROB** and tap a step to cycle how often it fires — 100 / 75 / 50 / 25% — also
+shown as its brightness. Probability is what keeps a long ambient pattern from repeating
+identically.
+
+Hold **MODULO** and tap a step to make it play only every Nth time round: **1:2** is the
+first time of every two, **2:2** the second, up to **4:4**. Two steps set to 1:2 and 2:2
+trade off with each other. A step waiting its turn is dimmed on the passes it will not
+fire, so you can watch a 1:4 breathe across four bars.
+
+### Length — polyrhythms
+
+Hold **LENGTH** and press a step to set that track's loop length. Steps past the loop point
+go dark, and keep their contents, so shortening and lengthening again loses nothing.
+
+Give tracks different lengths and they drift: sixteen against seven only line up again
+every 112 steps. Modulo follows each track's own loop, so "2nd of every 4" on a seven-step
+track means four sevens.
 
 Hold **MUTE** and tap a track to mute it; tap **MUTE** on its own to bring everything
 back. Muted tracks keep showing their pattern, dimmed.

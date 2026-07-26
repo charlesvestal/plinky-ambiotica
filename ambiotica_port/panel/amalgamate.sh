@@ -55,14 +55,22 @@ trap 'rm -f "$BODY"' EXIT
 @Author: Charles Vestal
 @Documentation: https://github.com/charlesvestal/plinky-ambiotica
 @Category: Instruments
-@Tags: ambient, granular, reverb, looper, drone
+@Tags: chords faceplate, ambient, drums, granular, reverb, looper, drone
 @Discussion: https://github.com/charlesvestal/plinky-ambiotica/issues
-@Description: Play a few notes and let go — a rolling looper, granular cloud and plate reverb bloom them into a slow, always-in-key ambient wash.
+@Description: NEEDS THE CHORDS FACEPLATE. An ambient wash — rolling looper, granular cloud, plate reverb — with an 8-track drum machine under it. Play a few notes and let go.
+
+This panel is built FOR THE CHORDS FACEPLATE and every control sits under the printed word
+that describes it. On any other overlay the labels will not match what the pads do.
 
 Ambiotica turns Plinky's own voices into a generative ambient instrument. The chain is a
 rolling looper, a granular scatter cloud, a freezing micro-loop, a Dattorro plate reverb
 and a bank of tuned resonators, shaped by seven macro sliders: Orbit, Satellite,
 Constellate, Tail, Flux, Spectra and Mix.
+
+Underneath runs an 8-track x0x drum machine, rendered after the chain so it stays dry and
+legible under the wash. Its sequencer uses the printed sequencer row: PATTERN generates
+Euclidean rhythms, FILL randomises, PROB sets a step's chance, MODULO plays a step only
+every Nth time round, and LENGTH gives each track its own loop length for polyrhythms.
 
 Two gestures ride on top. Gravity collapses the whole engine into a slow evolving drone;
 Event Horizon drains it back to silence for the next phrase. Both live on one bipolar
