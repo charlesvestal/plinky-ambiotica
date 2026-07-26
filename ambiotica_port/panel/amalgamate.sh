@@ -33,6 +33,7 @@ trap 'rm -f "$BODY"' EXIT
     [ -n "$AMB_PROFILE" ] && echo "#define AMB_PROFILE"
     strip "$HN/alloc_prelude.h"
     for h in $MODULES; do strip "$DSP/$h.h"; done
+    strip "$DSP/mipmap.h"             # used by drums.c, so it must precede it
     strip "$DSP/rate_util.h"
     strip "$DSP/fast_math.h"
     strip "$HARN/full_chain.h"

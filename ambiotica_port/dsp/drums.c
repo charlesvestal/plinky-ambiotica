@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "drums.h"
+#include "mipmap.h"
 
 typedef struct {
     signed char* data;      /* 8-bit mono, PSRAM */
@@ -21,15 +22,22 @@ typedef struct {
 } drum_sample_t;
 
 typedef struct {
-    float pos;              /* fractional read head; <0 = idle */
+    float pos;              /* fractional read head, in units of THIS voice's mip; <0 = idle */
     float amp;              /* velocity, 0..1 */
+    unsigned char mip;      /* octave chosen at trigger; 0 = the unfiltered original */
 } drum_voice_t;
 
 /* A track either plays its generated 8-bit buffer or a slice of preset-owned sample memory.
  * va_end > va_start selects the latter. Sample memory is 16-bit and paged behind
  * chunk_location_ptrs, so it is read through READ_SAMPLE rather than a raw pointer — the
  * chunk a slice lives in can move. */
-typedef struct { unsigned int va_start, va_end; } drum_source_t;
+/* base_va/tape_len/off are what mipmap.h needs to find the same slice in a prefiltered
+ * octave. tape_len 0 means "no pyramid known for this track" — the generated kit, and any
+ * caller still using the plain drums_set_sample — in which case playback stays on mip 0. */
+typedef struct {
+    unsigned int va_start, va_end;      /* mip 0, absolute */
+    unsigned int base_va, tape_len, off;
+} drum_source_t;
 
 struct drums_s {
     drum_sample_t s[DRUM_TRACKS];
@@ -196,6 +204,11 @@ void drums_trigger(drums_t* d, int track, int velocity) {
     if (d->choke && track == DRUM_CHAT) d->v[DRUM_OHAT].pos = -1.0f;
     d->v[track].pos = 0.0f;
     d->v[track].amp = (float)velocity * (1.0f / 127.0f);
+    /* Pick the octave ONCE, here, rather than per block: pos is measured in the chosen mip's
+       samples, so a mip that changed under a sounding voice would jump the read head. Pitch
+       is a between-takes gesture, so a note that outlives a transpose simply finishes in the
+       octave it started in — more or less anti-aliased than ideal, never wrong. */
+    d->v[track].mip = (unsigned char)(d->src[track].tape_len ? mip_for_rate(d->rate) : 0u);
 }
 
 void drums_set_pitch(drums_t* d, float semitones) {
@@ -216,7 +229,22 @@ void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int
     if (!d || track < 0 || track >= DRUM_TRACKS) return;
     if (va_end <= va_start) { d->src[track].va_start = d->src[track].va_end = 0; }
     else                    { d->src[track].va_start = va_start; d->src[track].va_end = va_end; }
+    d->src[track].base_va = d->src[track].tape_len = d->src[track].off = 0;   /* no pyramid */
     d->v[track].pos = -1.0f;   /* a voice mid-flight would keep indexing the old source */
+}
+
+void drums_set_sample_mipped(drums_t* d, int track, unsigned int sample_data_va,
+                             unsigned int tape_length, unsigned int off_start,
+                             unsigned int off_end) {
+    if (!d || track < 0 || track >= DRUM_TRACKS) return;
+    if (off_end <= off_start || !tape_length) { drums_set_sample(d, track, 0, 0); return; }
+    drum_source_t* src = &d->src[track];
+    src->va_start = mip_va(sample_data_va, tape_length, off_start, 0);
+    src->va_end   = mip_va(sample_data_va, tape_length, off_end,   0);
+    src->base_va  = sample_data_va;
+    src->tape_len = tape_length;
+    src->off      = off_start;
+    d->v[track].pos = -1.0f;
 }
 
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
@@ -227,7 +255,13 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
         const drum_sample_t* s = &d->s[t];
         const drum_source_t* src = &d->src[t];
         const int sampled = (src->va_end > src->va_start);
-        const int len = sampled ? (int)(src->va_end - src->va_start) : s->len;
+        /* Reading mip m at rate/2^m is the same pitch with the aliasing already filtered out.
+           At an exact octave this lands on rate 1.0 and falls into the integer fast path
+           below, so an octave-up break gets cheaper AND cleaner at the same time. */
+        const unsigned int mip = sampled ? v->mip : 0u;
+        const unsigned int va0 = mip ? mip_va(src->base_va, src->tape_len, src->off, mip)
+                                     : src->va_start;
+        const int len = sampled ? (int)mip_len(src->va_end - src->va_start, mip) : s->len;
         /* 8-bit generated buffers run +/-127, preset sample memory is 16-bit; normalise here
            so per-track gain and velocity mean the same thing either way. */
         /* Per-track gain/pan are trims baked for the GENERATED kit; applying the synthesised
@@ -243,7 +277,9 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
            SDK does precompute prefiltered mipmaps for exactly this (get_mip_va), which would
            beat interpolation when pitching well above unity — but how a slice's offsets map
            into mip space is undocumented, so mip 0 it is until that is worth confirming. */
-        const float rate = d->rate;
+        /* The mip is already an octave down per level, so the read head walks it that
+           much slower to land on the same pitch. */
+        const float rate = mip ? d->rate * (1.0f / (float)(1u << mip)) : d->rate;
         float pos = v->pos;
         const float last = (float)(len - 1);
         /* Unity pitch is the common case — the kit is untransposed unless you ask — and
@@ -261,7 +297,7 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
                 float x;
                 if (sampled) {
 #if defined(READ_SAMPLE)
-                    x = (float)(int16_t)READ_SAMPLE(src->va_start + (unsigned int)i0);
+                    x = (float)(int16_t)READ_SAMPLE(va0 + (unsigned int)i0);
 #else
                     x = 0.0f;
 #endif
@@ -278,7 +314,7 @@ void drums_render(drums_t* d, float* out_l, float* out_r, int frames) {
                 float a, b;
                 if (sampled) {
 #if defined(READ_SAMPLE)
-                    unsigned int va = src->va_start + (unsigned int)i0;
+                    unsigned int va = va0 + (unsigned int)i0;
                     a = (float)(int16_t)READ_SAMPLE(va);
                     b = (float)(int16_t)READ_SAMPLE(va + 1u);
 #else
