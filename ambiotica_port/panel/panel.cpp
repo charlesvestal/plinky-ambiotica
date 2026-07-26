@@ -657,8 +657,12 @@ struct ambiotica : panel_t {
             const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE];
             const synth_preset_slice_t* sl = &p->slice[0];
             if (preset_slice_has_sample_data(sl)) {
-                unsigned int base = get_mip_va(p, 0, false);   /* mip 0 = the unfiltered original */
-                unsigned int a = base + sl->start_read_only, b = base + sl->end_read_only;
+                /* Slice offsets are RELATIVE to sample_data_va — confirmed on device, where
+                   sample_data_va reads 8421376 and mip-0 playback is correct, which an
+                   absolute address could not be. Kept as offsets from here on so the chops
+                   can be handed to drums_set_sample_mipped and reach the prefiltered
+                   octaves; see dsp/mipmap.h. */
+                unsigned int a = sl->start_read_only, b = sl->end_read_only;
                 /* Length comes from the preset's OWN chop grid, not from the track count.
                    The breaks ship no explicit chop_count, so they fall through to
                    PRESET_DEFAULT_CHOP_COUNT (16) — sixteenths. Cutting the bar into
@@ -676,21 +680,20 @@ struct ambiotica : panel_t {
                     unsigned int s1 = s0 + chop;
                     if (s0 >= b) { drums_set_sample(drums, t, 0, 0); continue; }  /* short sample */
                     if (s1 > b) s1 = b;
-                    drums_set_sample(drums, t, s0, s1);
+                    drums_set_sample_mipped(drums, t, p->sample_data_va,
+                                            p->tape_length_samples, s0, s1);
                 }
                 return;
             }
         }
         for (int t = 0; t < DRUM_TRACKS; t++) {
-            unsigned int a = 0, b = 0;
             const synth_preset_t* p = &synth_presets[DRUM_PRESET_BASE + t];
             const synth_preset_slice_t* sl = &p->slice[0];
-            if (drum_kit >= 0 && preset_slice_has_sample_data(sl)) {
-                unsigned int base = get_mip_va(p, 0, false);
-                a = base + sl->start_read_only;
-                b = base + sl->end_read_only;
-            }
-            drums_set_sample(drums, t, a, b);
+            if (drum_kit >= 0 && preset_slice_has_sample_data(sl))
+                drums_set_sample_mipped(drums, t, p->sample_data_va, p->tape_length_samples,
+                                        sl->start_read_only, sl->end_read_only);
+            else
+                drums_set_sample(drums, t, 0, 0);   /* clear: fall back to the generated voice */
         }
     }
 
@@ -787,6 +790,12 @@ struct ambiotica : panel_t {
                off0, off1, off1 - off0);
         for (unsigned m = 0; m <= 8; m++) {
             unsigned int base = get_mip_va(p, m, false);
+            /* dsp/mipmap.h REIMPLEMENTS get_mip_va, because drums.c also builds in the
+               desktop harness where the SDK does not exist. Cross-check the copy against the
+               real thing here, so a future SDK change shows up as a loud mismatch on the next
+               kit load rather than as quietly wrong sample addresses. */
+            unsigned int ours = mip_base(p->sample_data_va, p->tape_length_samples, m);
+            if (ours != base) printf("  !! mip%u MISMATCH ours=%u sdk=%u\n", m, ours, base);
             unsigned int va   = base + (off0 >> m);
             unsigned int n    = (off1 - off0) >> m;
             int peak = 0;

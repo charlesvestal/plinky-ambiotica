@@ -8,7 +8,7 @@ set -e
 HN="$(cd "$(dirname "$0")" && pwd)"
 CC="clang -O2 -std=c11 -Wall -Wextra -Werror"
 
-for t in euclid stepcond; do
+for t in euclid stepcond mipmap; do
     $CC "$HN/${t}_test.c" -o "$HN/${t}_test"
     "$HN/${t}_test"
 done

@@ -46,6 +46,15 @@ void drums_trigger(drums_t* d, int track, int velocity);
    end of a sample can crash, and that regions outside a loaded preset may not be resident. */
 void drums_set_sample(drums_t* d, int track, unsigned int va_start, unsigned int va_end);
 
+/* As above, but described in the terms the preset system actually gives you: the preset's
+   sample_data_va and tape_length_samples plus the slice's RELATIVE start/end offsets. This
+   is the form that can reach the SDK's prefiltered octaves, so a track set up this way stops
+   aliasing when transposed up. Prefer it for preset-owned samples; drums_set_sample stays
+   for callers that only have absolute addresses and accepts the aliasing. */
+void drums_set_sample_mipped(drums_t* d, int track, unsigned int sample_data_va,
+                             unsigned int tape_length, unsigned int off_start,
+                             unsigned int off_end);
+
 /* ADDS into out_l/out_r — does not clear them. Call after the wash has been rendered. */
 void drums_render(drums_t* d, float* out_l, float* out_r, int frames);
 
