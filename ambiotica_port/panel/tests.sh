@@ -12,3 +12,9 @@ for t in euclid stepcond mipmap steptime; do
     $CC "$HN/${t}_test.c" -o "$HN/${t}_test"
     "$HN/${t}_test"
 done
+
+# Amalgamation-order check, if a build has been generated. Catches use-before-definition in
+# the concatenated panel, which no other check here can see.
+if [ -f "$HN/plinky_ambiotica.cpp" ] && command -v clang++ >/dev/null 2>&1; then
+    python3 "$HN/check_order.py" "$HN/plinky_ambiotica.cpp"
+fi
