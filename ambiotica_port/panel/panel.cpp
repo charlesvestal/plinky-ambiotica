@@ -890,13 +890,14 @@ struct ambiotica : panel_t {
         /* The selection belongs to a single hold: let go of both CONDITION pads and the next
            tap inspects again rather than silently advancing whatever was last touched. */
         if (!prob_mod && !mod_mod) cond_sel = -1;
-        const bool any_mod = mute_mod || rr_mod || len_mod || eu_mod || prob_mod || mod_mod;
         /* MUTE: hold + tap a track toggles it; a tap on its own unmutes everything, which is
            how every Plinky panel's mute behaves. "On its own" is tracked across the hold
            rather than guessed at, so a hold that did toggle something does not also
            un-mute-all when released. */
         const int mute_y = page_y + ROW_MUTE;
         bool mute_mod = get_touch_down(COL_MUTE, mute_y) != 0;
+        /* Declared after mute_mod, which it reads. */
+        const bool any_mod = mute_mod || rr_mod || len_mod || eu_mod || prob_mod || mod_mod;
         if (get_touch_pressed(COL_MUTE, mute_y)) mute_hit_track = false;
         if (get_touch_released(COL_MUTE, mute_y) && !mute_hit_track) drum_mute = 0;
         bool any_down  = false;

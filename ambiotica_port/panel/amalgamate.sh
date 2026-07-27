@@ -34,9 +34,9 @@ trap 'rm -f "$BODY"' EXIT
     strip "$HN/alloc_prelude.h"
     for h in $MODULES; do strip "$DSP/$h.h"; done
     strip "$DSP/mipmap.h"             # used by drums.c, so it must precede it
-    strip "$DSP/hann.h"               # used by looper.c and microloop.c
     strip "$DSP/rate_util.h"
     strip "$DSP/fast_math.h"
+    strip "$DSP/hann.h"               # AFTER fast_math.h (needs fast_cosf), before its users
     strip "$HARN/full_chain.h"
     for c in $MODULES; do strip "$DSP/$c.c"; done
     strip "$HN/euclid.h"              # after drums.h (needs DRUM_STEPS), before its caller
@@ -90,6 +90,13 @@ META
 } > "$OUT"
 
 echo "wrote $OUT ($(wc -l < "$OUT" | tr -d ' ') lines, $(wc -c < "$OUT" | tr -d ' ') bytes)"
+
+# Amalgamation-order check. This file strips every #include and depends purely on the order
+# above, so a use-before-definition compiles fine in the harness and fails only in the IDE.
+# Non-fatal: it needs clang, and a missing clang must not stop a build from being produced.
+if command -v clang++ >/dev/null 2>&1; then
+    python3 "$HN/check_order.py" "$OUT" || echo "amalgamate: ORDER PROBLEM ABOVE - this WILL fail in the IDE" >&2
+fi
 
 # Submission bundle in the plinkysynth/community-panels layout. Built locally every time
 # so it never drifts from the sources; submitting is a separate, manual act.
