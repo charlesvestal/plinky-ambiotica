@@ -637,8 +637,10 @@ struct ambiotica : panel_t {
                anywhere. Otherwise it is the PRESET nav button and stays still, because on
                this panel a pad that animates means "you are here". */
             const float saw = dilate ? nav_phase : (1.f - nav_phase);
-            uint32_t pc = xh     ? fade_col(ORANGE, 40 + (int)(saw * 180.f))
-                        : dilate ? fade_col(ORANGE, 25 + (int)(saw * 110.f))
+            /* GREEN once engaged, ORANGE while armed but off, so the state reads by colour
+               and by ramp direction at once - either cue alone is enough. */
+            uint32_t pc = xh     ? fade_col(dilate ? GREEN : ORANGE, 40 + (int)(saw * 180.f))
+                        : dilate ? fade_col(GREEN, 25 + (int)(saw * 110.f))
                                  : (page == PAGE_PRESET ? here : away);
             if (button(COL_PRESET, page_y + CTL_TOP, pc, ISOLATED,
                        xh     ? "REV - play the bed backward"
