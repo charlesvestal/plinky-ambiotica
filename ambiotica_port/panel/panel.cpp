@@ -189,6 +189,10 @@ struct ambiotica : panel_t {
     play_surface_t play;
     slider_t       fxslider[FX_N];
     unsigned char  fx_val[FX_N];
+    /* Dilate: the loop bed and micro-loop read BACKWARD. A latch rather than a slider - the
+       DSP crossfades in over ~a second by itself, so a target of 0 or 1 is all the gesture
+       needs, and it leaves the seven macro sliders alone. */
+    unsigned char  dilate = 0;   /* serialises as a plain byte, like drum_mute */
     /* Held for its parts, not its pages: slider_banks feed the synth page's two slider
        blocks (24 of the 32), the_xy_pad the XY block, picker the preset browser. Its
        edit()/saveload() wrappers hardcode a layout that doesn't match this overlay. */
@@ -447,6 +451,7 @@ struct ambiotica : panel_t {
         fx.ring             = tail;                            /* Tail: chord ring length */
         fx.grain_size       = 0.15f + 0.70f * tex;            /* Constellate: grain size */
         fx.scatter          = tex;                            /* Constellate: scatter */
+        fx.dilate           = dilate ? 1.f : 0.f;             /* Dilate: reverse the bed */
         fx.mod_depth        = motion;                          /* Flux */
         fx.mod_rate         = 0.10f + 0.80f * motion;
         fx.drift_amt        = motion;
@@ -595,8 +600,21 @@ struct ambiotica : panel_t {
             if (rr) reroll_synth();          /* ⭕ + SYNTH = new sound, no page change */
             else    nav_goto(PAGE_SYNTH);
         }
-        if (button(COL_PRESET, page_y + CTL_TOP, page == PAGE_PRESET ? here : away, ISOLATED, "Synth presets") && armed)
-            nav_goto(PAGE_PRESET);
+        /* This pad carries TWO printed words: PRESET on its upper line and REV on its lower,
+           REV being one of the stock play-direction group (FWD REV RND PING). So it browses
+           presets on its own and, with the printed shift key held, toggles Dilate - which is
+           literally a reversed read of the loop and micro-loop. The manual reaches the same
+           group by holding EDIT; × is our shift, and EDIT is not free on the play page. */
+        {
+            const bool xh = shift_held(page_y);
+            uint32_t pc = xh ? (dilate ? ORANGE : DIMMER(ORANGE))
+                             : (page == PAGE_PRESET ? here : away);
+            if (button(COL_PRESET, page_y + CTL_TOP, pc, ISOLATED,
+                       xh ? "REV - play the bed backward" : "Synth presets") && armed) {
+                if (xh) { dilate = (unsigned char)!dilate; push_fx_from_ui(); }
+                else    nav_goto(PAGE_PRESET);
+            }
+        }
         if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene") && armed)
             nav_goto(PAGE_SCENE);
         /* × - the printed shift key, on every page. Drawn with set_led and read with raw
@@ -1446,7 +1464,7 @@ struct ambiotica : panel_t {
         AMB_SM(mix); AMB_SM(loop_layer); AMB_SM(grain_size); AMB_SM(scatter);
         AMB_SM(micro_hold); AMB_SM(decay); AMB_SM(mod_depth); AMB_SM(mod_rate);
         AMB_SM(bloom); AMB_SM(drift_amt); AMB_SM(spectra); AMB_SM(ring);
-        AMB_SM(gravity); AMB_SM(horizon);
+        AMB_SM(gravity); AMB_SM(horizon); AMB_SM(dilate);
         #undef AMB_SM
         fx_sm.loop_length_bars = fx.loop_length_bars; fx_sm.micro_bars = fx.micro_bars;
         fx_sm.bpm = fx.bpm; fx_sm.key = fx.key; fx_sm.chord = fx.chord;
@@ -1564,6 +1582,7 @@ struct ambiotica : panel_t {
         FIELD("kit",     o.drum_kit,               -1, 8);
         FIELD("dmute",   o.drum_mute,              0u, 255u);
         FIELD("dtrans", o.drum_transpose,        -24, 24);
+        FIELD("dilate", o.dilate,                  0u, 1u);
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
          * preset-install planner on a scene load - that happens for every staged panel load
          * regardless of what we serialise. So they are not implicated in the load failure,

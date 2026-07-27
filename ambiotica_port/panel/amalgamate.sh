@@ -34,6 +34,7 @@ trap 'rm -f "$BODY"' EXIT
     strip "$HN/alloc_prelude.h"
     for h in $MODULES; do strip "$DSP/$h.h"; done
     strip "$DSP/mipmap.h"             # used by drums.c, so it must precede it
+    strip "$DSP/hann.h"               # used by looper.c and microloop.c
     strip "$DSP/rate_util.h"
     strip "$DSP/fast_math.h"
     strip "$HARN/full_chain.h"

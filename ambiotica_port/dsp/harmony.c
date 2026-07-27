@@ -113,7 +113,7 @@ static inline float h_read(const float *buf, int len, int widx, float delay) {
     return buf[i0] + (buf[i1] - buf[i0]) * fr;
 }
 
-void harmony_process(harmony_t *h,
+void PLINKY_DSP_RAM_FUNC(harmony_process)(harmony_t *h,
                      const float *in_l, const float *in_r,
                      float *out_l, float *out_r,
                      int frames) {

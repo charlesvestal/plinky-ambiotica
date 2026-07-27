@@ -51,6 +51,10 @@ typedef struct {
     int   key, chord;                            /* chord = mode: 0..4 = Ion/Aeol/Dor/Lyd/Mixo (sets the Spectra tonic) */
     float gravity;                               /* Gravity macro amount; also a post-mix tremolo here */
     float horizon;                               /* Event Horizon: 1 = full sustain, <1 drains loop/micro/wet */
+    float dilate;                                /* 0..1: crossfade the loop and micro-loop reads to
+                                                    BACKWARD heads. Two heads half a window apart,
+                                                    Hann-crossfaded, so pitch is kept and there is no
+                                                    seam. 0 = forward, 1 = fully reversed. */
 } full_params;
 
 /* Persistent + per-block scratch state. Zero-init then set mixCur = params.mix. */
@@ -107,6 +111,12 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m,
     granular_set_scatter(g, p->scatter);
     granular_set_mod_depth(g, 0.0f);
     microloop_set_hold(m, p->micro_hold);
+    /* Dilate drives the loop bed and the micro-loop together: reversing only one of them
+       just sounds like a broken delay, whereas both at once turns the whole bed backward,
+       which is the gesture. The granular scatter is left forward on purpose - its grains are
+       already scattered in time, so reversing them is inaudible and only costs reads. */
+    looper_set_reverse(l, p->dilate);
+    microloop_set_reverse(m, p->dilate);
     { float mb = p->micro_bars > 0.01f ? p->micro_bars : 0.25f;      /* Satellite micro length */
       int mlen = (int)(mb * FC_BEATS_PER_BAR * 60.0f / bpm * sr); if (mlen < 1) mlen = 1;
       microloop_set_loop_len(m, mlen); }
