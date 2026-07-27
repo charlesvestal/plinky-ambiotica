@@ -96,9 +96,10 @@ does: the loop bed and the micro-loop swap to backward read heads. Two heads hal
 apart, Hann-crossfaded, so the pitch is unchanged and there is no seam - the wash simply
 starts flowing the other way. It crossfades in over about a second.
 
-**The pad ramps for as long as Dilate is on**, from any page: a slow orange sawtooth that
+**The pad ramps for as long as Dilate is on**, from any page: a slow **green** sawtooth that
 **rises**, the way reversed audio swells into a cut. Hold × on the play page with Dilate off
-and it **falls** instead, like the ping and decay of a grain played forward. The ramp draws
+and it is **orange** and **falls** instead, like the ping and decay of a grain played
+forward. Colour and direction say the same thing, so either one alone tells you the state. The ramp draws
 the envelope you are hearing, so the shape reads before the colour does. A reversed bed
 sounds less like a loop and more like a swell, and without that light it is easy to mistake
 for the looper having stopped.
