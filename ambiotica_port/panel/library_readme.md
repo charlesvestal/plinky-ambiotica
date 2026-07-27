@@ -97,10 +97,11 @@ apart, Hann-crossfaded, so the pitch is unchanged and there is no seam - the was
 starts flowing the other way. It crossfades in over about a second.
 
 **The pad ramps for as long as Dilate is on**, from any page: a slow orange sawtooth that
-falls, because the bed is running backward. Hold × on the play page and it ramps the other
-way while Dilate is off - rising for forward, falling for reversed - so the shape tells you
-the direction before the colour does. A reversed bed sounds less like a loop and more like a
-swell, and without that light it is easy to mistake for the looper having stopped.
+**rises**, the way reversed audio swells into a cut. Hold × on the play page with Dilate off
+and it **falls** instead, like the ping and decay of a grain played forward. The ramp draws
+the envelope you are hearing, so the shape reads before the colour does. A reversed bed
+sounds less like a loop and more like a swell, and without that light it is easy to mistake
+for the looper having stopped.
 
 Only the play page toggles it, so holding × to erase drum steps cannot flip it by accident.
 

@@ -616,15 +616,17 @@ struct ambiotica : panel_t {
                without holding a modifier to find out. Previously the orange only appeared
                while × was down, which meant an accidental toggle looked exactly like the
                looper having vanished. */
-            /* A SAW, not the nav bar's breath, and it runs the way the bed runs: rising
-               while the loop plays forward, falling while it plays backward. The shape is
-               the readout - you can tell the direction across the room without decoding a
-               colour. nav_phase is already a 0..1 saw at 0.8 Hz, so this is one subtract and
-               stays locked to the rest of the panel's motion.
+            /* A SAW, not the nav bar's breath, and it draws the ENVELOPE you are hearing
+               rather than the direction the read head travels. Reversed audio swells into a
+               cut, so Dilate ramps UP. A forward grain pings and decays, so off ramps DOWN.
+               That is the shape the ear already associates with each, which makes the pad
+               readable without decoding a colour.
+               nav_phase is already a 0..1 saw at 0.8 Hz, so this is one subtract and stays
+               locked to the rest of the panel's motion.
                Only while the pad IS the Dilate indicator: holding × here, or Dilate engaged
                anywhere. Otherwise it is the PRESET nav button and stays still, because on
                this panel a pad that animates means "you are here". */
-            const float saw = dilate ? (1.f - nav_phase) : nav_phase;
+            const float saw = dilate ? nav_phase : (1.f - nav_phase);
             uint32_t pc = xh     ? fade_col(ORANGE, 40 + (int)(saw * 180.f))
                         : dilate ? fade_col(ORANGE, 25 + (int)(saw * 110.f))
                                  : (page == PAGE_PRESET ? here : away);
