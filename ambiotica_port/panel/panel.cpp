@@ -622,30 +622,26 @@ struct ambiotica : panel_t {
                loop bed. Dilate acts on the wash, so it belongs where the wash is played. */
             const bool can_dilate = (page == PAGE_PLAY);
             const bool xh = shift_sticky(page_y) && can_dilate;
-            /* Dilate is a LATCH that changes how everything sounds, so it has to be visible
-               without holding a modifier to find out. Previously the orange only appeared
-               while × was down, which meant an accidental toggle looked exactly like the
-               looper having vanished. */
-            /* A SAW, not the nav bar's breath, and it draws the ENVELOPE you are hearing
+            /* The Dilate readout appears ONLY while × is held. Let go and this is the
+               PRESET nav button again, unanimated, because on this panel a pad that moves
+               means "you are here" and PRESET should not be spending that meaning on a
+               different feature. The cost is that a Dilate left on is not visible until you
+               ask; the reason that is acceptable now is that toggling is play-page only, so
+               it can no longer be hit by accident while erasing drum steps.
+               A SAW, not the nav bar's breath, and it draws the ENVELOPE you are hearing
                rather than the direction the read head travels. Reversed audio swells into a
                cut, so Dilate ramps UP. A forward grain pings and decays, so off ramps DOWN.
-               That is the shape the ear already associates with each, which makes the pad
-               readable without decoding a colour.
-               nav_phase is already a 0..1 saw at 0.8 Hz, so this is one subtract and stays
-               locked to the rest of the panel's motion.
-               Only while the pad IS the Dilate indicator: holding × here, or Dilate engaged
-               anywhere. Otherwise it is the PRESET nav button and stays still, because on
-               this panel a pad that animates means "you are here". */
+               Those are the shapes the ear already attaches to each. GREEN once engaged,
+               ORANGE while armed but off, so colour and direction say the same thing and
+               either cue alone is enough. nav_phase is already a 0..1 saw at 0.8 Hz, so this
+               costs one subtract and stays locked to the panel's other motion. */
             const float saw = dilate ? nav_phase : (1.f - nav_phase);
-            /* GREEN once engaged, ORANGE while armed but off, so the state reads by colour
-               and by ramp direction at once - either cue alone is enough. */
-            uint32_t pc = xh     ? fade_col(dilate ? GREEN : ORANGE, 40 + (int)(saw * 180.f))
-                        : dilate ? fade_col(GREEN, 25 + (int)(saw * 110.f))
-                                 : (page == PAGE_PRESET ? here : away);
+            uint32_t pc = xh ? fade_col(dilate ? GREEN : ORANGE, 40 + (int)(saw * 180.f))
+                             : (page == PAGE_PRESET ? here : away);
             if (button(COL_PRESET, page_y + CTL_TOP, pc, ISOLATED,
-                       xh     ? "REV - play the bed backward"
-                     : dilate ? "Synth presets (REV is ON - × + this pad to clear)"
-                              : "Synth presets") && armed) {
+                       xh ? (dilate ? "REV is ON - tap to play forward again"
+                                    : "REV - play the bed backward")
+                          : "Synth presets") && armed) {
                 if (xh)                       { dilate = (unsigned char)!dilate; push_fx_from_ui(); }
                 else if (!shift_sticky(page_y)) nav_goto(PAGE_PRESET);
                 /* else: × is down but this page cannot dilate. Do nothing rather than
