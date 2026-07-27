@@ -45,9 +45,10 @@ labels. No physical side button is claimed.
 - **KEY ▲▼ / BANK ▲▼:** key around the circle of fifths, and mode
   (Ionian / Aeolian / Dorian / Lydian / Mixolydian). Both retune the surface and the
   Spectra wash.
-- **× + PRESET** on the play page toggles **Dilate** - the pad's lower printed word is
-  **REV**, and the loop bed and micro-loop swap to backward, Hann-crossfaded read heads
-  (pitch kept, no seam). The pad stays orange while it is on.
+- **UNLOCK** toggles **Dilate** - the loop bed and micro-loop swap to backward,
+  Hann-crossfaded read heads (pitch kept, no seam). Purple and rising while reversed, dim red
+  and falling while forward. UNLOCK is the stock pad governing play-direction scope, and sits
+  above the Gravity / Event Horizon column.
 - **Pages** on their printed pads: **TRACKS** (drums), **SYNTH** (editor), **PRESET**,
   **SONG** (save/load a whole scene), **SCALE** to come back.
 
