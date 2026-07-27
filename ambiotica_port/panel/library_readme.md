@@ -90,22 +90,21 @@ voices. Transport is on the printed ▷ and ▢ pads, available from every page.
 
 ## Dilate - play the bed backward
 
-On the **play surface**, hold **×** and tap **PRESET** to toggle **Dilate**. The pad's lower
-printed word is **REV**, one of the stock play-direction group, and that is exactly what this
-does: the loop bed and the micro-loop swap to backward read heads. Two heads half a window
-apart, Hann-crossfaded, so the pitch is unchanged and there is no seam - the wash simply
-starts flowing the other way. It crossfades in over about a second.
+Tap **UNLOCK**, top right of the sequencer row, to reverse the loop bed and the micro-loop.
+Two backward read heads half a window apart, Hann-crossfaded, so the pitch is unchanged and
+there is no seam - the wash simply starts flowing the other way. It crossfades over about a
+second.
 
-**Hold × to see the state.** The pad ramps only while × is down: a slow sawtooth that **rises
-green** when Dilate is on, the way reversed audio swells into a cut, and **falls orange**
-when it is off, like the ping and decay of a grain played forward. The ramp draws the
-envelope you are hearing, so the shape reads before the colour does, and either cue alone
-tells you where you are. Let go and the pad is the PRESET button again.
+The pad ramps **purple and rising** while reversed, the way reversed audio swells into a cut,
+and sits **dim red and falling** while forward, like the ping and decay of a grain. Colour and
+direction say the same thing, so either cue alone tells you the state, and it shows on every
+page: a reversed bed sounds less like a loop and more like a swell, which is easy to mistake
+for the looper having stopped.
 
-A reversed bed sounds less like a loop and more like a swell, so if the wash ever seems to
-have lost its loop, hold × on the play page and check this pad.
-
-Only the play page toggles it, so holding × to erase drum steps cannot flip it by accident.
+UNLOCK earns this on the silkscreen: on stock Chords it is the pad that decides whether the
+FWD / REV / RND / PING play direction applies to one track or to all of them, so it already
+belongs to the play-direction family. It also sits directly above the column carrying Gravity
+and Event Horizon, putting the three whole-engine gestures together.
 
 ## Control pads
 

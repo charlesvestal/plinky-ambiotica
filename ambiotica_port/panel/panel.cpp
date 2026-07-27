@@ -65,6 +65,11 @@ enum {
        used to hardcode. Hold it and press a step to set that track's loop length to that
        column, exactly the press-a-column gesture PATTERN uses. */
     COL_LENGTH = 1,
+    /* "UNLOCK" (row 1, col 15) - Dilate. On stock Chords UNLOCK governs whether the
+       FWD / REV / RND / PING play direction applies per track or to all of them, so the pad
+       is already about play direction. It also sits directly above column 15's Gravity /
+       Event Horizon slider, putting the three whole-engine gestures together. */
+    COL_UNLOCK = 15,
     COL_MODULO = 11,
     COL_PROB   = 12,    /* "PROB" (row 1) - hold to see and edit per-step probability */
     COL_REROLL = 14,    /* "FILL" (row 1) - hold + tap a target to randomise it */
@@ -226,12 +231,6 @@ struct ambiotica : panel_t {
     float        shimmer_phase = 0.f;              /* slow LFO for the Tail slider's shimmer */
     float        freeze_phase = 0.f;               /* Satellite freeze indicator: fast 3-spot bounce */
     float        nav_phase = 0.f, nav_pulse = 0.f; /* nav-bar "you are here" breath (runs on every page) */
-    /* × is a PRESSURE pad, so a finger resting on it can dip under the down threshold for a
-       frame without being lifted. Harmless where × only gates writes, but not on a nav pad:
-       a one-frame dip turns "toggle Dilate" into "leave the page", which is the loudest way
-       to get it wrong. This keeps the modifier alive briefly after the last frame it was
-       seen, so tapping a target repeatedly under one continuous hold works. */
-    int          shift_grace_us = 0;
     float        preview_mix = 0.f;                /* 0 = normal, 1 = preset audition bypasses the chain */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
@@ -332,9 +331,6 @@ struct ambiotica : panel_t {
     /* Raw touch, not a widget: a modifier has to be readable by OTHER pads on the same frame,
        and it must not swallow its own press. */
     bool shift_held(int page_y) const { return get_touch_down(COL_X, page_y + CTL_DN) != 0; }
-    /* shift_held, but tolerant of a momentary pressure dip - see shift_grace_us. Use this
-       where losing the modifier does something worse than nothing. */
-    bool shift_sticky(int page_y) const { return shift_held(page_y) || shift_grace_us > 0; }
     /* Every sequencer modifier lives on row 1, so one accessor covers all of them. Adding a
        modifier pad is then one row in kModPads below, not three edits in three places. */
     bool mod_held(int col, int page_y) const { return get_touch_down(col, page_y + CTL_TOP2) != 0; }
@@ -565,7 +561,6 @@ struct ambiotica : panel_t {
        worst case degrades to a one-second timer. If input feels frozen for a beat after
        every page change, that assumption is what to look at. */
     static constexpr int NAV_FREEZE_CEILING_US = 1000000;
-    static constexpr int SHIFT_GRACE_US = 250000;   /* 250 ms; well under a deliberate re-press */
     bool scroll_settled() const { return get_scroll_y_16() == get_scroll_page() * 256; }
     bool input_frozen()  const { return nav_cooldown_us > 0 && !scroll_settled(); }
     void nav_goto(int page) { scroll_to_page(page); nav_cooldown_us = NAV_FREEZE_CEILING_US; }
@@ -610,45 +605,35 @@ struct ambiotica : panel_t {
             if (rr) reroll_synth();          /* ⭕ + SYNTH = new sound, no page change */
             else    nav_goto(PAGE_SYNTH);
         }
-        /* This pad carries TWO printed words: PRESET on its upper line and REV on its lower,
-           REV being one of the stock play-direction group (FWD REV RND PING). So it browses
-           presets on its own and, with the printed shift key held, toggles Dilate - which is
-           literally a reversed read of the loop and micro-loop. The manual reaches the same
-           group by holding EDIT; × is our shift, and EDIT is not free on the play page. */
+        if (button(COL_PRESET, page_y + CTL_TOP, page == PAGE_PRESET ? here : away, ISOLATED,
+                   "Synth presets") && armed)
+            nav_goto(PAGE_PRESET);
+
+        /* DILATE, on the printed UNLOCK pad. Not an obvious word for "play backward" until
+           you read what UNLOCK does on stock Chords: it is what decides whether the play
+           direction set by FWD / REV / RND / PING applies to every track or to one. UNLOCK
+           and REV are the same functional family, and this pad sits directly above the
+           column that carries Gravity and Event Horizon - the panel's other two whole-engine
+           gestures - so it lands with its relatives.
+           A pad of its own means no modifier, which is why this is a plain tap: the earlier
+           × + PRESET form had to fight a held modifier for a latching state.
+           Lit on every page. It is not a nav pad and not a step-grid modifier, so nothing is
+           being borrowed - showing the state everywhere is simply this pad's job, and a
+           reversed bed is otherwise easy to mistake for the looper having stopped.
+           PURPLE rising when reversed, dim RED falling when forward: reversed audio swells
+           into a cut, a forward grain pings and decays, so colour and ramp agree. */
         {
-            /* Toggling is PLAY PAGE ONLY. draw_nav runs on every page, and on the drums page
-               × is the erase modifier you hold continuously while scrubbing steps - with
-               PRESET sitting in the same nav bar, one stray tap silently reversed the whole
-               loop bed. Dilate acts on the wash, so it belongs where the wash is played. */
-            const bool can_dilate = (page == PAGE_PLAY);
-            const bool xh = shift_sticky(page_y) && can_dilate;
-            /* The Dilate readout appears ONLY while × is held. Let go and this is the
-               PRESET nav button again, unanimated, because on this panel a pad that moves
-               means "you are here" and PRESET should not be spending that meaning on a
-               different feature. The cost is that a Dilate left on is not visible until you
-               ask; the reason that is acceptable now is that toggling is play-page only, so
-               it can no longer be hit by accident while erasing drum steps.
-               A SAW, not the nav bar's breath, and it draws the ENVELOPE you are hearing
-               rather than the direction the read head travels. Reversed audio swells into a
-               cut, so Dilate ramps UP. A forward grain pings and decays, so off ramps DOWN.
-               Those are the shapes the ear already attaches to each. GREEN once engaged,
-               ORANGE while armed but off, so colour and direction say the same thing and
-               either cue alone is enough. nav_phase is already a 0..1 saw at 0.8 Hz, so this
-               costs one subtract and stays locked to the panel's other motion. */
             const float saw = dilate ? nav_phase : (1.f - nav_phase);
-            uint32_t pc = xh ? fade_col(dilate ? GREEN : ORANGE, 40 + (int)(saw * 180.f))
-                             : (page == PAGE_PRESET ? here : away);
-            if (button(COL_PRESET, page_y + CTL_TOP, pc, ISOLATED,
-                       xh ? (dilate ? "REV is ON - tap to play forward again"
-                                    : "REV - play the bed backward")
-                          : "Synth presets") && armed) {
-                if (xh)                       { dilate = (unsigned char)!dilate; push_fx_from_ui(); }
-                else if (!shift_sticky(page_y)) nav_goto(PAGE_PRESET);
-                /* else: × is down but this page cannot dilate. Do nothing rather than
-                   navigate - a held modifier means the tap was aimed at the modifier's job,
-                   not at changing page. */
+            uint32_t dc = dilate ? fade_col(PURPLE, 40 + (int)(saw * 180.f))
+                                 : fade_col(RED,    18 + (int)(saw *  60.f));
+            if (button(COL_UNLOCK, page_y + CTL_TOP2, dc, ISOLATED,
+                       dilate ? "REV - the bed is playing backward, tap for forward"
+                              : "REV - play the loop and micro-loop backward") && armed) {
+                dilate = (unsigned char)!dilate;
+                push_fx_from_ui();
             }
         }
+
         if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene") && armed)
             nav_goto(PAGE_SCENE);
         /* × - the printed shift key, on every page. Drawn with set_led and read with raw
@@ -1279,9 +1264,6 @@ struct ambiotica : panel_t {
         }
 
         if (nav_cooldown_us > 0) nav_cooldown_us -= dt_us;
-        /* Read off the page actually on screen, so it follows × wherever the grid scrolled. */
-        if (get_touch_down(COL_X, get_scroll_page() * 16 + CTL_DN)) shift_grace_us = SHIFT_GRACE_US;
-        else if (shift_grace_us > 0)                                shift_grace_us -= dt_us;
         tick_kit_arm(dt_us);
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
