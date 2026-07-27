@@ -616,8 +616,17 @@ struct ambiotica : panel_t {
                without holding a modifier to find out. Previously the orange only appeared
                while × was down, which meant an accidental toggle looked exactly like the
                looper having vanished. */
-            uint32_t pc = xh     ? (dilate ? ORANGE : DIMMER(ORANGE))
-                        : dilate ? DIMMER(ORANGE)
+            /* A SAW, not the nav bar's breath, and it runs the way the bed runs: rising
+               while the loop plays forward, falling while it plays backward. The shape is
+               the readout - you can tell the direction across the room without decoding a
+               colour. nav_phase is already a 0..1 saw at 0.8 Hz, so this is one subtract and
+               stays locked to the rest of the panel's motion.
+               Only while the pad IS the Dilate indicator: holding × here, or Dilate engaged
+               anywhere. Otherwise it is the PRESET nav button and stays still, because on
+               this panel a pad that animates means "you are here". */
+            const float saw = dilate ? (1.f - nav_phase) : nav_phase;
+            uint32_t pc = xh     ? fade_col(ORANGE, 40 + (int)(saw * 180.f))
+                        : dilate ? fade_col(ORANGE, 25 + (int)(saw * 110.f))
                                  : (page == PAGE_PRESET ? here : away);
             if (button(COL_PRESET, page_y + CTL_TOP, pc, ISOLATED,
                        xh     ? "REV - play the bed backward"
