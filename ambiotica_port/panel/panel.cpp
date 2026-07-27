@@ -226,6 +226,12 @@ struct ambiotica : panel_t {
     float        shimmer_phase = 0.f;              /* slow LFO for the Tail slider's shimmer */
     float        freeze_phase = 0.f;               /* Satellite freeze indicator: fast 3-spot bounce */
     float        nav_phase = 0.f, nav_pulse = 0.f; /* nav-bar "you are here" breath (runs on every page) */
+    /* × is a PRESSURE pad, so a finger resting on it can dip under the down threshold for a
+       frame without being lifted. Harmless where × only gates writes, but not on a nav pad:
+       a one-frame dip turns "toggle Dilate" into "leave the page", which is the loudest way
+       to get it wrong. This keeps the modifier alive briefly after the last frame it was
+       seen, so tapping a target repeatedly under one continuous hold works. */
+    int          shift_grace_us = 0;
     float        preview_mix = 0.f;                /* 0 = normal, 1 = preset audition bypasses the chain */
 
     /* Self-calibrating meter -> slider brightness (q8, 0..256). Maps a fast
@@ -326,6 +332,9 @@ struct ambiotica : panel_t {
     /* Raw touch, not a widget: a modifier has to be readable by OTHER pads on the same frame,
        and it must not swallow its own press. */
     bool shift_held(int page_y) const { return get_touch_down(COL_X, page_y + CTL_DN) != 0; }
+    /* shift_held, but tolerant of a momentary pressure dip - see shift_grace_us. Use this
+       where losing the modifier does something worse than nothing. */
+    bool shift_sticky(int page_y) const { return shift_held(page_y) || shift_grace_us > 0; }
     /* Every sequencer modifier lives on row 1, so one accessor covers all of them. Adding a
        modifier pad is then one row in kModPads below, not three edits in three places. */
     bool mod_held(int col, int page_y) const { return get_touch_down(col, page_y + CTL_TOP2) != 0; }
@@ -556,6 +565,7 @@ struct ambiotica : panel_t {
        worst case degrades to a one-second timer. If input feels frozen for a beat after
        every page change, that assumption is what to look at. */
     static constexpr int NAV_FREEZE_CEILING_US = 1000000;
+    static constexpr int SHIFT_GRACE_US = 250000;   /* 250 ms; well under a deliberate re-press */
     bool scroll_settled() const { return get_scroll_y_16() == get_scroll_page() * 256; }
     bool input_frozen()  const { return nav_cooldown_us > 0 && !scroll_settled(); }
     void nav_goto(int page) { scroll_to_page(page); nav_cooldown_us = NAV_FREEZE_CEILING_US; }
@@ -611,7 +621,7 @@ struct ambiotica : panel_t {
                PRESET sitting in the same nav bar, one stray tap silently reversed the whole
                loop bed. Dilate acts on the wash, so it belongs where the wash is played. */
             const bool can_dilate = (page == PAGE_PLAY);
-            const bool xh = shift_held(page_y) && can_dilate;
+            const bool xh = shift_sticky(page_y) && can_dilate;
             /* Dilate is a LATCH that changes how everything sounds, so it has to be visible
                without holding a modifier to find out. Previously the orange only appeared
                while × was down, which meant an accidental toggle looked exactly like the
@@ -634,8 +644,11 @@ struct ambiotica : panel_t {
                        xh     ? "REV - play the bed backward"
                      : dilate ? "Synth presets (REV is ON - × + this pad to clear)"
                               : "Synth presets") && armed) {
-                if (xh) { dilate = (unsigned char)!dilate; push_fx_from_ui(); }
-                else    nav_goto(PAGE_PRESET);
+                if (xh)                       { dilate = (unsigned char)!dilate; push_fx_from_ui(); }
+                else if (!shift_sticky(page_y)) nav_goto(PAGE_PRESET);
+                /* else: × is down but this page cannot dilate. Do nothing rather than
+                   navigate - a held modifier means the tap was aimed at the modifier's job,
+                   not at changing page. */
             }
         }
         if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene") && armed)
@@ -1268,6 +1281,9 @@ struct ambiotica : panel_t {
         }
 
         if (nav_cooldown_us > 0) nav_cooldown_us -= dt_us;
+        /* Read off the page actually on screen, so it follows × wherever the grid scrolled. */
+        if (get_touch_down(COL_X, get_scroll_page() * 16 + CTL_DN)) shift_grace_us = SHIFT_GRACE_US;
+        else if (shift_grace_us > 0)                                shift_grace_us -= dt_us;
         tick_kit_arm(dt_us);
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
