@@ -606,11 +606,23 @@ struct ambiotica : panel_t {
            literally a reversed read of the loop and micro-loop. The manual reaches the same
            group by holding EDIT; × is our shift, and EDIT is not free on the play page. */
         {
-            const bool xh = shift_held(page_y);
-            uint32_t pc = xh ? (dilate ? ORANGE : DIMMER(ORANGE))
-                             : (page == PAGE_PRESET ? here : away);
+            /* Toggling is PLAY PAGE ONLY. draw_nav runs on every page, and on the drums page
+               × is the erase modifier you hold continuously while scrubbing steps - with
+               PRESET sitting in the same nav bar, one stray tap silently reversed the whole
+               loop bed. Dilate acts on the wash, so it belongs where the wash is played. */
+            const bool can_dilate = (page == PAGE_PLAY);
+            const bool xh = shift_held(page_y) && can_dilate;
+            /* Dilate is a LATCH that changes how everything sounds, so it has to be visible
+               without holding a modifier to find out. Previously the orange only appeared
+               while × was down, which meant an accidental toggle looked exactly like the
+               looper having vanished. */
+            uint32_t pc = xh     ? (dilate ? ORANGE : DIMMER(ORANGE))
+                        : dilate ? DIMMER(ORANGE)
+                                 : (page == PAGE_PRESET ? here : away);
             if (button(COL_PRESET, page_y + CTL_TOP, pc, ISOLATED,
-                       xh ? "REV - play the bed backward" : "Synth presets") && armed) {
+                       xh     ? "REV - play the bed backward"
+                     : dilate ? "Synth presets (REV is ON - × + this pad to clear)"
+                              : "Synth presets") && armed) {
                 if (xh) { dilate = (unsigned char)!dilate; push_fx_from_ui(); }
                 else    nav_goto(PAGE_PRESET);
             }

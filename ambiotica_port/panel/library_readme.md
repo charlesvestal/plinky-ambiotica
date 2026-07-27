@@ -90,11 +90,16 @@ voices. Transport is on the printed ▷ and ▢ pads, available from every page.
 
 ## Dilate - play the bed backward
 
-Hold **×** and tap **PRESET** to toggle **Dilate**. The pad's lower printed word is **REV**,
-one of the stock play-direction group, and that is exactly what this does: the loop bed and
-the micro-loop swap to backward read heads. Two heads half a window apart, Hann-crossfaded,
-so the pitch is unchanged and there is no seam - the wash simply starts flowing the other
-way. It crossfades in over about a second, and the pad glows orange while it is on.
+On the **play surface**, hold **×** and tap **PRESET** to toggle **Dilate**. The pad's lower
+printed word is **REV**, one of the stock play-direction group, and that is exactly what this
+does: the loop bed and the micro-loop swap to backward read heads. Two heads half a window
+apart, Hann-crossfaded, so the pitch is unchanged and there is no seam - the wash simply
+starts flowing the other way. It crossfades in over about a second.
+
+**The pad stays orange for as long as Dilate is on**, from any page, because a reversed bed
+sounds less like a loop and more like a swell - without the light it is easy to mistake for
+the looper having stopped. Only the play page toggles it, so holding × to erase drum steps
+cannot flip it by accident.
 
 ## Control pads
 
