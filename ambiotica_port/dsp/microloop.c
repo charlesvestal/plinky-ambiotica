@@ -1,5 +1,6 @@
 /* Micro-loop - short feedback delay that locks into freeze near max hold. */
 #include "microloop.h"
+#include "hann.h"
 #include "fast_math.h"
 #include "rate_util.h"
 
@@ -175,6 +176,7 @@ static inline float micro_shimmer (microloop_t *m, float in) {
 }
 
 microloop_t* microloop_create(double sample_rate) {
+    amb_hann_init();
     const double sr = sample_rate > 0.0 ? sample_rate : AMB_REF_SAMPLE_RATE;
     microloop_t *m = (microloop_t*)calloc(1, sizeof(microloop_t));
     if (!m) return NULL;
@@ -369,6 +371,7 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
         m->reverse_current = c * m->reverse_current + ic * m->reverse_target;
         if (m->reverse_current > 0.0005f) {
             int L = m->loop_len_current; if (L < 2) L = 2;
+            const float inv_L = 1.0f / (float)L;   /* hoisted: the divide was per head, per sample */
             float rL = 0.0f, rR = 0.0f;
             for (int h = 0; h < 2; h++) {
                 int ph = m->rev_counter + (h ? L / 2 : 0);
@@ -376,7 +379,7 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
                 if (ph == 0) m->rev_base[h] = write_pos;
                 int rabs = m->rev_base[h] - ph;
                 while (rabs < 0) rabs += buf_capacity;
-                const float gain = 0.5f - 0.5f * fast_cosf(6.2831853f * (float)ph / (float)L);
+                const float gain = amb_hann(ph, inv_L);
                 rL += gain * m_ld(m->buf[rabs*2]);
                 rR += gain * m_ld(m->buf[rabs*2+1]);
             }

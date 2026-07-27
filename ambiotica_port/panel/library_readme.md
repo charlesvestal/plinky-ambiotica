@@ -88,6 +88,14 @@ chain, so the looper, grains and plate never touch them: the pattern stays dry a
 underneath whatever the ambience is doing. They also cost no polyphony - they are not synth
 voices. Transport is on the printed ▷ and ▢ pads, available from every page.
 
+## Dilate - play the bed backward
+
+Hold **×** and tap **PRESET** to toggle **Dilate**. The pad's lower printed word is **REV**,
+one of the stock play-direction group, and that is exactly what this does: the loop bed and
+the micro-loop swap to backward read heads. Two heads half a window apart, Hann-crossfaded,
+so the pitch is unchanged and there is no seam - the wash simply starts flowing the other
+way. It crossfades in over about a second, and the pad glows orange while it is on.
+
 ## Control pads
 
 | Pad | |

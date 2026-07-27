@@ -1,5 +1,6 @@
 /* Rolling-capture stereo looper with feedback. */
 #include "looper.h"
+#include "hann.h"
 #include "fast_math.h"
 #include "rate_util.h"
 
@@ -77,6 +78,7 @@ static inline float soft_sat(float x) {
 }
 
 looper_t* looper_create(int buf_capacity_samples, double sample_rate) {
+    amb_hann_init();
     const double sr = sample_rate > 0.0 ? sample_rate : AMB_REF_SAMPLE_RATE;
     if (buf_capacity_samples <= 0) return NULL;
     looper_t *l = (looper_t*)calloc(1, sizeof(looper_t));
@@ -263,6 +265,7 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         l->reverse_was_active = rev_active;
         if (rev_active) {
             int L = l->loop_len; if (L < 2) L = 2;
+            const float inv_L = 1.0f / (float)L;   /* hoisted: the divide was per head, per sample */
             float rL = 0.0f, rR = 0.0f;
             for (int h = 0; h < 2; h++) {
                 int ph = l->rev_counter + (h ? L / 2 : 0);
@@ -270,7 +273,7 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                 if (ph == 0) l->rev_base[h] = pos;          /* anchor window start at "now" */
                 int rabs = l->rev_base[h] - ph;             /* read backward from the anchor */
                 while (rabs < 0) rabs += cap;
-                const float gain = 0.5f - 0.5f * fast_cosf(6.2831853f * (float)ph / (float)L);
+                const float gain = amb_hann(ph, inv_L);
                 rL += gain * ld(l->buf_L[rabs]);
                 rR += gain * ld(l->buf_R[rabs]);
             }
