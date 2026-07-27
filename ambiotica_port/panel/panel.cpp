@@ -188,7 +188,17 @@ struct ambiotica : panel_t {
     /* Dattorro reverb + harmony + drift + bloom live here (fast SRAM) - their
      * scattered delay-line access is too slow in PSRAM. Fits the 128 KB panel arena.
      * Looper/micro-loop/granular (big, sequential-ish) stay in PSRAM. */
-    unsigned char sram_pool[88 * 1024];
+    /* The DSP's fast-memory arena, and 61% of the whole panel object - declaring a member is
+       the only way to get SRAM. It holds dattorro, harmony, drift and bloom: the stages that
+       read many short buffers every sample, where PSRAM's scattered-access cost would land
+       hardest. The big sequential buffers (looper, microloop, granular, drums) stay in PSRAM.
+       Sized against measurement, not habit: those four allocate 68.6 KB (dattorro 50.2,
+       harmony 13.6, drift 4.7, bloom 0.1), so 88 KB was carrying ~19 KB of slack while the
+       panel object had only ~3.6 KB free. 80 KB keeps ~11 KB of headroom and hands the rest
+       back. The `sram=used/cap` field in the PANEL log line is the number to check before
+       cutting further - and note the failure mode is unforgiving: an allocation that does not
+       fit returns NULL, dsp_ok goes false and the panel is silent. */
+    unsigned char sram_pool[80 * 1024];
 
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
     play_surface_t play;
@@ -1259,8 +1269,10 @@ struct ambiotica : panel_t {
         size_report_us += (unsigned)dt_us;
         if (size_report_us >= 30000000u) {
             size_report_us = 0;
-            printf("PANEL: sizeof=%u free=%d dsp_ok=%d\n",
-                   (unsigned)sizeof(*this), 131072 - (int)sizeof(*this), (int)dsp_ok);
+            printf("PANEL: sizeof=%u free=%d dsp_ok=%d sram=%u/%u psram=%uK\n",
+                   (unsigned)sizeof(*this), 131072 - (int)sizeof(*this), (int)dsp_ok,
+                   (unsigned)g_amb_sr_used, (unsigned)g_amb_sr_cap,
+                   (unsigned)(g_amb_ps_used >> 10));
         }
 
         if (nav_cooldown_us > 0) nav_cooldown_us -= dt_us;
