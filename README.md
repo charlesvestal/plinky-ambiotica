@@ -69,6 +69,7 @@ the word that names it:
 | **FILL** | randomise a quarter of a track; tap again to build it up |
 | **PROB** | a step's chance of firing - 100 / 75 / 50 / 25% |
 | **MODULO** | play a step only every Nth time round - 1:2, 2:2 … 4:4 |
+| **RHYTHM** | shuffle: hold it and the grid is style (row) x depth (column) |
 | **LENGTH** | per-track loop length, for polyrhythms |
 | **MUTE** / **KEY** | mute a track / transpose the kit |
 
