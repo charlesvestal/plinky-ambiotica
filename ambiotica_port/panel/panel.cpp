@@ -192,13 +192,14 @@ struct ambiotica : panel_t {
        the only way to get SRAM. It holds dattorro, harmony, drift and bloom: the stages that
        read many short buffers every sample, where PSRAM's scattered-access cost would land
        hardest. The big sequential buffers (looper, microloop, granular, drums) stay in PSRAM.
-       Sized against measurement, not habit. The plate used to live here too and dominated it
-       at ~53 KB; it now goes in the firmware's own reverb buffer (region 2), leaving only
-       harmony 13.6, drift 4.7 and bloom 0.1 = 18.4 KB here. 24 KB keeps ~5 KB of headroom.
+       Sized against measurement, not habit: dattorro ~53.3 KB (50.2 plus the 3.1 predelay),
+       harmony 13.6, drift 4.7, bloom 0.1 = ~71.7 KB, so 80 KB keeps ~8 KB of headroom.
+       An attempt to move the plate into mix_buffers.reverbbuf and cut this to 24 KB froze on
+       preset load - see the note in build_dsp.
        The `sram=` and `rb=` fields in the PANEL log line are the numbers to check before
        cutting further - and note the failure mode is unforgiving: an allocation that does not
        fit returns NULL, dsp_ok goes false and the panel is silent. */
-    unsigned char sram_pool[24 * 1024];
+    unsigned char sram_pool[80 * 1024];
 
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
     play_surface_t play;
@@ -322,13 +323,18 @@ struct ambiotica : panel_t {
         harmony = harmony_create(sr);
         dsp_ok = looper && microloop && granular && bloom && drift && harmony;
         fc_init(&st, 0.7f);
-        /* The plate goes in the stock reverb's own 64 KB, not the panel object. It is the
-           biggest single allocation we make (~53 KB with the predelay) and it was the reason
-           sram_pool had to be so large; moving it out is worth ~56 KB of the 128 KB panel
-           budget. Same fast RAM, and it is otherwise dead memory since do_fx never runs. */
-        g_amb_region = 2;
-        st.dat = dattorro_create(sr);   /* after fc_init, which zeroes st */
-        g_amb_region = 0;
+        /* The plate lives in sram_pool, NOT in mix_buffers.reverbbuf.
+           Putting it in reverbbuf freed 56 KB of the panel object and worked perfectly in
+           steady state - a probe confirmed a pattern across all 64 KB survives both the
+           runtime's pre-on_dsp clear and the base synth render. It froze the instrument on
+           the first PRESET LOAD. The probe only ever tested audio blocks; loading a preset is
+           a different code path, and something in it uses that buffer. This is unforgiving
+           rather than merely wrong: dattorro_create allocates the dattorro_t ITSELF from the
+           region, so its dline.buf POINTERS live there too - overwrite them and the next
+           dl_read dereferences wild memory, which traps.
+           Region 2 remains in the allocator for anything that is genuinely block-scoped, but
+           nothing whose lifetime spans a load may use it. */
+        st.dat = dattorro_create(sr);   /* Dattorro plate (SRAM region); after fc_init zeroes st */
         dsp_ok = dsp_ok && st.dat;
         g_amb_zero_big = 1;
         /* Deliberately NO *_reset() here on a rebuild. looper_reset alone memsets
