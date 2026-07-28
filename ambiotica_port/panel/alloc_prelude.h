@@ -7,7 +7,7 @@
  * region + bases before each *_create(). No runtime frees (arena lives for the
  * panel's lifetime). Placed FIRST in the amalgamation, before any DSP source.
  */
-static int    g_amb_region = 0;                 /* 0 = SRAM pool, 1 = PSRAM */
+static int    g_amb_region = 0;                 /* 0 = SRAM pool, 1 = PSRAM, 2 = reverbbuf */
 /* Zero large buffers on allocation? Always on first boot (PSRAM contents are undefined).
  * Cleared only while REBUILDING after a panel load: PSRAM is not part of the panel object,
  * so the staged-load memcpy leaves it intact and deterministic allocation hands the same
@@ -19,6 +19,13 @@ static int    g_amb_zero_big = 1;
 #define AMB_BIG_ALLOC (64u * 1024u)
 static unsigned char* g_amb_sr_base = 0; static size_t g_amb_sr_cap = 0, g_amb_sr_used = 0;
 static short*         g_amb_ps_base = 0; static size_t g_amb_ps_cap = 0, g_amb_ps_used = 0;
+/* Region 2: the firmware's 64 KB reverb delay buffer. It is FAST RAM the runtime allocates
+ * for the stock reverb, which never runs here because on_dsp returns true, and the SDK says
+ * that memory is ours to use when the standard FX path is bypassed. Measured on device:
+ * a pattern written across all 64 KB survives both the runtime's pre-on_dsp clear and the
+ * base synth render, 16/16 probes. The panel sets the base pointer, so this header needs no
+ * SDK symbols of its own. */
+static unsigned char* g_amb_rb_base = 0; static size_t g_amb_rb_cap = 0, g_amb_rb_used = 0;
 
 /* Bump-allocate `bytes` from `base`, advancing `*used`, with the RETURNED
  * POINTER aligned to 8 bytes. Aligning the pointer (not just the size) is what
@@ -36,9 +43,11 @@ static void* amb_bump(unsigned char* base, size_t* used, size_t cap, size_t byte
 }
 static void* panel_calloc(size_t n, size_t sz) {
     size_t bytes = n * sz;
-    if (g_amb_region)                            /* PSRAM */
+    if (g_amb_region == 1)                       /* PSRAM */
         return amb_bump((unsigned char*)g_amb_ps_base, &g_amb_ps_used, g_amb_ps_cap, bytes);
-    return amb_bump(g_amb_sr_base, &g_amb_sr_used, g_amb_sr_cap, bytes);   /* SRAM */
+    if (g_amb_region == 2)                       /* the reverb's own 64 KB of fast RAM */
+        return amb_bump(g_amb_rb_base, &g_amb_rb_used, g_amb_rb_cap, bytes);
+    return amb_bump(g_amb_sr_base, &g_amb_sr_used, g_amb_sr_cap, bytes);   /* SRAM pool */
 }
 static void* panel_malloc(size_t sz)            { return panel_calloc(1, sz); }
 static void  panel_free(void* p)                { (void)p; }

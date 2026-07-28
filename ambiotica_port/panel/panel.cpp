@@ -192,13 +192,13 @@ struct ambiotica : panel_t {
        the only way to get SRAM. It holds dattorro, harmony, drift and bloom: the stages that
        read many short buffers every sample, where PSRAM's scattered-access cost would land
        hardest. The big sequential buffers (looper, microloop, granular, drums) stay in PSRAM.
-       Sized against measurement, not habit: those four allocate 68.6 KB (dattorro 50.2,
-       harmony 13.6, drift 4.7, bloom 0.1), so 88 KB was carrying ~19 KB of slack while the
-       panel object had only ~3.6 KB free. 80 KB keeps ~11 KB of headroom and hands the rest
-       back. The `sram=used/cap` field in the PANEL log line is the number to check before
+       Sized against measurement, not habit. The plate used to live here too and dominated it
+       at ~53 KB; it now goes in the firmware's own reverb buffer (region 2), leaving only
+       harmony 13.6, drift 4.7 and bloom 0.1 = 18.4 KB here. 24 KB keeps ~5 KB of headroom.
+       The `sram=` and `rb=` fields in the PANEL log line are the numbers to check before
        cutting further - and note the failure mode is unforgiving: an allocation that does not
        fit returns NULL, dsp_ok goes false and the panel is silent. */
-    unsigned char sram_pool[80 * 1024];
+    unsigned char sram_pool[24 * 1024];
 
     float sL[BLOCK_SIZE], sR[BLOCK_SIZE], oL[BLOCK_SIZE], oR[BLOCK_SIZE];
     play_surface_t play;
@@ -302,6 +302,10 @@ struct ambiotica : panel_t {
         g_amb_zero_big = first_boot ? 1 : 0;   /* see alloc_prelude.h - skip the 4 MB clear on rebuild */
         g_amb_ps_base = get_psram_ptr(); g_amb_ps_cap = get_psram_size(); g_amb_ps_used = 0;
         g_amb_sr_base = sram_pool;       g_amb_sr_cap = sizeof(sram_pool);  g_amb_sr_used = 0;
+        /* reverbbuf is BARE - it is a macro, see the note in the SDK reference. */
+        g_amb_rb_base = (unsigned char*)reverbbuf;
+        g_amb_rb_cap  = (size_t)REVERBBUF_SAMPLES * sizeof(int16_t);   /* 64 KB */
+        g_amb_rb_used = 0;
         const int sr = (int) AMB_SR;
         const int loopcap = 32 * sr;
         const bool ps = g_amb_ps_cap >= (size_t) 4 * 1024 * 1024;   /* looper 4 MB (+ big modules at high levels) */
@@ -318,7 +322,13 @@ struct ambiotica : panel_t {
         harmony = harmony_create(sr);
         dsp_ok = looper && microloop && granular && bloom && drift && harmony;
         fc_init(&st, 0.7f);
-        st.dat = dattorro_create(sr);   /* Dattorro plate (SRAM region); after fc_init zeroes st */
+        /* The plate goes in the stock reverb's own 64 KB, not the panel object. It is the
+           biggest single allocation we make (~53 KB with the predelay) and it was the reason
+           sram_pool had to be so large; moving it out is worth ~56 KB of the 128 KB panel
+           budget. Same fast RAM, and it is otherwise dead memory since do_fx never runs. */
+        g_amb_region = 2;
+        st.dat = dattorro_create(sr);   /* after fc_init, which zeroes st */
+        g_amb_region = 0;
         dsp_ok = dsp_ok && st.dat;
         g_amb_zero_big = 1;
         /* Deliberately NO *_reset() here on a rebuild. looper_reset alone memsets
@@ -1271,9 +1281,10 @@ struct ambiotica : panel_t {
         size_report_us += (unsigned)dt_us;
         if (size_report_us >= 30000000u) {
             size_report_us = 0;
-            printf("PANEL: sizeof=%u free=%d dsp_ok=%d sram=%u/%u psram=%uK\n",
+            printf("PANEL: sizeof=%u free=%d dsp_ok=%d sram=%u/%u rb=%u/%u psram=%uK\n",
                    (unsigned)sizeof(*this), 131072 - (int)sizeof(*this), (int)dsp_ok,
                    (unsigned)g_amb_sr_used, (unsigned)g_amb_sr_cap,
+                   (unsigned)g_amb_rb_used, (unsigned)g_amb_rb_cap,
                    (unsigned)(g_amb_ps_used >> 10));
         }
 
@@ -1443,58 +1454,7 @@ struct ambiotica : panel_t {
      * delaysend -> micro-loop input. */
     bool on_dsp(const int16_t* audiobuf_in, int16_t* audiobuf_out,
                 mix_buffers_t* mix_buffers_out) override {
-#ifdef AMB_PROFILE
-        /* Does mix_buffers.reverbbuf survive a block?
-         *
-         * The firmware allocates 64 KB of FAST RAM for the stock reverb's delay memory, and
-         * we never run that reverb - on_dsp returns true, so do_fx never executes. The SDK
-         * says "if you are not using the standard FX path, you are free to use the memory in
-         * mix_buffers_t for your own purposes", which would be enough to hold the whole
-         * Dattorro plate (50 KB) OUTSIDE the 128 KB panel object.
-         *
-         * The one thing that would kill it: the docs also say "mix_buffers_out is cleared
-         * before on_dsp is called". If that clear covers reverbbuf, nothing persistent can
-         * live there. It almost certainly does not - the stock reverb keeps its tail in this
-         * buffer, so clearing it every block would destroy the reverb it exists to serve -
-         * but that is design inference, not measurement, and this file has already been
-         * wrong twice today reasoning that way about memory it could not see.
-         *
-         * So: write a pattern spread across the whole 64 KB, then check it on the next block
-         * BEFORE the base render (tests the runtime's clear) and again AFTER it (tests
-         * whether rendering the synth clobbers it). */
-        {
-            static int rb_state = 0;
-            static const int RB_N = 16;
-            /* BARE, not mix_buffers.reverbbuf: src/dsp.h has
-                 #define reverbbuf (mix_buffers.reverbbuf)
-               so the qualified form expands to mix_buffers.(mix_buffers.reverbbuf) and does
-               not compile. llm.txt's prose says "mix_buffers.reverbbuf" and is misleading. */
-            int16_t* rb = reverbbuf;
-            if (rb_state == 0) {
-                for (int k = 0; k < RB_N; k++)
-                    rb[(REVERBBUF_SAMPLES / RB_N) * k] = (int16_t)(0x5A00 + k);
-                rb_state = 1;
-            } else if (rb_state == 1) {
-                int pre = 0;
-                for (int k = 0; k < RB_N; k++)
-                    if (rb[(REVERBBUF_SAMPLES / RB_N) * k] == (int16_t)(0x5A00 + k)) pre++;
-                panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);
-                int post = 0;
-                for (int k = 0; k < RB_N; k++)
-                    if (rb[(REVERBBUF_SAMPLES / RB_N) * k] == (int16_t)(0x5A00 + k)) post++;
-                printf("RB: survived %d/%d before base render, %d/%d after -> %s\n",
-                       pre, RB_N, post, RB_N,
-                       (pre == RB_N && post == RB_N) ? "PERSISTS, 64 KB usable"
-                                                     : "CLEARED, not usable");
-                rb_state = 2;
-                goto rb_probe_done;
-            }
-        }
-#endif
         panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);   /* render synth -> dry */
-#ifdef AMB_PROFILE
-        rb_probe_done:;
-#endif
 
         if (!dsp_ok) {                                   /* passthrough (alloc failed) */
             for (int i = 0; i < BLOCK_SIZE * 2; i++) {
