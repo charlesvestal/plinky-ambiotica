@@ -64,6 +64,10 @@ enum {
     /* "LENGTH" (row 1, col 1) - printed in the sequencer row and naming a value the machine
        used to hardcode. Hold it and press a step to set that track's loop length to that
        column, exactly the press-a-column gesture PATTERN uses. */
+    /* "RHYTHM" (row 1, col 0) - shuffle. On stock Chords the Shuffle sliders are reached by
+       selecting the RHYTHM track, so this is the pad the manual itself uses to get there.
+       Its group header is SEQUENCE, and swing is a property of the sequence, not of a step. */
+    COL_RHYTHM = 0,
     COL_LENGTH = 1,
     /* "UNLOCK" (row 1, col 15) - Dilate. On stock Chords UNLOCK governs whether the
        FWD / REV / RND / PING play direction applies per track or to all of them, so the pad
@@ -154,6 +158,13 @@ struct ambiotica : panel_t {
         DRUM_STEPS, DRUM_STEPS, DRUM_STEPS, DRUM_STEPS,
         DRUM_STEPS, DRUM_STEPS, DRUM_STEPS, DRUM_STEPS };
     unsigned int    drum_tick = 0;     /* monotonic 16ths since transport start */
+    /* Shuffle, applied by warping the clock the divider reads rather than by nudging steps -
+       so it bends the grid itself and every track inherits it, including the odd lengths.
+       style 0 = straight; 1..7 select the SDK's seven Stolperbeats patterns, which are the
+       same seven the Chords manual documents (the last of them is plain 8th-note swing, so
+       swing needs no separate slot). depth is 0..15, scaled to the 0..1 the warp takes. */
+    unsigned char   shuffle_style = 0;
+    unsigned char   shuffle_depth = 0;
     short           cond_sel = -1;     /* step being inspected by a PROB/MODULO hold, -1 = none */
     signed char     len_sel  = -1;     /* track whose length a LENGTH hold last set, -1 = none */
     /* Gesture latch. The mode is decided by the first pad touched and held until every
@@ -439,7 +450,14 @@ struct ambiotica : panel_t {
         if (!is_transport_playing()) return;
         /* 4 divider steps per quarter note = 16ths. update() reports how many edges were
            crossed, so a stall cannot silently drop the beat. */
-        int edges = drum_clock.update(-1, 4, 1, UPDATE_DIV_ON_BAR);
+        /* Warp the clock before the divider subdivides it. -1 means "use the transport
+           phase", which is what get_clock_phase() returns, so an unwarped pass is identical
+           to what this did before. */
+        int64_t ph = -1;
+        if (shuffle_style && shuffle_depth)
+            ph = warp_clock_stolper(shuffle_style - 1, get_clock_phase(),
+                                    shuffle_depth * (1.0f / 15.0f));
+        int edges = drum_clock.update(ph, 4, 1, UPDATE_DIV_ON_BAR);
         if (edges <= 0) return;
         if (has_transport_just_started()) {
             drum_tick = 0;   /* every track back to its own step 0, and to its first pass */
@@ -599,6 +617,7 @@ struct ambiotica : panel_t {
         static const mod_pad_t kModPads[] = {
             { COL_PATTERN, GREEN }, { COL_MODULO, ORANGE },
             { COL_PROB,    CYAN  }, { COL_LENGTH, YELLOW },
+            { COL_RHYTHM,  TEAL  },
         };
         uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
         const bool armed = !input_frozen();
@@ -933,6 +952,7 @@ struct ambiotica : panel_t {
         bool eu_mod    = mod_held(COL_PATTERN, page_y);
         bool mod_mod   = mod_held(COL_MODULO,  page_y);
         bool len_mod   = mod_held(COL_LENGTH,  page_y);
+        bool sh_mod    = mod_held(COL_RHYTHM,  page_y);
         if (!len_mod) len_sel = -1;
         /* The selection belongs to a single hold: let go of both CONDITION pads and the next
            tap inspects again rather than silently advancing whatever was last touched. */
@@ -944,7 +964,7 @@ struct ambiotica : panel_t {
         const int mute_y = page_y + ROW_MUTE;
         bool mute_mod = get_touch_down(COL_MUTE, mute_y) != 0;
         /* Declared after mute_mod, which it reads. */
-        const bool any_mod = mute_mod || rr_mod || len_mod || eu_mod || prob_mod || mod_mod;
+        const bool any_mod = mute_mod || rr_mod || len_mod || eu_mod || prob_mod || mod_mod || sh_mod;
         if (get_touch_pressed(COL_MUTE, mute_y)) mute_hit_track = false;
         if (get_touch_released(COL_MUTE, mute_y) && !mute_hit_track) drum_mute = 0;
         bool any_down  = false;
@@ -972,7 +992,14 @@ struct ambiotica : panel_t {
                        below then states only its action. */
                     const bool press = !drum_paint;
                     if (any_mod) drum_paint = PAINT_MOD;
-                    if (mute_mod) {
+                    if (sh_mod) {
+                        /* The grid IS the shuffle setting while RHYTHM is held: row picks
+                           the style, column the depth, so one press sets both. Rows stop
+                           meaning tracks here, which is honest - shuffle bends the clock for
+                           the whole machine, unlike PROB / MODULO / LENGTH which are all
+                           per-track and keep the row-per-track reading. */
+                        if (press) { shuffle_style = (unsigned char)t; shuffle_depth = (unsigned char)s; }
+                    } else if (mute_mod) {
                         if (press) { mute_hit_track = true; drum_mute ^= (unsigned char)(1u << t); }
                     } else if (rr_mod) {
                         /* FILL + a track randomises a quarter of it, once per press. */
@@ -1029,6 +1056,16 @@ struct ambiotica : panel_t {
                         if (press) drum_paint = pattern[idx] ? PAINT_ERASE : PAINT_ON;
                         pattern[idx] = (erase_mod || drum_paint == PAINT_ERASE) ? 0 : 127;
                     }
+                }
+                if (sh_mod) {
+                    /* Style rows down, depth across. The selected row fills to its depth so
+                       the setting reads as a bar; every other row keeps a single dot so the
+                       styles you are not on stay findable. */
+                    uint32_t c = (t == (int)shuffle_style)
+                                   ? (s <= (int)shuffle_depth ? palette[10][6] : DIMMESTEST(WHITE))
+                                   : (s == 0 ? DIMMEST(WHITE) : 0);
+                    set_led(s, y, c);
+                    continue;
                 }
                 unsigned char vel = pattern[idx];
                 /* Each track has its own head, so a 7-step track visibly wraps while a
@@ -1103,7 +1140,17 @@ struct ambiotica : panel_t {
         /* What the selected step is set to, in the four free rows below the grid - drawn over
            the kit label because if you are holding a CONDITION pad, that is what you are
            reading. Colour follows the pad you are holding, so the number needs no units. */
-        if (len_sel >= 0) {                 /* cleared above whenever LENGTH is not held */
+        if (sh_mod) {
+            /* "STR" when straight, else S1..S7 and the depth as a percentage - the grid bar
+               shows depth too, but a number is easier to return to deliberately. */
+            char buf[8];
+            if (!shuffle_style) { buf[0]='S'; buf[1]='T'; buf[2]='R'; buf[3]=0; }
+            else { buf[0]='S'; buf[1]=(char)('0'+shuffle_style); buf[2]=0; }
+            leds_draw_string(0, page_y + UI_Y + DRUM_TRACKS, FONT_4, TEAL, buf);
+            if (shuffle_style) set_help_text("Shuffle #fc2#*%d#. depth #fc2#*%d%%#.",
+                                             shuffle_style, (shuffle_depth * 100) / 15);
+            else               set_help_text("Shuffle: #fc2#*straight#.");
+        } else if (len_sel >= 0) {          /* cleared above whenever LENGTH is not held */
             unsigned int L = track_len(drum_len[len_sel]);
             leds_draw_string(0, page_y + UI_Y + DRUM_TRACKS, FONT_4, YELLOW, dec_label(L));
             set_help_text("Track length: #fc2#*%u#. steps", L);
@@ -1642,6 +1689,8 @@ struct ambiotica : panel_t {
         FIELD("dmute",   o.drum_mute,              0u, 255u);
         FIELD("dtrans", o.drum_transpose,        -24, 24);
         FIELD("dilate", o.dilate,                  0u, 1u);
+        FIELD("shstyle", o.shuffle_style,           0u, 7u);
+        FIELD("shdepth", o.shuffle_depth,           0u, 15u);
         /* Tested 2026-07-25: removing these does NOT stop the system running its "plantime"
          * preset-install planner on a scene load - that happens for every staged panel load
          * regardless of what we serialise. So they are not implicated in the load failure,

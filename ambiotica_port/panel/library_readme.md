@@ -71,6 +71,20 @@ first time of every two, **2:2** the second, up to **4:4**. Two steps set to 1:2
 trade off with each other. A step waiting its turn is dimmed on the passes it will not
 fire, so you can watch a 1:4 breathe across four bars.
 
+### Shuffle - the printed RHYTHM pad
+
+Hold **RHYTHM** and the step grid becomes a shuffle setting: the **row** picks the style, the
+**column** sets the depth, so one press sets both. The top row is straight; the seven below
+are the Stolperbeats patterns Plinky's own sequencer uses, the last of which is plain 8th-note
+swing. The chosen row fills to its depth like a bar, and the readout shows STR or S1..S7.
+
+It works by warping the clock the sequencer reads rather than by nudging individual steps, so
+it bends the whole grid at once and every track inherits it - including tracks on odd lengths,
+which keep their own loop while swinging with everything else.
+
+RHYTHM is where stock Chords keeps this too: its Shuffle sliders are reached by selecting the
+Rhythm track.
+
 ### Length - polyrhythms
 
 Hold **LENGTH** and press a step to set that track's loop length. Steps past the loop point
