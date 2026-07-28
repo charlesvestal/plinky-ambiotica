@@ -945,8 +945,8 @@ struct ambiotica : panel_t {
         for (int t = 0; t < DRUM_TRACKS; t++) {
             int y = page_y + UI_Y + t;
             /* Per-track, not per-pad. drum_len[] is a RUNTIME divisor, so step_of/pass_of
-               compile to real udiv instructions rather than the mask euclid_fill gets from
-               its constant - 256 of them per frame if left in the inner loop. One division
+               compile to real udiv instructions rather than the mask a constant divisor
+               folds to - 256 of them per frame if left in the inner loop. One division
                yields both: quotient is the pass, remainder is the head. */
             const unsigned int tlen = track_len(drum_len[t]);
             const unsigned int tpass = drum_tick / tlen;
@@ -989,7 +989,15 @@ struct ambiotica : panel_t {
                         if (press) { eu_track = (signed char)t; eu_k = (unsigned char)(s + 1); eu_last = -1; }
                         if (eu_track == (signed char)t && eu_last != (signed char)s) {
                             eu_last = (signed char)s;
-                            euclid_fill(&pattern[t * DRUM_STEPS], eu_k, s - (eu_k - 1));
+                            /* The SDK's own generator. It is the same Bresenham/bucket form
+                               we used to carry in euclid.h - verified identical across every
+                               k, rot and step before the switch - so patterns are unchanged,
+                               and the algorithm now has one owner instead of two. Inlines
+                               with numsteps constant, so the modulo still folds to a mask. */
+                            { const int rot = s - (eu_k - 1);
+                              unsigned char* trk = &pattern[t * DRUM_STEPS];
+                              for (int i = 0; i < DRUM_STEPS; i++)
+                                  trk[i] = euclid_rhythm(i, eu_k, DRUM_STEPS, rot) ? 127 : 0; }
                         }
                     } else if (prob_mod || mod_mod) {
                         /* The two CONDITION pads share one gesture. The FIRST tap on a step

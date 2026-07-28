@@ -164,3 +164,18 @@ when `drum_paint != 3`.
 - Rotating a hand-drawn pattern without regenerating it. A consequence of the press-to-place
   gesture; revisit only if it proves annoying in use.
 - Euclidean on anything but the 8 drum tracks.
+
+## Superseded 2026-07-28: euclid_fill replaced by the SDK's euclid_rhythm
+
+`llm.txt` ships `euclid_rhythm(stepidx, numset, numsteps, rot)`, which is the same
+Bresenham/bucket form `euclid_fill` used - verified identical across every k, rot and step,
+zero mismatches. The header and its test are gone and the panel calls the SDK directly.
+
+The duplication was not visible when this was written: the reuse review that would have
+caught it was scoped to the repo, and `llm.txt` is gitignored and was not on disk. Keeping
+our own copy was justified for `dsp/mipmap.h`, which also builds in the desktop harness where
+no SDK exists - `euclid_fill` was only ever called from `panel.cpp`, so that defence never
+applied here.
+
+Generated patterns are unchanged, and saved scenes store the resulting steps rather than the
+generator, so nothing on the card is affected.
