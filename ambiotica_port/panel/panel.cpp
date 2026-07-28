@@ -1465,7 +1465,11 @@ struct ambiotica : panel_t {
         {
             static int rb_state = 0;
             static const int RB_N = 16;
-            int16_t* rb = mix_buffers.reverbbuf;
+            /* BARE, not mix_buffers.reverbbuf: src/dsp.h has
+                 #define reverbbuf (mix_buffers.reverbbuf)
+               so the qualified form expands to mix_buffers.(mix_buffers.reverbbuf) and does
+               not compile. llm.txt's prose says "mix_buffers.reverbbuf" and is misleading. */
+            int16_t* rb = reverbbuf;
             if (rb_state == 0) {
                 for (int k = 0; k < RB_N; k++)
                     rb[(REVERBBUF_SAMPLES / RB_N) * k] = (int16_t)(0x5A00 + k);
