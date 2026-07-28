@@ -8,6 +8,21 @@
 /* Reference delay lengths from Dattorro's paper, at his 29761 Hz clock. Scaled to
  * the plate's internal (half host) rate in dattorro_create(). */
 #define DREF_SR       29761.0f
+
+/* Onset gap before the plate hears anything.
+ *
+ * The plugin this port descends from uses 8 parallel damped combs whose shortest is 2237
+ * samples at 44.1 kHz - 50.7 ms. A parallel-comb reverb emits nothing until one comb delay
+ * has elapsed, so it has that gap built in: you hear your note, THEN the wash arrives.
+ *
+ * A Dattorro plate has no such gap. Its input allpasses pass a scaled copy of the input
+ * straight through, so the plate answers within a sample or two, and at full wet the reverb
+ * tracks your playing instead of washing it. Same decay, completely different onset - which
+ * reads as "responsive" where the plugin reads as "ambient".
+ *
+ * So the plate gets explicitly what the combs got for free. 50 ms, matching the plugin's
+ * shortest comb. */
+#define PREDELAY_MS   50.0f
 static const int IN_AP[4]   = { 142, 107, 379, 277 };   /* input diffusers */
 static const int MODAP[2]   = { 672, 908 };             /* decay diffusion 1 (modulated) */
 static const int DELAYA[2]  = { 4453, 4217 };
@@ -26,6 +41,8 @@ struct dattorro_s {
     double sr;
     float  scale;                 /* DREF_SR-samples -> internal-rate samples */
     int    inap_len[4], modap_len[2], da_len[2], ap2_len[2], db_len[2];
+    dline  predelay;              /* onset gap before the diffusers - see PREDELAY_MS */
+    int    predelay_len;
     dline  inap[4];               /* input diffusers */
     dline  modap[2], da[2], ap2[2], db[2];   /* tank: L=0, R=1 */
     int    tapL[7], tapR[7];      /* scaled tap offsets */
@@ -92,6 +109,8 @@ dattorro_t* dattorro_create(double sample_rate) {
     d->lfo_ph[0] = 0.0f; d->lfo_ph[1] = 2.3f;
     /* delay lengths */
     int ok = 1;
+    d->predelay_len = (int)(PREDELAY_MS * 0.001f * internal + 0.5f); if (d->predelay_len < 1) d->predelay_len = 1;
+    ok &= dl_alloc(&d->predelay, d->predelay_len + 2);
     for (int i = 0; i < 4; i++) { d->inap_len[i] = scl(d, IN_AP[i]); ok &= dl_alloc(&d->inap[i], d->inap_len[i] + 2); }
     const int modroom = (int)(0.020f * internal) + 4;   /* ~20 ms mod headroom */
     for (int c = 0; c < 2; c++) {
@@ -120,6 +139,7 @@ void dattorro_destroy(dattorro_t* d) {
 
 void dattorro_reset(dattorro_t* d) {
     if (!d) return;
+    if (d->predelay.buf) memset(d->predelay.buf, 0, (size_t)d->predelay.len * sizeof(float));
     for (int i = 0; i < 4; i++) memset(d->inap[i].buf, 0, (size_t)d->inap[i].len * sizeof(float));
     for (int c = 0; c < 2; c++) {
         memset(d->modap[c].buf, 0, (size_t)d->modap[c].len * sizeof(float));
@@ -151,6 +171,8 @@ void dattorro_set_mod(dattorro_t* d, float x) {
 /* One half-rate stereo tick. */
 static inline void dattorro_tick(dattorro_t* d, float inL, float inR, float* yl, float* yr) {
     float mono = 0.5f * (inL + inR);
+    /* Hold the input back so the plate starts after the note, not with it. */
+    { float pd = dl_read(&d->predelay, d->predelay_len); dl_write(&d->predelay, mono); mono = pd; }
     d->hp_lp += d->hp_a * (mono - d->hp_lp);   /* high-pass: drop sub-bass so long notes don't build mud */
     mono -= d->hp_lp;
     d->bw_lp += d->bw * (mono - d->bw_lp);
