@@ -219,8 +219,14 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
      * rin = bloom + layered + microRevSend*micro; the wet bus below uses the full micro. */
     { float mp = (p->micro_hold - 0.80f) * (1.0f / 0.15f); if (mp < 0.f) mp = 0.f; else if (mp > 1.f) mp = 1.f;
       float microRevSend = 1.0f - 0.45f * mp;
-      for (int i = 0; i < n; i++) { st->rinL[i] = st->blL[i] + st->layL[i] + microRevSend * st->micL[i];
-                                    st->rinR[i] = st->blR[i] + st->layR[i] + microRevSend * st->micR[i]; } }
+      /* How much of the LIVE signal enters the plate, following Tail. Decay alone cannot
+       * silence a Dattorro - decay is the tank's feedback, not its input gain, so at decay 0
+       * it still emits one pass of diffused input. With the dry send scaled by Tail as well,
+       * Tail 0 leaves the plate fed only by time-displaced material (loop, granular, micro),
+       * so MIX full really is silent until the loop comes round. */
+      const float dryToRev = p->decay < 0.f ? 0.f : (p->decay > 1.f ? 1.f : p->decay);
+      for (int i = 0; i < n; i++) { st->rinL[i] = dryToRev * st->blL[i] + st->layL[i] + microRevSend * st->micL[i];
+                                    st->rinR[i] = dryToRev * st->blR[i] + st->layR[i] + microRevSend * st->micR[i]; } }
     STG(2);   /* bloom + microloop + makeup */
 
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;

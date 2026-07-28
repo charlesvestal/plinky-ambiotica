@@ -462,7 +462,9 @@ struct ambiotica : panel_t {
 
         fx.loop_length_bars = 0.5f + 7.5f * (1.f - orbit);   /* Orbit: REVERSED (up = shorter) */
         fx.loop_layer       = 0.82f;                          /* kLoopBedLayer: constant bed */
-        fx.decay            = 0.30f + 0.70f * tail;           /* Tail: reverb decay */
+        /* Tail reaches a true ZERO. It used to floor at 0.30, so the plate was always in
+           circuit and there was no way to hear the engine without it. */
+        fx.decay            = sqrtf(tail);                     /* Tail: reverb decay */
         fx.ring             = tail;                            /* Tail: chord ring length */
         fx.grain_size       = 0.15f + 0.70f * tex;            /* Constellate: grain size */
         fx.scatter          = tex;                            /* Constellate: scatter */
