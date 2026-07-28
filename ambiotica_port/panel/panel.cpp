@@ -1443,7 +1443,54 @@ struct ambiotica : panel_t {
      * delaysend -> micro-loop input. */
     bool on_dsp(const int16_t* audiobuf_in, int16_t* audiobuf_out,
                 mix_buffers_t* mix_buffers_out) override {
+#ifdef AMB_PROFILE
+        /* Does mix_buffers.reverbbuf survive a block?
+         *
+         * The firmware allocates 64 KB of FAST RAM for the stock reverb's delay memory, and
+         * we never run that reverb - on_dsp returns true, so do_fx never executes. The SDK
+         * says "if you are not using the standard FX path, you are free to use the memory in
+         * mix_buffers_t for your own purposes", which would be enough to hold the whole
+         * Dattorro plate (50 KB) OUTSIDE the 128 KB panel object.
+         *
+         * The one thing that would kill it: the docs also say "mix_buffers_out is cleared
+         * before on_dsp is called". If that clear covers reverbbuf, nothing persistent can
+         * live there. It almost certainly does not - the stock reverb keeps its tail in this
+         * buffer, so clearing it every block would destroy the reverb it exists to serve -
+         * but that is design inference, not measurement, and this file has already been
+         * wrong twice today reasoning that way about memory it could not see.
+         *
+         * So: write a pattern spread across the whole 64 KB, then check it on the next block
+         * BEFORE the base render (tests the runtime's clear) and again AFTER it (tests
+         * whether rendering the synth clobbers it). */
+        {
+            static int rb_state = 0;
+            static const int RB_N = 16;
+            int16_t* rb = mix_buffers.reverbbuf;
+            if (rb_state == 0) {
+                for (int k = 0; k < RB_N; k++)
+                    rb[(REVERBBUF_SAMPLES / RB_N) * k] = (int16_t)(0x5A00 + k);
+                rb_state = 1;
+            } else if (rb_state == 1) {
+                int pre = 0;
+                for (int k = 0; k < RB_N; k++)
+                    if (rb[(REVERBBUF_SAMPLES / RB_N) * k] == (int16_t)(0x5A00 + k)) pre++;
+                panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);
+                int post = 0;
+                for (int k = 0; k < RB_N; k++)
+                    if (rb[(REVERBBUF_SAMPLES / RB_N) * k] == (int16_t)(0x5A00 + k)) post++;
+                printf("RB: survived %d/%d before base render, %d/%d after -> %s\n",
+                       pre, RB_N, post, RB_N,
+                       (pre == RB_N && post == RB_N) ? "PERSISTS, 64 KB usable"
+                                                     : "CLEARED, not usable");
+                rb_state = 2;
+                goto rb_probe_done;
+            }
+        }
+#endif
         panel_t::on_dsp(audiobuf_in, audiobuf_out, mix_buffers_out);   /* render synth -> dry */
+#ifdef AMB_PROFILE
+        rb_probe_done:;
+#endif
 
         if (!dsp_ok) {                                   /* passthrough (alloc failed) */
             for (int i = 0; i < BLOCK_SIZE * 2; i++) {
