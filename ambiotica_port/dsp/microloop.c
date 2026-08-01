@@ -79,7 +79,6 @@ struct microloop_s {
     float  freeze_mix;           /* 0..1: linear-loop read → grain cloud */
     float  freeze_mix_a;         /* per-sample ramp coef for freeze_mix  */
     unsigned rng;                /* LCG state for grain randomisation    */
-    int    clear_pos;            /* incremental-clear cursor             */
     int    spawn_timer;          /* samples until the next grain spawns  */
     int    cloud_tick;           /* half-rate toggle: cloud recomputes every other sample */
     float  cloud_l, cloud_r;     /* held cloud output between half-rate computes */
@@ -222,17 +221,6 @@ void microloop_destroy(microloop_t *m) {
 }
 
 /* Clear the captured buffer + freeze/shimmer state (RT-safe). Keeps params. */
-/* See looper_clear_step - same reason, same shape. */
-void microloop_clear_begin(microloop_t *m) { if (m) m->clear_pos = 0; }
-int microloop_clear_step(microloop_t *m, int max_samples) {
-    if (!m) return 1;
-    if (m->clear_pos >= m->buf_capacity) return 1;
-    int n = m->buf_capacity - m->clear_pos; if (n > max_samples) n = max_samples;
-    memset(m->buf + (size_t)m->clear_pos * 2, 0, (size_t)n * 2 * sizeof(short));
-    m->clear_pos += n;
-    return m->clear_pos >= m->buf_capacity;
-}
-
 void microloop_reset(microloop_t *m) {
     if (!m) return;
     memset(m->buf, 0, (size_t)m->buf_capacity * 2 * sizeof(short));

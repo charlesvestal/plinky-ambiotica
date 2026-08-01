@@ -34,7 +34,7 @@ struct looper_s {
     lsamp_t *buf_L;
     lsamp_t *buf_R;
     int    buf_capacity;   /* allocated size - sets the max loop length */
-    int    clear_pos;      /* incremental-clear cursor; >= buf_capacity means idle/done */
+    int    valid;          /* samples written since the last logical clear; reads past it are silent */
     int    loop_len;       /* active read offset; <= buf_capacity */
     int    write_pos;
     /* Smoothed feedback - abrupt knob changes would otherwise inject a
@@ -122,26 +122,27 @@ void looper_destroy(looper_t *l) {
 }
 
 /* Clear the captured loop + feedback state (RT-safe: no alloc). Keeps params. */
-/* Incremental clear. looper_reset memsets ~4 MB of PSRAM in one go, which starves core1 over
- * the shared QSPI bus and stalls audio for hundreds of ms - see the note in the panel's
- * build_dsp. These let a caller spread the same work across UI frames. Returns 1 when the
- * whole ring is clear. */
-void looper_clear_begin(looper_t *l) { if (l) l->clear_pos = 0; }
-int looper_clear_step(looper_t *l, int max_samples) {
-    if (!l) return 1;
-    if (l->clear_pos >= l->buf_capacity) return 1;
-    int n = l->buf_capacity - l->clear_pos; if (n > max_samples) n = max_samples;
-    memset(l->buf_L + l->clear_pos, 0, (size_t)n * sizeof(lsamp_t));
-    memset(l->buf_R + l->clear_pos, 0, (size_t)n * sizeof(lsamp_t));
-    l->clear_pos += n;
-    return l->clear_pos >= l->buf_capacity;
-}
+/* LOGICAL clear - no memset at all.
+ *
+ * Physically zeroing the ring means touching ~4 MB of PSRAM. Doing it in one go blocks core0
+ * long enough to starve core1 over the shared QSPI bus (measured at a 658 ms audio block);
+ * doing it in slices just turns one long underrun into many short ones, because even a
+ * modest slice is milliseconds of bus time at the contended rate. Either way the audio
+ * breaks, which is exactly what the clear was supposed to make clean.
+ *
+ * So instead of erasing the past, stop reading it. `valid` counts how many samples have been
+ * written since the clear; the read gates to silence whenever it reaches back further than
+ * that. The result is identical to a zeroed buffer - you hear new material accumulate and
+ * silence where nothing has been recorded yet - for one integer compare per sample and no
+ * bus traffic whatsoever. */
+void looper_clear(looper_t *l) { if (l) l->valid = 0; }
 
 void looper_reset(looper_t *l) {
     if (!l) return;
     memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
     memset(l->buf_R, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
     l->write_pos = 0;
+    l->valid = 0;
     l->fb_current = 0.0f;
     l->crossfade_remaining = 0;
     l->has_queued = 0;
@@ -189,12 +190,6 @@ void looper_set_layer(looper_t *l, float layer_0_1) {
     l->fb_target = fb;
 }
 
-void looper_clear(looper_t *l) {
-    if (!l) return;
-    memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
-    memset(l->buf_R, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
-}
-
 void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                     const float *in_l, const float *in_r,
                     float *out_l, float *out_r,
@@ -214,8 +209,11 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         /* Read from active loop_len position. */
         int read_pos_a = pos - l->loop_len;
         if (read_pos_a < 0) read_pos_a += cap;
-        float loopL = ld(l->buf_L[read_pos_a]);
-        float loopR = ld(l->buf_R[read_pos_a]);
+        /* Reading further back than we have written since the clear? That is the erased
+           past - report silence rather than the stale wash still sitting in the ring. */
+        const int valid_a = (l->loop_len <= l->valid);
+        float loopL = valid_a ? ld(l->buf_L[read_pos_a]) : 0.0f;
+        float loopR = valid_a ? ld(l->buf_R[read_pos_a]) : 0.0f;
 
         /* During crossfade, blend with read at the pending loop_len.
          * Linear (gain-equal) crossfade - the two read positions are highly
@@ -224,8 +222,9 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         if (l->crossfade_remaining > 0) {
             int read_pos_b = pos - l->loop_len_pending;
             if (read_pos_b < 0) read_pos_b += cap;
-            float loopL_b = ld(l->buf_L[read_pos_b]);
-            float loopR_b = ld(l->buf_R[read_pos_b]);
+            const int valid_b = (l->loop_len_pending <= l->valid);
+            float loopL_b = valid_b ? ld(l->buf_L[read_pos_b]) : 0.0f;
+            float loopR_b = valid_b ? ld(l->buf_R[read_pos_b]) : 0.0f;
 
             float gain_b = (float)(l->crossfade_len - l->crossfade_remaining) *
                            (1.0f / (float)l->crossfade_len);
@@ -251,6 +250,7 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
          * the buffer (true looper). soft_sat kept as safety against
          * transient peaks. */
         float in_g = 1.0f - fb_curr;
+        if (l->valid < cap) l->valid++;   /* one more sample of real material behind us */
         l->buf_L[pos] = st(soft_sat(in_g * in_l[n] + fb_curr * loopL));
         l->buf_R[pos] = st(soft_sat(in_g * in_r[n] + fb_curr * loopR));
 

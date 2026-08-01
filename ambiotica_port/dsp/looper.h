@@ -41,6 +41,12 @@ void      looper_set_loop_len(looper_t *l, int loop_len_samples);
 void      looper_set_layer(looper_t *l, float layer_0_1);
 
 /* One-shot: zero the entire buffer. Safe to call from set_param. */
+/* Forget the loop WITHOUT touching memory. This used to memset ~4 MB of PSRAM, which starves
+   core1 over the shared QSPI bus (measured at a 658 ms audio block); slicing it up only turns
+   one long underrun into several short ones. It now stops the read reaching back past what
+   has been recorded since the call, which sounds identical to a zeroed buffer - new material
+   accumulates, everything older is silence - for one integer compare per sample and no bus
+   traffic at all. */
 void      looper_clear(looper_t *l);
 
 /* Process stereo block. Reads from in_l/in_r and writes them into the
@@ -52,11 +58,5 @@ void      PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                          float *out_l, float *out_r,
                          int frames);
 
-
-/* Incremental clear of the big ring, for callers that must not block core0 with a
-   multi-megabyte PSRAM memset (that starves core1 over the shared QSPI bus). Call
-   looper_clear_begin once, then looper_clear_step every frame until it returns 1. */
-void looper_clear_begin(looper_t *l);
-int  looper_clear_step(looper_t *l, int max_samples);
 
 #endif

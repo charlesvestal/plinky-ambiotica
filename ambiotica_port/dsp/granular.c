@@ -77,7 +77,6 @@ static inline short   g_st(float v) { v = v > 1.f ? 1.f : (v < -1.f ? -1.f : v);
 struct granular_s {
     short *buf;            /* interleaved int16 stereo: buf[pos*2]=L, buf[pos*2+1]=R */
     int    buf_len;
-    int    clear_pos;      /* incremental-clear cursor */
     int    write_pos;
 
     grain_t grains[G_MAX_GRAINS];
@@ -242,17 +241,6 @@ void granular_destroy(granular_t *g) {
 }
 
 /* Clear the capture ring + kill active grains (RT-safe). Keeps params. */
-/* See looper_clear_step - same reason, same shape. */
-void granular_clear_begin(granular_t *g) { if (g) g->clear_pos = 0; }
-int granular_clear_step(granular_t *g, int max_samples) {
-    if (!g) return 1;
-    if (g->clear_pos >= g->buf_len) return 1;
-    int n = g->buf_len - g->clear_pos; if (n > max_samples) n = max_samples;
-    memset(g->buf + (size_t)g->clear_pos * 2, 0, (size_t)n * 2 * sizeof(short));
-    g->clear_pos += n;
-    return g->clear_pos >= g->buf_len;
-}
-
 void granular_reset(granular_t *g) {
     if (!g) return;
     memset(g->buf, 0, (size_t)g->buf_len * 2 * sizeof(short));
