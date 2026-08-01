@@ -544,7 +544,11 @@ struct ambiotica : panel_t {
         fx.mod_depth  = AMB_LERP(fx.mod_depth,  0.55f, gg);
         float clear = 1.0f - fx.horizon; if (clear < 0.f) clear = 0.f;
         if (clear > 0.f) {
-            fx.loop_layer = AMB_LERP(fx.loop_layer, 0.08f, clear);
+            /* To ZERO, not 0.08. The looper's output is scaled by this, so 0.08 left the
+               bed replaying its buffer at ~0.6% forever - inaudible on its own but the thing
+               a drained patch never quite lost. It used to be masked by the flush clearing
+               the buffers; now that the flush no longer does that, this has to reach zero. */
+            fx.loop_layer = AMB_LERP(fx.loop_layer, 0.00f, clear);
             fx.micro_hold = AMB_LERP(fx.micro_hold, 0.00f, clear);
             fx.ring       = AMB_LERP(fx.ring,       0.00f, clear);
             fx.decay      = AMB_LERP(fx.decay,      0.00f, clear);
@@ -1630,12 +1634,21 @@ struct ambiotica : panel_t {
            reverb is left out so its tail decays gracefully rather than being cut. */
         if (fx_sm.horizon < 0.04f) {
             if (!eh_flushed) {
-                if (looper)    looper_reset(looper);
-                if (microloop) microloop_reset(microloop);
-                if (granular)  granular_reset(granular);
-                if (harmony)   harmony_reset(harmony);
-                if (bloom)     bloom_reset(bloom);
-                if (drift)     drift_reset(drift);
+                /* ONLY the small modules. looper_reset memsets buf_capacity x 2 channels -
+                   about 4 MB of PSRAM - and granular/microloop add ~1.4 MB more, all from
+                   core0. build_dsp already refuses to do that on a rebuild for exactly this
+                   reason: it starves core1, which fetches its code and its buffers over the
+                   same QSPI bus, and was measured at a 658 ms audio block. Doing it here
+                   froze the UI for about a second and made core1 repeat its last block -
+                   which is the "buzz like a repeated sample", an underrun rather than any
+                   kind of loop remnant.
+                   Silence does not need the clear: the looper's output is fb_curr * loop, so
+                   loop_layer lerped to 0 below mutes it outright, granular reads the muted
+                   loop, and the micro-loop reads a drained input. These three are 18 KB of
+                   SRAM between them and hold ringing state worth stopping. */
+                if (harmony) harmony_reset(harmony);
+                if (bloom)   bloom_reset(bloom);
+                if (drift)   drift_reset(drift);
                 eh_flushed = true;
             }
         } else if (fx_sm.horizon > 0.10f) {
