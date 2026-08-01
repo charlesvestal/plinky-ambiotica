@@ -1,170 +1,157 @@
 # Ambiotica
 
-A generative-ambient instrument. Play a few notes and let go - a rolling looper, a
-granular scatter cloud, a freezing micro-loop, a Dattorro plate reverb and a bank of
-tuned resonators bloom them into a slow wash that stays in key.
+Play a few notes and let go. A rolling looper catches them, a granular cloud scatters them, a
+plate reverb smears the result, and a bank of tuned resonators picks a chord back out of it.
+Underneath all that, an 8-track drum machine.
 
-> **Designed for the Chords faceplate.** Every control sits under the printed word that
-> describes it, so the overlay itself documents the panel. It runs on any Plinky 12 - on a
-> different faceplate you just lose that correspondence.
+> **Built for the Chords faceplate.** Every control sits under the printed word for it, so the
+> overlay is the manual. It runs on any Plinky 12. You just lose that.
 
-Ambiotica owns the audio output: the built-in FX are silenced and the whole chain runs
-on core 1.
+## Playing
 
-## Play surface
+The left half is eight strings in diatonic fourths, inside whatever key and mode you have
+picked. Grab a few at once and you get an open chord. Slide up one string and you walk the
+scale.
 
-The left half is eight strings tuned in **diatonic fourths** within the selected key and
-mode, so any cluster is an open in-key chord and sliding up a string walks the scale.
+**KEY** ▲▼ moves around the circle of fifths. **BANK** ▲▼ changes mode: Ionian, Aeolian,
+Dorian, Lydian, Mixolydian.
 
-## Macros (columns 8–14)
+## The wash
+
+Seven macro sliders, columns 8 to 14.
 
 | | |
 |---|---|
-| **Orbit** | the rolling loop bed |
-| **Satellite** | micro-loop; at the top it freezes into a held pad |
-| **Constellate** | granular scatter - density and pitch spread |
+| **Orbit** | length of the rolling loop bed |
+| **Satellite** | micro-loop length. At the top it freezes into a held pad |
+| **Constellate** | granular scatter: how many grains, how far they wander in pitch |
 | **Tail** | reverb decay |
 | **Flux** | modulation depth and tank movement |
-| **Spectra** | tuned resonators singing a chord out of the wash |
+| **Spectra** | tuned resonators, singing a chord out of the wash |
 | **Mix** | dry/wet |
 
-Orbit and Satellite carry a falling star marking their loop cycle; Constellate pulses
-with grain activity.
+Orbit and Satellite each drop a falling star on their loop cycle. Constellate pulses with
+grain activity. Flux modulates the Tail column alongside itself, so you can see what it is
+reaching for.
 
-## Column 15 - Gravity / Event Horizon
+## Gravity and Event Horizon
 
-One bipolar slider, neutral at centre (white).
+Column 15 is one bipolar slider. Centre is neutral, and white.
 
-- **Up (green): Gravity** - collapse the engine into a slow evolving drone.
-- **Down (red): Event Horizon** - drain everything back to silence for the next phrase.
+**Up, green: Gravity.** The engine collapses into a slow drone.
+
+**Down, red: Event Horizon.** Everything drains away. At the bottom the loop is empty and the
+next phrase starts from silence.
+
+## Dilate
+
+Tap **UNLOCK**, top right of the sequencer row, and the loop bed and micro-loop run backward.
+Two read heads half a window apart, crossfaded. Pitch does not change and there is no seam. It
+takes about a second to turn around.
 
 ## Drums
 
-An 8-track x0x sequencer on its own page (**TRACKS**): the whole pattern at once, 8 tracks
-down and 16 steps across. Kick, snare, closed and open hat, clap, rim and two toms -
-synthesised at boot as 8-bit samples, so there are no files to install.
+Its own page, on **TRACKS**: eight tracks down, sixteen steps across, the whole pattern visible
+at once. Kick, snare, closed and open hat, clap, rim, two toms. They are synthesised at boot as
+8-bit samples, so there is nothing to install.
 
-**Drag** across a row to write steps. Hold **×** (the printed shift key) and drag to scrub
-them out again; hold **×** and tap **TRACKS** to clear the whole pattern.
+**Drag** across a row to write steps. Hold **×** (the printed shift key) and drag to rub them
+out. Hold **×** and tap **TRACKS** to wipe the lot.
 
-### Generating - the printed GENERATE pads
+The kit sits outside the wash. Drums are mixed in *after* the ambient chain, so the looper and
+the plate never touch them, and the pattern stays dry and legible under whatever is going on
+above it. They are not synth voices either. They cost no polyphony.
 
-Hold **PATTERN** and press a step to replace that track with a Euclidean rhythm of that
-many pulses - press column 5 for five pulses, spread as evenly as sixteen steps allow.
-Keep holding and slide along the row to rotate it, so tracks can be phased against each
-other. PATTERN replaces; **FILL** builds up.
+Transport is on the printed ▷ and ▢ pads and works from any page.
 
-Hold **FILL** and tap a track to randomise a quarter of it; tap again to push it
-further. **FILL + SYNTH** rolls a new sound out of the current preset.
+### Generating: PATTERN and FILL
 
-### Conditions - the printed CONDITION pads
+Hold **PATTERN** and press a step to replace that track with a Euclidean rhythm. Press column 5
+and you get five pulses, spread as evenly as sixteen steps allow. Keep holding and slide along
+the row to rotate it. That is how you phase tracks against each other.
 
-Both work the same way: the **first tap** on a step shows you what it is set to, in big
-digits below the grid, without changing it. Tap that same step again to advance.
+PATTERN replaces. **FILL** builds up: hold it and tap a track to randomise a quarter of it, tap
+again to push it further.
 
-Hold **PROB** and tap a step to cycle how often it fires - 100 / 75 / 50 / 25% - also
-shown as its brightness. Probability is what keeps a long ambient pattern from repeating
-identically.
+**FILL + SYNTH** rolls a new sound out of the current preset.
 
-Hold **MODULO** and tap a step to make it play only every Nth time round: **1:2** is the
-first time of every two, **2:2** the second, up to **4:4**. Two steps set to 1:2 and 2:2
-trade off with each other. A step waiting its turn is dimmed on the passes it will not
-fire, so you can watch a 1:4 breathe across four bars.
+### Conditions: PROB and MODULO
 
-### Shuffle - the printed RHYTHM pad
+Both behave the same way. The **first tap** on a step only shows you what it is set to, in big
+digits under the grid. Tap it again to change it.
 
-Hold **RHYTHM** and the step grid becomes a shuffle setting: the **row** picks the style, the
-**column** sets the depth, so one press sets both. The top row is straight; the seven below
-are the Stolperbeats patterns Plinky's own sequencer uses, the last of which is plain 8th-note
-swing. The chosen row fills to its depth like a bar, and the readout shows STR or S1..S7.
+Hold **PROB** and tap a step to set how often it fires: 100, 75, 50, 25%. Brightness shows it
+too. This is what stops a long pattern from repeating itself identically.
 
-It works by warping the clock the sequencer reads rather than by nudging individual steps, so
-it bends the whole grid at once and every track inherits it - including tracks on odd lengths,
-which keep their own loop while swinging with everything else.
+Hold **MODULO** and tap a step to make it play only every Nth time round. **1:2** is the first
+pass of every two, **2:2** the second, up to **4:4**. Set two steps to 1:2 and 2:2 and they
+trade off with each other. A step that is not firing this pass goes dim, so you can watch a 1:4
+come round.
 
-RHYTHM is where stock Chords keeps this too: its Shuffle sliders are reached by selecting the
-Rhythm track.
+### Shuffle: RHYTHM
 
-### Length - polyrhythms
+Hold **RHYTHM** and the grid turns into a shuffle setting. The **row** picks the style, the
+**column** picks the depth. One press sets both.
 
-Hold **LENGTH** and press a step to set that track's loop length. Steps past the loop point
-go dark, and keep their contents, so shortening and lengthening again loses nothing.
+The top row is straight. The seven below it are the Stolperbeats patterns Plinky's own
+sequencer uses, and the last of those is ordinary 8th-note swing. The chosen row fills to its
+depth like a bar, and the readout shows STR, or S1 to S7.
 
-Give tracks different lengths and they drift: sixteen against seven only line up again
-every 112 steps. Modulo follows each track's own loop, so "2nd of every 4" on a seven-step
+### Length: LENGTH
+
+Hold **LENGTH** and press a step to set that track's loop length. Steps past the loop point go
+dark but keep their contents. Shorten a track and lengthen it again and nothing is lost.
+
+Give tracks different lengths and they drift apart. Sixteen against seven will not line up
+again for 112 steps. Modulo counts each track's own loop, so "2nd of every 4" on a seven-step
 track means four sevens.
 
-Hold **MUTE** and tap a track to mute it; tap **MUTE** on its own to bring everything
-back. Muted tracks keep showing their pattern, dimmed.
+Hold **MUTE** and tap a track to mute it. Tap **MUTE** on its own to bring everything back.
+Muted tracks still show their pattern, dimmed.
 
-The kit deliberately sits **outside** the wash. Drums are mixed into the output after the
-chain, so the looper, grains and plate never touch them: the pattern stays dry and legible
-underneath whatever the ambience is doing. They also cost no polyphony - they are not synth
-voices. Transport is on the printed ▷ and ▢ pads, available from every page.
-
-## Dilate - play the bed backward
-
-Tap **UNLOCK**, top right of the sequencer row, to reverse the loop bed and the micro-loop.
-Two backward read heads half a window apart, Hann-crossfaded, so the pitch is unchanged and
-there is no seam - the wash simply starts flowing the other way. It crossfades over about a
-second.
-
-The pad ramps **purple and rising** while reversed, the way reversed audio swells into a cut,
-and sits **dim red and falling** while forward, like the ping and decay of a grain. Colour and
-direction say the same thing, so either cue alone tells you the state, and it shows on every
-page: a reversed bed sounds less like a loop and more like a swell, which is easy to mistake
-for the looper having stopped.
-
-UNLOCK earns this on the silkscreen: on stock Chords it is the pad that decides whether the
-FWD / REV / RND / PING play direction applies to one track or to all of them, so it already
-belongs to the play-direction family. It also sits directly above the column carrying Gravity
-and Event Horizon, putting the three whole-engine gestures together.
-
-## Control pads
+## Getting around
 
 | Pad | |
 |---|---|
-| **KEY** ▲▼ | move the key around the circle of fifths |
-| **BANK** ▲▼ | mode: Ionian / Aeolian / Dorian / Lydian / Mixolydian |
 | **SCALE** | back to the play surface |
-| **PRESET** | synth preset browser |
-| **SONG** | save/load a whole scene - every macro, the tuning and the sound |
+| **TRACKS** | drums |
 | **SYNTH** | synth editor, laid out to match the printed Chords labels |
+| **PRESET** | synth preset browser |
+| **SONG** | save or load a whole scene: every macro, the tuning, the sound |
 
-On the picker pages, **SAVE** and **LOAD** commit and **SCALE** cancels.
+Whichever page you are on, its pad pulses. On the pickers, **SAVE** and **LOAD** commit and
+**SCALE** cancels.
 
-The pad for the page you are on breathes. No physical side button is claimed, so the
-left pair still nudges BPM (Orbit and Satellite follow the tempo) and the right pair
-still cycles pages.
+No side button is claimed. The left pair still nudges BPM, which Orbit and Satellite follow,
+and the right pair still cycles pages.
 
-## External audio - line in and mic
+## Line in and mic
 
-The chain will process anything you feed it, not just Plinky's own voices. Guitar, a drum
-machine, a room mic: it all goes through the looper, the grains and the plate.
+The chain will chew on anything, not just Plinky's own voices. Guitar, a drum machine, a room
+mic.
 
-**Getting there:** page **up** with the right-hand side buttons from the play surface. The
-first two pages are **src** and **in**; the left buttons change the value.
+Page **up** from the play surface with the right-hand side buttons. The first two pages are
+**src** and **in**. The left buttons change the value.
 
 | | |
 |---|---|
-| **src** | `off` / `line` / `mic` - default `off`, synth only |
-| **in** | input level, 0-127 |
+| **src** | `off` / `line` / `mic`. Default `off`, synth only |
+| **in** | input level, 0 to 127 |
 
-Both are panel preferences, not part of a scene, so they survive a reboot.
+Both are panel preferences rather than part of a scene, so they survive a reboot.
 
-**Start around 100 on `line`.** `in` reaches unity at 127 and tapers as a square law, so the
-lower half of the range stays fine-grained for quiet sources; a line input at 40 will sound
-like nothing is connected.
+**On `line`, start around 100.** `in` reaches unity at 127 and tapers as a square law, which
+keeps the bottom half fine-grained for quiet sources. The side effect is that a line input at
+40 sounds like nothing is plugged in.
 
-**`mic` needs a lower setting than you expect.** It shares the same control, and the chain
-feeds back through the looper - a mic in the same room as the speaker will run away. Start
-low and come up.
+**On `mic`, start much lower.** It shares the same control, and the chain feeds back through
+the looper, so a mic in the same room as the speaker will run away. Come up slowly.
 
-Event Horizon drains the *engine*, not the input: with `src` live, pulling the slider down
-empties the loop but the incoming signal still passes through dry. Set `src` to `off` if you
-want the bottom of the slider to be true silence.
+Worth knowing: Event Horizon drains the engine, not the input. With `src` live, the bottom of
+the slider empties the loop but the incoming signal still passes through dry. Set `src` to
+`off` if you want real silence down there.
 
 ## Credits
 
-DSP vendored from [ambiotica-plugin](https://github.com/charlesvestal/ambiotica-plugin),
+DSP from [ambiotica-plugin](https://github.com/charlesvestal/ambiotica-plugin),
 © Charles Vestal, MIT.
