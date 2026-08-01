@@ -130,3 +130,9 @@ SYSTEM_NOTES.md   general Plinky-12 panel-development reference
 MIT (see [`LICENSE`](LICENSE)). The DSP is vendored from the author's `ambiotica-plugin`
 (`dsp/`); the plugin's UI/UX source is not included. Descended from the open-source
 `schwung-ambiotica`.
+
+This panel was built with help from coding agents like Claude, but with significant design,
+oversight and hours from a human (me). If that's not to your taste, totally fine!
+
+The commit history reflects that: agent-assisted commits carry a `Co-Authored-By` trailer, so
+you can see exactly which parts were which.
