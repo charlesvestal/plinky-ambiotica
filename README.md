@@ -16,19 +16,15 @@ into a drone or drain back to silence with a single gesture.
 
 ## The sound (signal chain)
 
-The whole chain runs on core1 inside Plinky's ~2 ms / 64-sample DSP block:
 
 ```
 Plinky poly synth
-   -> DC block -> Flux regen (reverb tail fed back)
-   -> LOOPER        rolling loop bed
-   -> GRANULAR      scattered, pitch-shifted grain cloud (Constellate)
-   -> BLOOM         auto-swell that breathes the attack in
-   -> MICROLOOP     short tempo-synced delay -> freezes into a held pad (Satellite)
-   -> REVERB        Dattorro figure-8 plate (Tail = RT60, Flux = tank modulation)
-   -> HARMONY       high-Q resonators sing a chord out of the wash (Spectra)
-   -> DRIFT         wet-bus detune
-   -> equal-power dry/wet mix -> soft clip
+   -> ORBIT        rolling loop bed
+   -> CONSTELLATE      scattered, pitch-shifted grain cloud 
+   -> SATELLITE     short tempo-synced delay -> freezes into a held pad (Satellite)
+   -> TAIL        Dattorro figure-8 plate (Tail = RT60, Flux = tank modulation)
+   -> SPECTRA       high-Q resonators sing a chord out of the wash (Spectra)
+   -> FLUX         wet-bus detune
 ```
 
 Two macro gestures ride on top and lerp many stages at once:
