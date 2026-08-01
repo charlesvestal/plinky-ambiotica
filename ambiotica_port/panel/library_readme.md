@@ -7,6 +7,12 @@ Underneath all that, an 8-track drum machine.
 > **Built for the Chords faceplate.** Every control sits under the printed word for it, so the
 > overlay helps to orient you to the controls. 
 
+## Hear it
+
+- [Ambiotica on Plinky 12](https://www.youtube.com/watch?v=NG1DBZ1N4b0), the engine on its own
+- [Now with Drums](https://www.youtube.com/watch?v=jAwj6go3ipw), the sequencer running underneath
+- [Live Input Demo](https://www.youtube.com/watch?v=nSFfK28sIks), external audio through the chain
+
 ## Playing
 
 The left half is eight strings in diatonic fourths, inside whatever key and mode you have
@@ -137,6 +143,9 @@ Page **up** from the play surface with the right-hand side buttons. The first tw
 |---|---|
 | **src** | `off` / `line` / `mic`. Default `off`, synth only |
 | **in** | input level, 0 to 127 |
+
+There is a [demo of this](https://www.youtube.com/watch?v=nSFfK28sIks) if you want to hear what
+it does to a live signal.
 
 ## Credits
 

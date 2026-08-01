@@ -8,6 +8,10 @@ A generative ambient instrument for Plinky 12. A rolling looper, a granular clou
 micro-loop, a plate reverb and a bank of tuned resonators, with an 8-track drum machine running
 dry underneath it all. Play a few notes and let go.
 
+Hear it: [the engine](https://www.youtube.com/watch?v=NG1DBZ1N4b0),
+[with drums](https://www.youtube.com/watch?v=jAwj6go3ipw),
+[live input](https://www.youtube.com/watch?v=nSFfK28sIks).
+
 The DSP comes from my [ambiotica-plugin](https://github.com/charlesvestal/ambiotica-plugin)
 (MIT), rebuilt to run on the hardware.
 
