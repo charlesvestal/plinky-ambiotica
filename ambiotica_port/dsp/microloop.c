@@ -47,6 +47,8 @@ struct microloop_s {
 
     /* Smoothed gains. */
     float  fb_target,       fb_current;
+    float  leak_amount;     /* Event Horizon bleed: 0 = keep, 1 = erase and stop recirculating */
+    int    leak_pos;        /* sweep cursor */
     float  out_gain_target, out_gain_current;
 
     /* Loop length (read offset, samples). The host drives a continuous tempo-
@@ -260,6 +262,22 @@ void microloop_leak(microloop_t *m, float factor) {
     }
 }
 
+/* Event Horizon. Mirrors looper_set_leak, and matters MORE here: fb_target floors at 0.55
+ * even at hold 0, so without this the micro-loop recirculates its buffer forever no matter
+ * how far the slider falls - it never stops on its own.
+ *
+ * Two things happen as `amount` rises. The feedback is scaled down, which is free and is what
+ * actually stops the delay re-injecting itself. And the buffer is swept, a couple of samples
+ * per sample, so the captured audio is gone rather than merely quiet. Rate capped at 2 for
+ * the same reason as the looper: the chain peaks near 1800-2130 us before any of this, and
+ * PSRAM traffic here slows every other stage that shares the bus. */
+void microloop_set_leak(microloop_t *m, float amount_0_1) {
+    if (!m) return;
+    if (amount_0_1 < 0.0f) amount_0_1 = 0.0f;
+    if (amount_0_1 > 1.0f) amount_0_1 = 1.0f;
+    m->leak_amount = amount_0_1;
+}
+
 void microloop_set_hold(microloop_t *m, float hold_0_1) {
     if (!m) return;
     if (hold_0_1 < 0.0f) hold_0_1 = 0.0f;
@@ -324,7 +342,9 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
     /* Smoothed gains - ramp per sample toward target. */
     float fb_curr   = m->fb_current;
     float out_curr  = m->out_gain_current;
-    const float fb_t  = m->fb_target;
+    /* Event Horizon pulls the feedback down with it. Without this the 0.55 floor in
+       set_hold keeps the delay re-injecting forever however far the slider falls. */
+    const float fb_t  = m->fb_target * (1.0f - m->leak_amount);
     const float out_t = m->out_gain_target;
     const float c     = m->smooth_c;
     const float ic    = 1.0f - c;
@@ -337,6 +357,24 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
     for (int n = 0; n < frames; n++) {
         fb_curr  = c * fb_curr  + ic * fb_t;
         out_curr = c * out_curr + ic * out_t;
+
+        /* Sweep the captured window away as Horizon falls - see microloop_set_leak. Same
+           budget as the looper: 2 samples per sample at the bottom, store-only there since
+           the multiplier is zero, forward cursor for the prefetcher. */
+        if (m->leak_amount > 0.02f) {
+            const int lcap = m->buf_capacity;
+            const int lper = m->leak_amount > 0.5f ? 2 : 1;
+            const float llf = 1.0f - m->leak_amount;
+            const int lz = (llf < 0.02f);
+            int lp = m->leak_pos;
+            for (int k = 0; k < lper; k++) {
+                if (++lp >= lcap) lp = 0;
+                if (lz) { m->buf[lp*2] = 0; m->buf[lp*2+1] = 0; }
+                else    { m->buf[lp*2]   = (short)(m->buf[lp*2]   * llf);
+                          m->buf[lp*2+1] = (short)(m->buf[lp*2+1] * llf); }
+            }
+            m->leak_pos = lp;
+        }
 
         /* Read at the active (fixed) tap. A length change crossfades to the new
          * tap over crossfade_len samples - both taps are at constant offsets, so
