@@ -284,6 +284,26 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
         out_l[i] = lv; out_r[i] = rv;
     }
     st->gravPhase = gph;
+#ifdef AMB_PROFILE
+    /* Which stage is still sounding? Peak per stage, ~twice a second. Ends the guessing:
+       whatever is audible after a full drain shows up here as a non-zero column. */
+    {
+        static unsigned lvl_n = 0; static float pk[5] = {0,0,0,0,0};
+        for (int i = 0; i < n; i++) {
+            float a;
+            a = st->loopL[i]; if (a < 0) a = -a; if (a > pk[0]) pk[0] = a;
+            a = st->granL[i]; if (a < 0) a = -a; if (a > pk[1]) pk[1] = a;
+            a = st->micL[i];  if (a < 0) a = -a; if (a > pk[2]) pk[2] = a;
+            a = st->wetL[i];  if (a < 0) a = -a; if (a > pk[3]) pk[3] = a;
+            a = out_l[i];     if (a < 0) a = -a; if (a > pk[4]) pk[4] = a;
+        }
+        if (++lvl_n >= 250) {
+            printf("LVL loop=%.4f gran=%.4f mic=%.4f wet=%.4f out=%.4f\n",
+                   (double)pk[0], (double)pk[1], (double)pk[2], (double)pk[3], (double)pk[4]);
+            lvl_n = 0; for (int k = 0; k < 5; k++) pk[k] = 0.f;
+        }
+    }
+#endif
     STG(5);   /* drift + mix/output */
 #ifdef AMB_PROFILE
     g_stage_n++;
