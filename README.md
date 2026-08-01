@@ -8,6 +8,12 @@ reverb, and a bank of tuned-chord resonators - all as a single custom panel.
 Play a few notes and let go; the sound blooms into a slow, in-key wash you can collapse
 into a drone or drain back to silence with a single gesture.
 
+## Hear it
+
+- [Ambiotica on Plinky 12](https://www.youtube.com/watch?v=NG1DBZ1N4b0), the engine on its own
+- [Now with Drums](https://www.youtube.com/watch?v=jAwj6go3ipw), the sequencer running underneath
+- [Live Input Demo](https://www.youtube.com/watch?v=nSFfK28sIks), external audio through the chain
+
 ## The sound (signal chain)
 
 The whole chain runs on core1 inside Plinky's ~2 ms / 64-sample DSP block:
