@@ -21,22 +21,20 @@ into a drone or drain back to silence with a single gesture.
 Plinky poly synth
    -> ORBIT        rolling loop bed
    -> CONSTELLATE      scattered, pitch-shifted grain cloud 
-   -> SATELLITE     short tempo-synced delay -> freezes into a held pad (Satellite)
-   -> TAIL        Dattorro figure-8 plate (Tail = RT60, Flux = tank modulation)
-   -> SPECTRA       high-Q resonators sing a chord out of the wash (Spectra)
-   -> FLUX         wet-bus detune
+   -> SATELLITE     short tempo-synced delay -> freezes into a held pad
+   -> TAIL        Dattorro figure-8 plate (Modulated by FLUX)
+   -> SPECTRA       high-Q resonators sing a chord out of the wash
 ```
 
 Two macro gestures ride on top and lerp many stages at once:
 
-- **Gravity** - collapse the whole engine into a slow, evolving drone.
-- **Event Horizon** - "let go": drain everything back to silence for the next phrase.
+- **GRAVITY** - collapse the whole engine into a slow, evolving drone.
+- **EVENT HORIZON** - "let go": drain everything back to silence for the next phrase.
 
 ## Controls
 
-Laid out for the **Chords** faceplate: the play UI occupies rows 2–13 (the only rows that
-overlay draws pads for) and the reserved rows carry control pads under their printed
-labels. No physical side button is claimed.
+Laid out for the **Chords** faceplate: the play UI occupies rows 2–13 and the reserved rows carry control pads under their printed
+labels. 
 
 - **Left half (8 strings):** the play surface, tuned in **diatonic fourths** within the
   selected key and mode, so every cluster is an open in-key chord and sliding up a string
@@ -48,19 +46,15 @@ labels. No physical side button is claimed.
   (Ionian / Aeolian / Dorian / Lydian / Mixolydian). Both retune the surface and the
   Spectra wash.
 - **UNLOCK** toggles **Dilate** - the loop bed and micro-loop swap to backward,
-  Hann-crossfaded read heads (pitch kept, no seam). Purple and rising while reversed, dim red
-  and falling while forward. UNLOCK is the stock pad governing play-direction scope, and sits
-  above the Gravity / Event Horizon column.
 - **Pages** on their printed pads: **TRACKS** (drums), **SYNTH** (editor), **PRESET**,
   **SONG** (save/load a whole scene), **SCALE** to come back.
 
 ### Drums
 
 An 8-track x0x sequencer on the TRACKS page, rendered **after** the chain so the pattern
-stays dry and legible under the wash - and costs no polyphony. Kick, snare, closed/open
+stays dry and legible under the wash. Kick, snare, closed/open
 hat, clap, rim and two toms, synthesised at boot, with the shipped sampled kits and 16
-sliced breaks on **BANK**. Sampled hits play from the SDK's prefiltered mipmaps, so
-transposing a break up stays clean instead of aliasing.
+sliced breaks on **BANK**. 
 
 Drag to write steps. The sequencer then uses the printed sequencer row, each control under
 the word that names it:
