@@ -151,3 +151,6 @@ it does to a live signal.
 
 DSP from [ambiotica-plugin](https://github.com/charlesvestal/ambiotica-plugin),
 © Charles Vestal, MIT.
+
+This panel was built with help from coding agents like Claude, but with significant design,
+oversight and hours from a human (me). If that's not to your taste, totally fine!

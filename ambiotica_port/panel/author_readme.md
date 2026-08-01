@@ -16,3 +16,6 @@ The DSP comes from my [ambiotica-plugin](https://github.com/charlesvestal/ambiot
 (MIT), rebuilt to run on the hardware.
 
 Source, issues and build notes: <https://github.com/charlesvestal/plinky-ambiotica>
+
+My panels are built with help from coding agents like Claude, but with significant design,
+oversight and hours from a human (me). If that's not to your taste, totally fine!
