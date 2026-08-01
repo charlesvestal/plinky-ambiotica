@@ -34,7 +34,9 @@ struct looper_s {
     lsamp_t *buf_L;
     lsamp_t *buf_R;
     int    buf_capacity;   /* allocated size - sets the max loop length */
-    int    valid;          /* samples written since the last logical clear; reads past it are silent */
+    int    valid;          /* samples written since the last clear; reads past it are silent */
+    int    wipe_left;      /* samples still to physically zero; 0 = idle */
+    int    wipe_pos;       /* sweep cursor, walking backward from the write head */
     int    loop_len;       /* active read offset; <= buf_capacity */
     int    write_pos;
     /* Smoothed feedback - abrupt knob changes would otherwise inject a
@@ -135,7 +137,12 @@ void looper_destroy(looper_t *l) {
  * that. The result is identical to a zeroed buffer - you hear new material accumulate and
  * silence where nothing has been recorded yet - for one integer compare per sample and no
  * bus traffic whatsoever. */
-void looper_clear(looper_t *l) { if (l) l->valid = 0; }
+void looper_clear(looper_t *l) {
+    if (!l) return;
+    l->valid = 0;                 /* immediate: reads stop reaching into the old material */
+    l->wipe_left = l->buf_capacity;   /* and then actually erase it, a little at a time */
+    l->wipe_pos = l->write_pos;
+}
 
 void looper_reset(looper_t *l) {
     if (!l) return;
@@ -143,6 +150,7 @@ void looper_reset(looper_t *l) {
     memset(l->buf_R, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
     l->write_pos = 0;
     l->valid = 0;
+    l->wipe_left = 0;
     l->fb_current = 0.0f;
     l->crossfade_remaining = 0;
     l->has_queued = 0;
@@ -250,6 +258,24 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
          * the buffer (true looper). soft_sat kept as safety against
          * transient peaks. */
         float in_g = 1.0f - fb_curr;
+        /* Physical wipe, spread across the audio thread instead of blocking core0 with a
+           multi-megabyte memset. WIPE_PER_SAMPLE samples per audio sample is a fixed, tiny
+           cost with no burst, and it sweeps BACKWARD from the write head so the part the read
+           reaches first is gone first - the readable window is clear within a fraction of a
+           second, the full ring in a few. Sequential access, so it is cache-friendly on the
+           slow bus rather than scattered. */
+        if (l->wipe_left > 0) {
+            enum { WIPE_PER_SAMPLE = 8 };
+            int wn = l->wipe_left < WIPE_PER_SAMPLE ? l->wipe_left : WIPE_PER_SAMPLE;
+            int wp = l->wipe_pos;
+            for (int k = 0; k < wn; k++) {
+                if (--wp < 0) wp += cap;
+                l->buf_L[wp] = st(0.0f);
+                l->buf_R[wp] = st(0.0f);
+            }
+            l->wipe_pos = wp;
+            l->wipe_left -= wn;
+        }
         if (l->valid < cap) l->valid++;   /* one more sample of real material behind us */
         l->buf_L[pos] = st(soft_sat(in_g * in_l[n] + fb_curr * loopL));
         l->buf_R[pos] = st(soft_sat(in_g * in_r[n] + fb_curr * loopR));
