@@ -38,6 +38,13 @@ void         microloop_reset(microloop_t *m);
  * the buffer empties over time as Horizon is lowered (>=1 is a no-op). */
 void         microloop_leak(microloop_t *m, float factor);
 
+/* Event Horizon: bleed the captured micro-loop away as `amount` rises (0 = keep, 1 = erase).
+   Matters more here than on the looper: fb_target floors at 0.55 even at hold 0, so without
+   this the delay recirculates forever however far the slider falls. Scales the feedback down
+   (free, and what actually stops the re-injection) and sweeps the buffer a couple of samples
+   per sample. */
+void         microloop_set_leak(microloop_t *m, float amount_0_1);
+
 /* Dilate: 0 = forward, 1 = reversed (reverse-delay read of the micro-loop). */
 void         microloop_set_reverse(microloop_t *m, float amount_0_1);
 

@@ -120,7 +120,8 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m,
        click or stall on. Squared so the top of the travel barely touches the loop and the
        erase concentrates at the bottom. */
     { float cl = 1.0f - p->horizon; if (cl < 0.f) cl = 0.f; if (cl > 1.f) cl = 1.f;
-      looper_set_leak(l, cl * cl); }
+      looper_set_leak(l, cl * cl);
+      microloop_set_leak(m, cl * cl); }
     looper_set_reverse(l, p->dilate);
     microloop_set_reverse(m, p->dilate);
     { float mb = p->micro_bars > 0.01f ? p->micro_bars : 0.25f;      /* Satellite micro length */
