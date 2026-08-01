@@ -56,7 +56,8 @@ trap 'rm -f "$BODY"' EXIT
 @Author: Charles Vestal
 @Documentation: https://github.com/charlesvestal/plinky-ambiotica
 @Category: Instruments
-@Tags: chords, ambient, drums, granular, reverb, looper, drone
+@Preferred Panels: chords
+@Tags: ambient, drums, granular, reverb, looper, drone, generative
 @Discussion: https://github.com/charlesvestal/plinky-ambiotica/issues
 @Description: An ambient wash - rolling looper, granular cloud, plate reverb - with an 8-track drum machine under it. Play a few notes and let go. Designed for the Chords faceplate.
 
@@ -101,24 +102,28 @@ fi
 # Submission bundle in the plinkysynth/community-panels layout. Built locally every time
 # so it never drifts from the sources; submitting is a separate, manual act.
 #
-#   dist/<key>/<key>.cpp   the panel - filename must match the directory, which IS the key
-#   dist/<key>/README.md   shown on the IDE panel cover after someone opens the panel
-#   dist/<key>/artwork.png square library thumbnail
+#   dist/<author>/README.md            author gallery page
+#   dist/<author>/<key>/<key>.cpp      the panel - exactly one .cpp, directly in the dir
+#   dist/<author>/<key>/README.md      shown on the IDE panel cover once the panel is opened
+#   dist/<author>/<key>/artwork.png    square library thumbnail
 #
-# The repo allows EXACTLY these three, no subdirectories and no other files, so this
-# rebuilds the directory from scratch rather than adding to it. The library listing comes
-# from the @-metadata block at the top of the .cpp, not from README.md.
+# The panel ID is <author>/<key>, so BOTH slugs must be lowercase letters, digits and
+# underscores only. The panel directory takes exactly one .cpp and no subdirectories, so this
+# rebuilds the tree from scratch rather than adding to it. The library listing comes from the
+# @-metadata block at the top of the .cpp, not from README.md.
 # The submission bundle is built only for the normal panel, not the profiling variant.
 if [ -n "$AMB_OUT" ]; then exit 0; fi
 
+AUTHOR=charlesvestal
 KEY=ambiotica
-DIST="$HN/dist/$KEY"
-rm -rf "$DIST"
+DIST="$HN/dist/$AUTHOR/$KEY"
+rm -rf "$HN/dist/$AUTHOR"
 mkdir -p "$DIST"
-cp "$OUT"                  "$DIST/$KEY.cpp"
-cp "$HN/library_readme.md" "$DIST/README.md"
-cp "$HN/artwork.png"       "$DIST/artwork.png"
-echo "wrote $DIST/ ($KEY.cpp, README.md, artwork.png)"
+cp "$OUT"                   "$DIST/$KEY.cpp"
+cp "$HN/library_readme.md"  "$DIST/README.md"
+cp "$HN/artwork.png"        "$DIST/artwork.png"
+cp "$HN/author_readme.md"   "$HN/dist/$AUTHOR/README.md"
+echo "wrote $HN/dist/$AUTHOR/ (README.md, $KEY/{$KEY.cpp,README.md,artwork.png})"
 
 # Profiling variant, built alongside so it can never drift from the real panel. It prints
 # per-stage core1 timings (STG loop/gran/mic/rev/harm/mix/push/drum), which is what decides
