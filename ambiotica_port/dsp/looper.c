@@ -263,19 +263,27 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
          * the buffer (true looper). soft_sat kept as safety against
          * transient peaks. */
         float in_g = 1.0f - fb_curr;
-        /* Event Horizon leak - see looper_set_leak. The RATE follows the depth, which is
-           what makes it both cheap and fast enough: barely draining costs nothing, and the
-           full erase only runs at the bottom, where the rest of the chain has gone quiet
-           anyway (measured on device: harm drops ~95 -> ~21 and mix ~115 -> ~37 at full
-           drain, which is more headroom than the leak needs). */
+        /* Event Horizon leak - see looper_set_leak.
+           Rate capped HARD. Measured on device: 8 per sample put STG loop at ~650 against a
+           190 baseline (~58 us each), and it dragged granular, micro and reverb up with it,
+           because they share the PSRAM bus - dsp hit 2850 us and glitched. With the chain
+           already peaking at 1800-2130 without any leak at all, the affordable budget is
+           around 100 us, so 2 is the ceiling.
+           That is enough, because the expensive part is already free: during a drain the
+           looper writes silence at the write head anyway, one sample per sample at no cost.
+           The leak adds two more, so the window empties at 3x record speed - a 4 s loop in
+           about 1.3 s of holding. Faster than that is not available on this hardware without
+           taking the audio down with it. */
         if (l->leak_amount > 0.02f) {
-            const int per = (int)(l->leak_amount * 8.0f + 0.5f);
+            const int per = l->leak_amount > 0.5f ? 2 : 1;
             const float lf = 1.0f - l->leak_amount;
+            const int zeroing = (lf < 0.02f);   /* at the bottom, skip the read entirely */
             int lp = l->leak_pos;
             for (int k = 0; k < per; k++) {
-                if (--lp < 0) lp += cap;
-                l->buf_L[lp] = st(ld(l->buf_L[lp]) * lf);
-                l->buf_R[lp] = st(ld(l->buf_R[lp]) * lf);
+                if (++lp >= cap) lp = 0;        /* forward: the prefetcher likes it better */
+                if (zeroing) { l->buf_L[lp] = st(0.0f);            l->buf_R[lp] = st(0.0f); }
+                else         { l->buf_L[lp] = st(ld(l->buf_L[lp]) * lf);
+                               l->buf_R[lp] = st(ld(l->buf_R[lp]) * lf); }
             }
             l->leak_pos = lp;
         }
