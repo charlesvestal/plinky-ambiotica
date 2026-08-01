@@ -35,6 +35,7 @@ trap 'rm -f "$BODY"' EXIT
     for h in $MODULES; do strip "$DSP/$h.h"; done
     strip "$DSP/mipmap.h"             # used by drums.c, so it must precede it
     strip "$DSP/rate_util.h"
+    strip "$DSP/drain.h"              # Event Horizon sweep cursor, used by looper.c + microloop.c
     strip "$DSP/fast_math.h"
     strip "$DSP/hann.h"               # AFTER fast_math.h (needs fast_cosf), before its users
     strip "$HARN/full_chain.h"

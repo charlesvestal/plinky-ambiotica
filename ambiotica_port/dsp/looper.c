@@ -1,5 +1,6 @@
 /* Rolling-capture stereo looper with feedback. */
 #include "looper.h"
+#include "drain.h"
 #include "hann.h"
 #include "fast_math.h"
 #include "rate_util.h"
@@ -35,7 +36,7 @@ struct looper_s {
     lsamp_t *buf_R;
     int    buf_capacity;   /* allocated size - sets the max loop length */
     float  leak_amount;    /* Event Horizon bleed: 0 = keep the loop, 1 = erase it */
-    int    leak_pos;       /* cursor sweeping the loop window, backward from the write head */
+    drain_cursor_t drain;  /* sweep cursor, ascending from the read head - see drain.h */
     int    loop_len;       /* active read offset; <= buf_capacity */
     int    write_pos;
     /* Smoothed feedback - abrupt knob changes would otherwise inject a
@@ -67,6 +68,7 @@ struct looper_s {
 
 #define LOOPER_SMOOTH_COEF   0.9989f  /* ~20 ms time constant @ 44.1 kHz */
 #define LOOPER_CROSSFADE_LEN 512      /* ~11.6 ms linear crossfade */
+#define LOOPER_LEAK_MIN      0.30f    /* below this the drain is idle and costs nothing */
 
 /* Padé-3 tanh approximation - smooth soft-saturation for the feedback path.
  * Cheap (5 muls + 2 adds inside range) and bounded to ±1.0. Replaces hard
@@ -139,11 +141,12 @@ void looper_clear(looper_t *l) {
  * buffer is genuinely empty by the time the slider bottoms out.
  *
  * The plugin scales the WHOLE loop window once per block, which here would be ~128k
- * read-modify-writes every 2 ms - unaffordable. This applies the same decay to a slice per
- * sample instead, the cursor cycling through the window, so every sample is scaled equally
- * often with only a phase offset between them. Measured at ~37 us per block per
- * sample-per-sample, so LEAK_PER_SAMPLE = 2 costs about 75 us and fits the headroom that a
- * 300 us version did not.
+ * read-modify-writes every 2 ms - unaffordable. This applies the same decay a few samples at
+ * a time instead, a cursor walking the window ahead of the read head, so every sample is
+ * scaled equally often with only a phase offset between them. Measured at ~37 us per block
+ * per sample-per-sample, so LEAK_PER_SAMPLE = 2 costs about 75 us and fits the headroom that
+ * a 300 us version did not. See drain.h for the cursor - the direction it walks is what
+ * decides whether any of this is audible, and the first version got it backwards.
  *
  * amount 0 leaves the loop alone, 1 zeroes what it touches, partial values decay it - so a
  * quick dip thins the loop and holding at the bottom erases it. */
@@ -151,6 +154,7 @@ void looper_set_leak(looper_t *l, float amount_0_1) {
     if (!l) return;
     if (amount_0_1 < 0.0f) amount_0_1 = 0.0f;
     if (amount_0_1 > 1.0f) amount_0_1 = 1.0f;
+    if (amount_0_1 > LOOPER_LEAK_MIN && l->leak_amount <= LOOPER_LEAK_MIN) drain_restart(&l->drain);
     l->leak_amount = amount_0_1;
 }
 
@@ -263,36 +267,19 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
          * the buffer (true looper). soft_sat kept as safety against
          * transient peaks. */
         float in_g = 1.0f - fb_curr;
-        /* Event Horizon leak - see looper_set_leak.
-           Rate capped HARD. Measured on device: 8 per sample put STG loop at ~650 against a
-           190 baseline (~58 us each), and it dragged granular, micro and reverb up with it,
-           because they share the PSRAM bus - dsp hit 2850 us and glitched. With the chain
-           already peaking at 1800-2130 without any leak at all, the affordable budget is
-           around 100 us, so 2 is the ceiling.
-           That is enough, because the expensive part is already free: during a drain the
-           looper writes silence at the write head anyway, one sample per sample at no cost.
-           The leak adds two more, so the window empties at 3x record speed - a 4 s loop in
-           about 1.3 s of holding. Faster than that is not available on this hardware without
-           taking the audio down with it. */
-        if (l->leak_amount > 0.30f) {
-            const int per = l->leak_amount > 0.5f ? 2 : 1;
+        /* Event Horizon leak. What it does is in looper_set_leak; why the cursor is shaped
+           the way it is, and why the rate is 2, is in drain.h. Placed after the read at
+           read_pos_a so the tap always plays a sample before the sweep erases it. */
+        if (l->leak_amount > LOOPER_LEAK_MIN) {
             const float lf = 1.0f - l->leak_amount;
             const int zeroing = (lf < 0.02f);   /* at the bottom, skip the read entirely */
-            /* Cursor is an OFFSET BACK FROM THE WRITE HEAD, not an absolute index, so the
-               sweep always covers the read window wherever the head has got to. Sweeping the
-               whole ring instead spends ~87% of the effort on memory that is never read -
-               1024000 samples against a 128000-sample window - which is why holding the
-               slider down did not empty it. */
             int win = l->loop_len; if (win > cap) win = cap; if (win < 1) win = 1;
-            int off = l->leak_pos;
-            for (int k = 0; k < per; k++) {
-                if (++off >= win) off = 0;
-                int idx = pos - off; while (idx < 0) idx += cap;
+            for (int k = 0; k < LEAK_PER_SAMPLE; k++) {
+                int idx = drain_next(&l->drain, read_pos_a, win, cap);
                 if (zeroing) { l->buf_L[idx] = st(0.0f);             l->buf_R[idx] = st(0.0f); }
                 else         { l->buf_L[idx] = st(ld(l->buf_L[idx]) * lf);
                                l->buf_R[idx] = st(ld(l->buf_R[idx]) * lf); }
             }
-            l->leak_pos = off;
         }
         l->buf_L[pos] = st(soft_sat(in_g * in_l[n] + fb_curr * loopL));
         l->buf_R[pos] = st(soft_sat(in_g * in_r[n] + fb_curr * loopR));
