@@ -124,7 +124,12 @@ enum { SET_SOURCE = -1, SET_IN_LEVEL = -2, SET_N = 2 };
 
 /* External input is attenuated like the synth bus is (see AMB_IN_GAIN): the chain is tuned
    around a ~0.18 peak input, and a line/mic feed can arrive at full scale. */
-#define AMB_EXT_IN_GAIN 0.25f
+/* Ceiling for external audio, reached at in = 127. Unity: a line source is one stereo
+ * signal, not eight voices, so it needs none of the polyphony headroom AMB_IN_GAIN (0.12)
+ * leaves for the synth bus. The old 0.25 ceiling meant even a maxed-out line input sat 12 dB
+ * down and was inaudible under the wash, while the mic got away with it because it has
+ * preamp gain ahead of the codec that a line input does not. */
+#define AMB_EXT_IN_GAIN 1.0f
 
 /* NOTE: keep this name SHORT. The class name becomes the panel name (when no @Name is
  * set), the runtime prefixes it with "u_", and the file picker stores folder names in
@@ -478,6 +483,13 @@ struct ambiotica : panel_t {
         fx_sm = fx;              /* land on the loaded scene rather than ramping into it */
         eh_flushed = false;
         preview_mix = 0.f;
+        /* Re-assert the codec routing. audio_source is a panel PREFERENCE, restored from the
+           settings file, but the call that acts on it lives in setup_default_panel_state()
+           and that does NOT run on a staged load - which is how the IDE loads a panel. So the
+           setting could read "mic" while the codec sat on line in, and set_audio_source()
+           early-returns when the value has not changed, leaving no way to re-assert it from
+           the UI short of toggling away and back. */
+        codec_enable_mic(audio_source == 2);
         /* The scene carried its own presets, so the tracks' slices point at whatever it
            loaded - re-derive them rather than trusting the pointers we just overwrote. */
         refresh_drum_slices();
@@ -1547,8 +1559,31 @@ struct ambiotica : panel_t {
            bus as the synth so the whole chain - looper, grains, plate, Spectra - processes it.
            Default src is "off", which is the historical synth-only behaviour. Watch the level
            on "mic": the chain feeds back through the looper, so a hot mic can run away. */
+#ifdef AMB_PROFILE
+        /* Is anything actually arriving? Separates "no signal at the codec" from "signal
+           arrives but the chain swallows it" - the two have completely different fixes.
+           Peak of the RAW input buffer, before any of our gain, printed ~every 2 s. */
+        {
+            static unsigned rep_us = 0; static int pk = 0;
+            if (audiobuf_in) for (int i = 0; i < BLOCK_SIZE * 2; i++) {
+                int v = audiobuf_in[i]; if (v < 0) v = -v; if (v > pk) pk = v;
+            }
+            rep_us += 2000;
+            if (rep_us >= 2000000u) {
+                printf("AIN: src=%d lvl=%d buf=%s rawpeak=%d\n",
+                       (int)audio_source, (int)audio_in_level,
+                       audiobuf_in ? "ok" : "NULL", pk);
+                rep_us = 0; pk = 0;
+            }
+        }
+#endif
         if (audio_source && audiobuf_in) {
-            const float ki = (1.0f / 32768.0f) * AMB_EXT_IN_GAIN * (audio_in_level / 127.0f) * duck;
+            /* SQUARE law, not linear. With a unity ceiling a linear taper would put half
+               scale at -6 dB and make the bottom of the range useless; squaring keeps fine
+               control down there, which matters because mic shares this control and the
+               chain feeds back through the looper - a hot mic can run away. */
+            const float lv = audio_in_level / 127.0f;
+            const float ki = (1.0f / 32768.0f) * AMB_EXT_IN_GAIN * lv * lv * duck;
             for (int i = 0; i < BLOCK_SIZE; i++) {
                 sL[i] += audiobuf_in[2*i]   * ki;
                 sR[i] += audiobuf_in[2*i+1] * ki;
