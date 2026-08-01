@@ -140,7 +140,10 @@ void looper_destroy(looper_t *l) {
 void looper_clear(looper_t *l) {
     if (!l) return;
     l->valid = 0;                 /* immediate: reads stop reaching into the old material */
-    l->wipe_left = l->buf_capacity;   /* and then actually erase it, a little at a time */
+    /* Only the READABLE window. Anything further back than loop_len is never read, and if
+       loop_len later grows the `valid` gate covers the difference - so wiping the whole
+       32 s ring was 8x the work for no audible gain. */
+    l->wipe_left = l->loop_len;
     l->wipe_pos = l->write_pos;
 }
 
@@ -265,7 +268,12 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
            second, the full ring in a few. Sequential access, so it is cache-friendly on the
            slow bus rather than scattered. */
         if (l->wipe_left > 0) {
-            enum { WIPE_PER_SAMPLE = 8 };
+            /* Measured on device: 8 per sample put ~300 us per block into the looper stage
+               (190 -> 490 us) and took dsp past its 2000 us budget, which glitched. 2 costs
+               about 75 us, which fits inside the headroom. The wipe takes a few seconds at
+               that rate and that is fine - the `valid` gate has already silenced the loop, so
+               nothing is waiting on it. */
+            enum { WIPE_PER_SAMPLE = 2 };
             int wn = l->wipe_left < WIPE_PER_SAMPLE ? l->wipe_left : WIPE_PER_SAMPLE;
             int wp = l->wipe_pos;
             for (int k = 0; k < wn; k++) {
