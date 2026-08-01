@@ -137,15 +137,32 @@ The pad for the page you are on breathes. No physical side button is claimed, so
 left pair still nudges BPM (Orbit and Satellite follow the tempo) and the right pair
 still cycles pages.
 
-## Settings
+## External audio - line in and mic
 
-Right-up from the play surface: **src** (off / line / mic) routes external audio into
-the chain, and **in** sets its level. Default is off - synth only.
+The chain will process anything you feed it, not just Plinky's own voices. Guitar, a drum
+machine, a room mic: it all goes through the looper, the grains and the plate.
 
-**in** reaches unity gain at 127 and tapers as a square law, so the lower half of the range
-stays fine-grained. That matters on **mic**, which shares the control: the chain feeds back
-through the looper, so a hot mic in the same room as the speaker will run away. Line inputs
-usually want the upper half; a mic rarely does.
+**Getting there:** page **up** with the right-hand side buttons from the play surface. The
+first two pages are **src** and **in**; the left buttons change the value.
+
+| | |
+|---|---|
+| **src** | `off` / `line` / `mic` - default `off`, synth only |
+| **in** | input level, 0-127 |
+
+Both are panel preferences, not part of a scene, so they survive a reboot.
+
+**Start around 100 on `line`.** `in` reaches unity at 127 and tapers as a square law, so the
+lower half of the range stays fine-grained for quiet sources; a line input at 40 will sound
+like nothing is connected.
+
+**`mic` needs a lower setting than you expect.** It shares the same control, and the chain
+feeds back through the looper - a mic in the same room as the speaker will run away. Start
+low and come up.
+
+Event Horizon drains the *engine*, not the input: with `src` live, pulling the slider down
+empties the loop but the incoming signal still passes through dry. Set `src` to `off` if you
+want the bottom of the slider to be true silence.
 
 ## Credits
 
