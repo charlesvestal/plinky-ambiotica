@@ -25,3 +25,13 @@ build_variant() {
 
 build_variant float ""
 build_variant i16   "-DLOOPER_I16"
+
+# Event Horizon end-to-end check. Same objects as the i16 harness (the device variant), a
+# different driver: play, drain, release, and assert the loop does not come back.
+od="obj_i16"
+$CC -DLOOPER_I16 -c "$HN/eh_main.c" -o "$od/eh_main.o"
+$CC "$od"/looper.o "$od"/granular.o "$od"/microloop.o "$od"/harmony.o \
+    "$od"/drift.o "$od"/bloom.o "$od"/lfo.o "$od"/dattorro.o "$od"/eh_main.o \
+    -lm -o "amb_eh_test"
+echo "built: $HN/amb_eh_test"
+"$HN/amb_eh_test"

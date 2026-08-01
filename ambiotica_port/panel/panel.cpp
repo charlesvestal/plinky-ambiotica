@@ -1638,6 +1638,15 @@ struct ambiotica : panel_t {
            short frozen-loop "buzz". Hysteresis so it can't re-fire on the edge; the
            reverb is left out so its tail decays gracefully rather than being cut. */
         if (fx_sm.horizon < 0.04f) {
+            /* Declare the loop and micro-loop empty, every block for as long as the slider is
+               held down. Instant, no memset, no stall: reads older than the mark return
+               silence (drain.h). fc_push_params does this too, but its push is throttled to
+               every 4th changed block, and this is the line someone looks for when asking
+               "where does Event Horizon clear the buffers". Re-stamping rather than
+               edge-firing is deliberate - holding at the bottom stays silent, and releasing
+               starts recording from empty. */
+            if (looper)    looper_mark_clear(looper);
+            if (microloop) microloop_mark_clear(microloop);
             if (!eh_flushed) {
                 /* ONLY the small modules. looper_reset memsets buf_capacity x 2 channels -
                    about 4 MB of PSRAM - and granular/microloop add ~1.4 MB more, all from
@@ -1654,11 +1663,10 @@ struct ambiotica : panel_t {
                 if (harmony) harmony_reset(harmony);
                 if (bloom)   bloom_reset(bloom);
                 if (drift)   drift_reset(drift);
-                /* No loop clear here. Emptying the loop is now continuous - looper_set_leak
-                   bleeds it away as the slider falls (see fc_push_params), which is what the
-                   plugin does and leaves nothing discrete to click or stall on. Granular and
-                   the micro-loop need nothing either: both overwrite their buffers as they
-                   record, so they flush themselves within about a second. */
+                /* No memset of the big rings, ever. Emptying them is looper_mark_clear above
+                   plus the continuous bleed from looper_set_leak - see drain.h. Granular
+                   needs nothing: it is fed by the looper output, so a silent looper flushes
+                   it within one buffer as it records. */
                 eh_flushed = true;
             }
         } else if (fx_sm.horizon > 0.10f) {

@@ -44,6 +44,36 @@ static int run(int per, int absolute, int *audible_out) {
     return (last_sound == SR * HOLD - 1) ? -1 : last_sound + 1;
 }
 
+/* The failure the sweep could never fix: the slider is held for `hold_s` - less than a full
+ * pass on a long loop - and then RELEASED. The cursor stops; the read head does not. Returns
+ * the time at which audio comes back after the release, or -1 if it stays silent.
+ *
+ * `gated` adds the clear mark: the mark is stamped every sample while the slider is down, and
+ * a read older than the mark returns silence instead of buffer content. */
+static double comeback(int hold_s, int gated) {
+    memset(buf, 1, sizeof buf);
+    int pos = 500000;
+    drain_cursor_t dc; drain_restart(&dc); dc.since_clear = CAP;   /* buffer starts full */
+
+    for (int n = 0; n < SR * 12; n++) {
+        int read_pos = pos - WIN; if (read_pos < 0) read_pos += CAP;
+        const int down = (n < SR * hold_s);
+
+        if (down && gated) drain_mark_clear(&dc);
+
+        /* What the player hears: silence if the mark says this sample predates the clear. */
+        int heard = gated ? (!drain_stale(&dc, WIN) && buf[read_pos]) : buf[read_pos];
+        if (heard && !down) return (double)(n - SR * hold_s) / SR;   /* came back after release */
+
+        if (down) for (int k = 0; k < LEAK_PER_SAMPLE; k++)
+            buf[drain_next(&dc, read_pos, WIN, CAP)] = 0;
+        buf[pos] = 0;
+        drain_tick(&dc, CAP);
+        if (++pos >= CAP) pos = 0;
+    }
+    return -1.0;
+}
+
 int main(void) {
     printf("holding the drain for %d s on a %d-sample (%.0f s) loop\n\n", HOLD, WIN, (double)WIN / SR);
     printf("  cursor      per   goes silent at   audible samples\n");
@@ -61,7 +91,20 @@ int main(void) {
         }
     }
     printf("\n(shipped rate is LEAK_PER_SAMPLE = %d)\n", LEAK_PER_SAMPLE);
-    printf("%s\n", fail ? "FAIL: absolute cursor did not get in front of playback"
-                        : "PASS: at LEAK_PER_SAMPLE the absolute cursor silences the loop at once");
+
+    /* A sweep only runs while the gesture does, so releasing early leaves the read head to
+       walk off the end of the cleared region. The clear mark is what actually fixes it. */
+    printf("\nheld briefly, then RELEASED - when does the loop come back?\n\n");
+    printf("  hold    sweep only        sweep + clear mark\n");
+    for (int h = 1; h <= 3; h++) {
+        double s = comeback(h, 0), g = comeback(h, 1);
+        printf("  %d s   ", h);
+        if (s < 0) printf("%-18s", "never");
+        else       printf("came back +%.2f s   ", s);
+        if (g < 0) printf("never\n");
+        else     { printf("came back +%.2f s\n", g); fail = 1; }
+    }
+    printf("\n%s\n", fail ? "FAIL: loop returned after the slider was released"
+                          : "PASS: cleared loop stays silent however briefly the slider is held");
     return fail;
 }

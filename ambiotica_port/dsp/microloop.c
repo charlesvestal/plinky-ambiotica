@@ -144,6 +144,10 @@ static inline void micro_cloud(microloop_t *m, int active, int write_pos, int st
         if (!m->grain[gi].active) continue;
         int i0 = (int)m->grain[gi].rd; float fr = m->grain[gi].rd - (float)i0;
         int i1 = i0 + 1; if (i1 >= cap) i1 = 0;
+        /* Grains read wherever they were spawned, so age has to be measured rather than
+         * derived from a tap length - see drain.h. */
+        { int age = write_pos - i0; if (age < 0) age += cap;
+          if (drain_stale(&m->drain, age)) continue; }
         float bl0 = m_ld(m->buf[i0*2]),   bl1 = m_ld(m->buf[i1*2]);
         float br0 = m_ld(m->buf[i0*2+1]), br1 = m_ld(m->buf[i1*2+1]);
         float sL = bl0 + (bl1 - bl0) * fr;
@@ -281,6 +285,13 @@ void microloop_set_leak(microloop_t *m, float amount_0_1) {
     m->leak_amount = amount_0_1;
 }
 
+/* Declare the captured window empty. Mirrors looper_mark_clear, and covers the grain cloud
+ * and the Dilate heads as well as the delay tap - see drain.h. */
+void microloop_mark_clear(microloop_t *m) {
+    if (!m) return;
+    drain_mark_clear(&m->drain);
+}
+
 void microloop_set_hold(microloop_t *m, float hold_0_1) {
     if (!m) return;
     if (hold_0_1 < 0.0f) hold_0_1 = 0.0f;
@@ -367,8 +378,11 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
          * (cos/sin) because the two taps read decorrelated content. */
         int ra = write_pos - m->loop_len_current;
         if (ra < 0) ra += buf_capacity;
-        float read_L = m_ld(m->buf[ra*2]);
-        float read_R = m_ld(m->buf[ra*2+1]);
+        float read_L = 0.0f, read_R = 0.0f;
+        if (!drain_stale(&m->drain, m->loop_len_current)) {
+            read_L = m_ld(m->buf[ra*2]);
+            read_R = m_ld(m->buf[ra*2+1]);
+        }
 
         /* Sweep the captured window away as Horizon falls - see microloop_set_leak, and
            drain.h for why the cursor is anchored at the read tap rather than offset back
@@ -394,8 +408,9 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
                            * (1.0f / (float) m->crossfade_len);     /* 0..1 */
             const float gb = fast_sinf(t * 1.5707963f);
             const float ga = fast_cosf(t * 1.5707963f);
-            read_L = ga * read_L + gb * m_ld(m->buf[rb*2]);
-            read_R = ga * read_R + gb * m_ld(m->buf[rb*2+1]);
+            const int stale_b = drain_stale(&m->drain, m->loop_len_pending);
+            read_L = ga * read_L + gb * (stale_b ? 0.0f : m_ld(m->buf[rb*2]));
+            read_R = ga * read_R + gb * (stale_b ? 0.0f : m_ld(m->buf[rb*2+1]));
             if (--m->xfade_remaining == 0) {
                 m->loop_len_current = m->loop_len_pending;          /* commit */
                 if (m->has_queued && m->loop_len_queued != m->loop_len_current) {
@@ -418,6 +433,8 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
                 int ph = m->rev_counter + (h ? L / 2 : 0);
                 while (ph >= L) ph -= L;
                 if (ph == 0) m->rev_base[h] = write_pos;
+                /* Reads 2*ph back - see the same head in looper.c. */
+                if (drain_stale(&m->drain, 2 * ph)) continue;
                 int rabs = m->rev_base[h] - ph;
                 while (rabs < 0) rabs += buf_capacity;
                 const float gain = amb_hann(ph, inv_L);
@@ -488,6 +505,7 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
             m->buf[write_pos*2+1] = m_st(new_R);
         }
 
+        drain_tick(&m->drain, buf_capacity);
         write_pos++;
         if (write_pos >= buf_capacity) write_pos = 0;
     }

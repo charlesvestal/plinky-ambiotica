@@ -158,6 +158,15 @@ void looper_set_leak(looper_t *l, float amount_0_1) {
     l->leak_amount = amount_0_1;
 }
 
+/* Declare the loop empty, with no memset and no stall: every tap older than this instant now
+ * reads silence. Idempotent, and meant to be called every block for as long as Event Horizon
+ * is at the bottom - holding there keeps the mark at "now", so nothing plays until the slider
+ * comes back up and new audio is recorded. See drain.h. */
+void looper_mark_clear(looper_t *l) {
+    if (!l) return;
+    drain_mark_clear(&l->drain);
+}
+
 void looper_reset(looper_t *l) {
     if (!l) return;
     memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
@@ -227,11 +236,15 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
     for (int n = 0; n < frames; n++) {
         fb_curr = c * fb_curr + ic * fb_t;
 
-        /* Read from active loop_len position. */
+        /* Read from active loop_len position. Anything older than the last clear reads as
+         * silence and skips the fetch entirely - see drain.h. */
         int read_pos_a = pos - l->loop_len;
         if (read_pos_a < 0) read_pos_a += cap;
-        float loopL = ld(l->buf_L[read_pos_a]);
-        float loopR = ld(l->buf_R[read_pos_a]);
+        float loopL = 0.0f, loopR = 0.0f;
+        if (!drain_stale(&l->drain, l->loop_len)) {
+            loopL = ld(l->buf_L[read_pos_a]);
+            loopR = ld(l->buf_R[read_pos_a]);
+        }
 
         /* During crossfade, blend with read at the pending loop_len.
          * Linear (gain-equal) crossfade - the two read positions are highly
@@ -240,8 +253,11 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         if (l->crossfade_remaining > 0) {
             int read_pos_b = pos - l->loop_len_pending;
             if (read_pos_b < 0) read_pos_b += cap;
-            float loopL_b = ld(l->buf_L[read_pos_b]);
-            float loopR_b = ld(l->buf_R[read_pos_b]);
+            float loopL_b = 0.0f, loopR_b = 0.0f;
+            if (!drain_stale(&l->drain, l->loop_len_pending)) {
+                loopL_b = ld(l->buf_L[read_pos_b]);
+                loopR_b = ld(l->buf_R[read_pos_b]);
+            }
 
             float gain_b = (float)(l->crossfade_len - l->crossfade_remaining) *
                            (1.0f / (float)l->crossfade_len);
@@ -317,6 +333,10 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                 int ph = l->rev_counter + (h ? L / 2 : 0);
                 while (ph >= L) ph -= L;
                 if (ph == 0) l->rev_base[h] = pos;          /* anchor window start at "now" */
+                /* The anchor is already ph behind the write head when it is set and both
+                 * advance one per sample, so this head is reading 2*ph back - up to twice
+                 * loop_len, further than any tap the sweep window covers. */
+                if (drain_stale(&l->drain, 2 * ph)) continue;
                 int rabs = l->rev_base[h] - ph;             /* read backward from the anchor */
                 while (rabs < 0) rabs += cap;
                 const float gain = amb_hann(ph, inv_L);
@@ -333,6 +353,7 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         out_l[n] = fb_curr * outLoopL * mk;
         out_r[n] = fb_curr * outLoopR * mk;
 
+        drain_tick(&l->drain, cap);
         pos++; if (pos >= cap) pos = 0;
     }
     l->write_pos = pos;

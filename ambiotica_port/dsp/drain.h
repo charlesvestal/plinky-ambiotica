@@ -45,9 +45,44 @@
 #define LEAK_PER_SAMPLE 2
 
 typedef struct {
-    int pos;    /* absolute buffer index the next store lands on */
-    int left;   /* samples still to clear in this pass; <= 0 re-anchors */
+    int pos;          /* absolute buffer index the next store lands on */
+    int left;         /* samples still to clear in this pass; <= 0 re-anchors */
+    int since_clear;  /* samples recorded since the buffer was declared empty */
 } drain_cursor_t;
+
+/* THE CLEAR MARK.
+ *
+ * A sweep alone cannot empty these buffers, for two reasons that no amount of stores per
+ * sample fixes:
+ *
+ *   - It only runs while the gesture does. It clears a finite region ahead of the read head,
+ *     and when the slider comes back up the cursor stops while the read head keeps walking -
+ *     straight off the end of the cleared region and back into old audio. Measured: hold ~2.5
+ *     s, and the loop returns about 4 s after release.
+ *   - It cannot cover every read. The Dilate heads read as far as TWO loop lengths back
+ *     (rabs = rev_base - ph, ph up to loop_len, base already loop_len behind), which is
+ *     outside any window sized on loop_len.
+ *
+ * So emptiness is recorded rather than performed. `since_clear` counts samples recorded since
+ * the buffer was declared empty; a read `age` samples behind the write head predates the
+ * clear, and returns silence, whenever age > since_clear. That is instant, total whatever the
+ * loop length, correct for every tap including the reverse heads, and CHEAPER than the read
+ * it replaces - it skips the PSRAM fetch instead of adding one.
+ *
+ * The sweep is kept and still runs, so the bytes genuinely do go to zero rather than merely
+ * becoming unreachable. It is now hygiene, not the mechanism. */
+static inline void drain_mark_clear(drain_cursor_t *dc) { dc->since_clear = 0; }
+
+/* One recorded sample. Saturates at the ring size: past that everything is post-clear and the
+ * counter must not wrap back into the stale range. */
+static inline void drain_tick(drain_cursor_t *dc, int cap) {
+    if (dc->since_clear < cap) dc->since_clear++;
+}
+
+/* True if a read `age` samples behind the write head is older than the last clear. */
+static inline int drain_stale(const drain_cursor_t *dc, int age) {
+    return age > dc->since_clear;
+}
 
 /* Force a re-anchor on the next store. Call when a drain begins, so a stale cursor from an
  * earlier gesture cannot resume mid-pass against a window that has since moved. */

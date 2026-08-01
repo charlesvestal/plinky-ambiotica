@@ -51,6 +51,12 @@ void      looper_clear(looper_t *l);
    no blocking memset. A quick dip thins the loop; holding at the bottom erases it. */
 void      looper_set_leak(looper_t *l, float amount_0_1);
 
+/* Event Horizon at the bottom: declare the loop empty. Instant, no memset, no stall - every
+   tap older than this instant reads silence, including the Dilate heads that reach twice
+   loop_len back and that no sweep window can cover. Call it every block while the slider is
+   at the bottom; holding there keeps the loop silent, releasing lets it record again. */
+void      looper_mark_clear(looper_t *l);
+
 /* Process stereo block. Reads from in_l/in_r and writes them into the
  * capture ring (with feedback). out_l/out_r receive ONLY the loop signal
  * (fb × delayed_read) - no dry. The caller is responsible for mixing dry
