@@ -1,5 +1,6 @@
 /* Micro-loop - short feedback delay that locks into freeze near max hold. */
 #include "microloop.h"
+#include "drain.h"
 #include "hann.h"
 #include "fast_math.h"
 #include "rate_util.h"
@@ -20,6 +21,7 @@
 #define M_MIN_LEN_SAMPLES   4410     /* 100 ms @ 44.1 kHz - above phasing range */
 #define M_MAX_LEN_SAMPLES   264600   /* 6 s @ 44.1 kHz - fits 2 bars down to 80 BPM */
 #define M_AUTO_FREEZE       0.95f    /* knob threshold for auto-engaged freeze */
+#define M_LEAK_MIN          0.30f    /* below this the drain is idle and costs nothing */
 #define M_SMOOTH_COEF       0.9989f  /* ~20 ms - for fb / out_gain */
 #define M_CROSSFADE_LEN     2048     /* ~46 ms - equal-power crossfade between
                                          old and new read positions when loop_len
@@ -48,7 +50,7 @@ struct microloop_s {
     /* Smoothed gains. */
     float  fb_target,       fb_current;
     float  leak_amount;     /* Event Horizon bleed: 0 = keep, 1 = erase and stop recirculating */
-    int    leak_pos;        /* sweep cursor */
+    drain_cursor_t drain;   /* sweep cursor, ascending from the read tap - see drain.h */
     float  out_gain_target, out_gain_current;
 
     /* Loop length (read offset, samples). The host drives a continuous tempo-
@@ -275,6 +277,7 @@ void microloop_set_leak(microloop_t *m, float amount_0_1) {
     if (!m) return;
     if (amount_0_1 < 0.0f) amount_0_1 = 0.0f;
     if (amount_0_1 > 1.0f) amount_0_1 = 1.0f;
+    if (amount_0_1 > M_LEAK_MIN && m->leak_amount <= M_LEAK_MIN) drain_restart(&m->drain);
     m->leak_amount = amount_0_1;
 }
 
@@ -358,28 +361,6 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
         fb_curr  = c * fb_curr  + ic * fb_t;
         out_curr = c * out_curr + ic * out_t;
 
-        /* Sweep the captured window away as Horizon falls - see microloop_set_leak. Same
-           budget as the looper: 2 samples per sample at the bottom, store-only there since
-           the multiplier is zero, forward cursor for the prefetcher. */
-        if (m->leak_amount > 0.30f) {
-            const int lcap = m->buf_capacity;
-            const int lper = m->leak_amount > 0.5f ? 2 : 1;
-            const float llf = 1.0f - m->leak_amount;
-            const int lz = (llf < 0.02f);
-            /* Offset back from the write head, same reason as the looper - the sweep has to
-               track the window that is actually read, not crawl the whole ring. */
-            int lwin = m->loop_len_current; if (lwin > lcap) lwin = lcap; if (lwin < 1) lwin = 1;
-            int loff = m->leak_pos;
-            for (int k = 0; k < lper; k++) {
-                if (++loff >= lwin) loff = 0;
-                int li = write_pos - loff; while (li < 0) li += lcap;
-                if (lz) { m->buf[li*2] = 0; m->buf[li*2+1] = 0; }
-                else    { m->buf[li*2]   = (short)(m->buf[li*2]   * llf);
-                          m->buf[li*2+1] = (short)(m->buf[li*2+1] * llf); }
-            }
-            m->leak_pos = loff;
-        }
-
         /* Read at the active (fixed) tap. A length change crossfades to the new
          * tap over crossfade_len samples - both taps are at constant offsets, so
          * the read pointer never sweeps and there is no pitch glide. Equal-power
@@ -388,6 +369,24 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
         if (ra < 0) ra += buf_capacity;
         float read_L = m_ld(m->buf[ra*2]);
         float read_R = m_ld(m->buf[ra*2+1]);
+
+        /* Sweep the captured window away as Horizon falls - see microloop_set_leak, and
+           drain.h for why the cursor is anchored at the read tap rather than offset back
+           from the write head. Same budget as the looper: 2 samples per sample at the
+           bottom, store-only there since the multiplier is zero. Placed after the read so
+           the tap always plays the sample before it is erased. */
+        if (m->leak_amount > M_LEAK_MIN) {
+            const int lcap = m->buf_capacity;
+            const float llf = 1.0f - m->leak_amount;
+            const int lz = (llf < 0.02f);
+            int lwin = m->loop_len_current; if (lwin > lcap) lwin = lcap; if (lwin < 1) lwin = 1;
+            for (int k = 0; k < LEAK_PER_SAMPLE; k++) {
+                int li = drain_next(&m->drain, ra, lwin, lcap);
+                if (lz) { m->buf[li*2] = 0; m->buf[li*2+1] = 0; }
+                else    { m->buf[li*2]   = (short)(m->buf[li*2]   * llf);
+                          m->buf[li*2+1] = (short)(m->buf[li*2+1] * llf); }
+            }
+        }
         if (m->xfade_remaining > 0) {
             int rb = write_pos - m->loop_len_pending;
             if (rb < 0) rb += buf_capacity;
