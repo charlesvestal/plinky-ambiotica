@@ -1654,16 +1654,11 @@ struct ambiotica : panel_t {
                 if (harmony) harmony_reset(harmony);
                 if (bloom)   bloom_reset(bloom);
                 if (drift)   drift_reset(drift);
-                /* Forget the loop. No memset: looper_clear only stops the read reaching back
-                   past this moment, so it is instant and touches no memory. Zeroing the ring
-                   instead - in one blast or sliced across frames - moves megabytes of PSRAM
-                   and starves core1 over the shared QSPI bus, which is what made the drain
-                   crackle to begin with.
-                   Granular and the micro-loop need nothing: both overwrite their buffers
-                   continuously as they record, so they flush themselves within about a
-                   second. Only the looper holds material indefinitely, because its feedback
-                   keeps renewing it. */
-                if (looper) looper_clear(looper);
+                /* No loop clear here. Emptying the loop is now continuous - looper_set_leak
+                   bleeds it away as the slider falls (see fc_push_params), which is what the
+                   plugin does and leaves nothing discrete to click or stall on. Granular and
+                   the micro-loop need nothing either: both overwrite their buffers as they
+                   record, so they flush themselves within about a second. */
                 eh_flushed = true;
             }
         } else if (fx_sm.horizon > 0.10f) {

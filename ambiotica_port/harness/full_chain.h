@@ -115,6 +115,12 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m,
        just sounds like a broken delay, whereas both at once turns the whole bed backward,
        which is the gesture. The granular scatter is left forward on purpose - its grains are
        already scattered in time, so reversing them is inaudible and only costs reads. */
+    /* Event Horizon bleeds the captured loop away as the slider falls, rather than clearing
+       it at the bottom - the plugin's behaviour, and the reason there is no discrete clear to
+       click or stall on. Squared so the top of the travel barely touches the loop and the
+       erase concentrates at the bottom. */
+    { float cl = 1.0f - p->horizon; if (cl < 0.f) cl = 0.f; if (cl > 1.f) cl = 1.f;
+      looper_set_leak(l, cl * cl); }
     looper_set_reverse(l, p->dilate);
     microloop_set_reverse(m, p->dilate);
     { float mb = p->micro_bars > 0.01f ? p->micro_bars : 0.25f;      /* Satellite micro length */

@@ -34,9 +34,8 @@ struct looper_s {
     lsamp_t *buf_L;
     lsamp_t *buf_R;
     int    buf_capacity;   /* allocated size - sets the max loop length */
-    int    valid;          /* samples written since the last clear; reads past it are silent */
-    int    wipe_left;      /* samples still to physically zero; 0 = idle */
-    int    wipe_pos;       /* sweep cursor, walking backward from the write head */
+    float  leak_amount;    /* Event Horizon bleed: 0 = keep the loop, 1 = erase it */
+    int    leak_pos;       /* cursor sweeping the loop window, backward from the write head */
     int    loop_len;       /* active read offset; <= buf_capacity */
     int    write_pos;
     /* Smoothed feedback - abrupt knob changes would otherwise inject a
@@ -124,27 +123,35 @@ void looper_destroy(looper_t *l) {
 }
 
 /* Clear the captured loop + feedback state (RT-safe: no alloc). Keeps params. */
-/* LOGICAL clear - no memset at all.
- *
- * Physically zeroing the ring means touching ~4 MB of PSRAM. Doing it in one go blocks core0
- * long enough to starve core1 over the shared QSPI bus (measured at a 658 ms audio block);
- * doing it in slices just turns one long underrun into many short ones, because even a
- * modest slice is milliseconds of bus time at the contended rate. Either way the audio
- * breaks, which is exactly what the clear was supposed to make clean.
- *
- * So instead of erasing the past, stop reading it. `valid` counts how many samples have been
- * written since the clear; the read gates to silence whenever it reaches back further than
- * that. The result is identical to a zeroed buffer - you hear new material accumulate and
- * silence where nothing has been recorded yet - for one integer compare per sample and no
- * bus traffic whatsoever. */
+/* Hard clear. Memsets the whole ring, so it BLOCKS - ~4 MB of PSRAM from the calling core,
+ * which starves core1 over the shared QSPI bus (measured at a 658 ms audio block). Only safe
+ * where a stall is acceptable. Live gestures want looper_set_leak instead. */
 void looper_clear(looper_t *l) {
     if (!l) return;
-    l->valid = 0;                 /* immediate: reads stop reaching into the old material */
-    /* Only the READABLE window. Anything further back than loop_len is never read, and if
-       loop_len later grows the `valid` gate covers the difference - so wiping the whole
-       32 s ring was 8x the work for no audible gain. */
-    l->wipe_left = l->loop_len;
-    l->wipe_pos = l->write_pos;
+    memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
+    memset(l->buf_R, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
+}
+
+/* Event Horizon. The plugin this port descends from bleeds the captured loop away as Horizon
+ * falls rather than clearing it at the bottom - "actively decays the captured loop so
+ * lowering Horizon empties the buffer over time (a global let-go / feedback pull), not just
+ * ducks the output". No discrete clear, so nothing to click and nothing to hide, and the
+ * buffer is genuinely empty by the time the slider bottoms out.
+ *
+ * The plugin scales the WHOLE loop window once per block, which here would be ~128k
+ * read-modify-writes every 2 ms - unaffordable. This applies the same decay to a slice per
+ * sample instead, the cursor cycling through the window, so every sample is scaled equally
+ * often with only a phase offset between them. Measured at ~37 us per block per
+ * sample-per-sample, so LEAK_PER_SAMPLE = 2 costs about 75 us and fits the headroom that a
+ * 300 us version did not.
+ *
+ * amount 0 leaves the loop alone, 1 zeroes what it touches, partial values decay it - so a
+ * quick dip thins the loop and holding at the bottom erases it. */
+void looper_set_leak(looper_t *l, float amount_0_1) {
+    if (!l) return;
+    if (amount_0_1 < 0.0f) amount_0_1 = 0.0f;
+    if (amount_0_1 > 1.0f) amount_0_1 = 1.0f;
+    l->leak_amount = amount_0_1;
 }
 
 void looper_reset(looper_t *l) {
@@ -152,8 +159,7 @@ void looper_reset(looper_t *l) {
     memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
     memset(l->buf_R, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
     l->write_pos = 0;
-    l->valid = 0;
-    l->wipe_left = 0;
+    l->leak_amount = 0.0f;
     l->fb_current = 0.0f;
     l->crossfade_remaining = 0;
     l->has_queued = 0;
@@ -220,11 +226,8 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         /* Read from active loop_len position. */
         int read_pos_a = pos - l->loop_len;
         if (read_pos_a < 0) read_pos_a += cap;
-        /* Reading further back than we have written since the clear? That is the erased
-           past - report silence rather than the stale wash still sitting in the ring. */
-        const int valid_a = (l->loop_len <= l->valid);
-        float loopL = valid_a ? ld(l->buf_L[read_pos_a]) : 0.0f;
-        float loopR = valid_a ? ld(l->buf_R[read_pos_a]) : 0.0f;
+        float loopL = ld(l->buf_L[read_pos_a]);
+        float loopR = ld(l->buf_R[read_pos_a]);
 
         /* During crossfade, blend with read at the pending loop_len.
          * Linear (gain-equal) crossfade - the two read positions are highly
@@ -233,9 +236,8 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
         if (l->crossfade_remaining > 0) {
             int read_pos_b = pos - l->loop_len_pending;
             if (read_pos_b < 0) read_pos_b += cap;
-            const int valid_b = (l->loop_len_pending <= l->valid);
-            float loopL_b = valid_b ? ld(l->buf_L[read_pos_b]) : 0.0f;
-            float loopR_b = valid_b ? ld(l->buf_R[read_pos_b]) : 0.0f;
+            float loopL_b = ld(l->buf_L[read_pos_b]);
+            float loopR_b = ld(l->buf_R[read_pos_b]);
 
             float gain_b = (float)(l->crossfade_len - l->crossfade_remaining) *
                            (1.0f / (float)l->crossfade_len);
@@ -261,30 +263,21 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
          * the buffer (true looper). soft_sat kept as safety against
          * transient peaks. */
         float in_g = 1.0f - fb_curr;
-        /* Physical wipe, spread across the audio thread instead of blocking core0 with a
-           multi-megabyte memset. WIPE_PER_SAMPLE samples per audio sample is a fixed, tiny
-           cost with no burst, and it sweeps BACKWARD from the write head so the part the read
-           reaches first is gone first - the readable window is clear within a fraction of a
-           second, the full ring in a few. Sequential access, so it is cache-friendly on the
-           slow bus rather than scattered. */
-        if (l->wipe_left > 0) {
-            /* Measured on device: 8 per sample put ~300 us per block into the looper stage
-               (190 -> 490 us) and took dsp past its 2000 us budget, which glitched. 2 costs
-               about 75 us, which fits inside the headroom. The wipe takes a few seconds at
-               that rate and that is fine - the `valid` gate has already silenced the loop, so
-               nothing is waiting on it. */
-            enum { WIPE_PER_SAMPLE = 2 };
-            int wn = l->wipe_left < WIPE_PER_SAMPLE ? l->wipe_left : WIPE_PER_SAMPLE;
-            int wp = l->wipe_pos;
-            for (int k = 0; k < wn; k++) {
-                if (--wp < 0) wp += cap;
-                l->buf_L[wp] = st(0.0f);
-                l->buf_R[wp] = st(0.0f);
+        /* Event Horizon leak - see looper_set_leak. A slice of the loop window per sample,
+           cursor cycling backward from the write head. */
+        if (l->leak_amount > 0.0001f) {
+            enum { LEAK_PER_SAMPLE = 2 };
+            const float lf = 1.0f - l->leak_amount;
+            int lp = l->leak_pos;
+            int win = l->loop_len; if (win > cap) win = cap;
+            for (int k = 0; k < LEAK_PER_SAMPLE; k++) {
+                if (--lp < 0) lp += cap;
+                if (pos - lp > win || lp - pos > cap - win) lp = pos;   /* stay in the window */
+                l->buf_L[lp] = st(ld(l->buf_L[lp]) * lf);
+                l->buf_R[lp] = st(ld(l->buf_R[lp]) * lf);
             }
-            l->wipe_pos = wp;
-            l->wipe_left -= wn;
+            l->leak_pos = lp;
         }
-        if (l->valid < cap) l->valid++;   /* one more sample of real material behind us */
         l->buf_L[pos] = st(soft_sat(in_g * in_l[n] + fb_curr * loopL));
         l->buf_R[pos] = st(soft_sat(in_g * in_r[n] + fb_curr * loopR));
 
