@@ -1510,7 +1510,17 @@ struct ambiotica : panel_t {
             set_led(15, y, c);
         }
         fx.gravity = geff > 0 ? (float)geff / (float)(63 - DZ) : 0.f;              /* up   -> gravity 0..1 */
-        fx.horizon = geff < 0 ? 1.f - (float)(-geff) / (float)(64 - DZ) : 1.f;     /* down -> horizon 1..0 */
+        /* END DETENT, matching the deadzone at centre. horizon must reach 0 for the flush
+           below to fire, and the flush is the ONLY thing that truly silences the drain -
+           loop_layer floors at 0.08, so without it the loop bed plays its buffer forever at
+           ~8%, which is the "repeated sample" buzz. Mapping straight to the last step made
+           that reachable in 3 of 128 slider positions; landing there on a touch strip is
+           luck. Ending the ramp early gives the bottom ~9 steps a flat "fully drained"
+           reading, the same way DZ gives the centre a flat neutral one. */
+        const int END_DZ = 8;
+        { float drain = geff < 0 ? (float)(-geff) / (float)(64 - DZ - END_DZ) : 0.f;
+          if (drain > 1.f) drain = 1.f;
+          fx.horizon = 1.f - drain; }
 
         draw_control_rows();
     }
