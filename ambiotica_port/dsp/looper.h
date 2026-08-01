@@ -52,4 +52,11 @@ void      PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
                          float *out_l, float *out_r,
                          int frames);
 
+
+/* Incremental clear of the big ring, for callers that must not block core0 with a
+   multi-megabyte PSRAM memset (that starves core1 over the shared QSPI bus). Call
+   looper_clear_begin once, then looper_clear_step every frame until it returns 1. */
+void looper_clear_begin(looper_t *l);
+int  looper_clear_step(looper_t *l, int max_samples);
+
 #endif

@@ -52,4 +52,9 @@ void         PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
                                float *out_l, float *out_r,
                                int frames);
 
+
+/* See looper_clear_begin / looper_clear_step. */
+void microloop_clear_begin(microloop_t *m);
+int  microloop_clear_step(microloop_t *m, int max_samples);
+
 #endif
