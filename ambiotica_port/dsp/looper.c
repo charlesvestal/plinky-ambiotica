@@ -274,18 +274,25 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
            The leak adds two more, so the window empties at 3x record speed - a 4 s loop in
            about 1.3 s of holding. Faster than that is not available on this hardware without
            taking the audio down with it. */
-        if (l->leak_amount > 0.02f) {
+        if (l->leak_amount > 0.30f) {
             const int per = l->leak_amount > 0.5f ? 2 : 1;
             const float lf = 1.0f - l->leak_amount;
             const int zeroing = (lf < 0.02f);   /* at the bottom, skip the read entirely */
-            int lp = l->leak_pos;
+            /* Cursor is an OFFSET BACK FROM THE WRITE HEAD, not an absolute index, so the
+               sweep always covers the read window wherever the head has got to. Sweeping the
+               whole ring instead spends ~87% of the effort on memory that is never read -
+               1024000 samples against a 128000-sample window - which is why holding the
+               slider down did not empty it. */
+            int win = l->loop_len; if (win > cap) win = cap; if (win < 1) win = 1;
+            int off = l->leak_pos;
             for (int k = 0; k < per; k++) {
-                if (++lp >= cap) lp = 0;        /* forward: the prefetcher likes it better */
-                if (zeroing) { l->buf_L[lp] = st(0.0f);            l->buf_R[lp] = st(0.0f); }
-                else         { l->buf_L[lp] = st(ld(l->buf_L[lp]) * lf);
-                               l->buf_R[lp] = st(ld(l->buf_R[lp]) * lf); }
+                if (++off >= win) off = 0;
+                int idx = pos - off; while (idx < 0) idx += cap;
+                if (zeroing) { l->buf_L[idx] = st(0.0f);             l->buf_R[idx] = st(0.0f); }
+                else         { l->buf_L[idx] = st(ld(l->buf_L[idx]) * lf);
+                               l->buf_R[idx] = st(ld(l->buf_R[idx]) * lf); }
             }
-            l->leak_pos = lp;
+            l->leak_pos = off;
         }
         l->buf_L[pos] = st(soft_sat(in_g * in_l[n] + fb_curr * loopL));
         l->buf_R[pos] = st(soft_sat(in_g * in_r[n] + fb_curr * loopR));

@@ -361,19 +361,23 @@ void PLINKY_DSP_RAM_FUNC(microloop_process)(microloop_t *m,
         /* Sweep the captured window away as Horizon falls - see microloop_set_leak. Same
            budget as the looper: 2 samples per sample at the bottom, store-only there since
            the multiplier is zero, forward cursor for the prefetcher. */
-        if (m->leak_amount > 0.02f) {
+        if (m->leak_amount > 0.30f) {
             const int lcap = m->buf_capacity;
             const int lper = m->leak_amount > 0.5f ? 2 : 1;
             const float llf = 1.0f - m->leak_amount;
             const int lz = (llf < 0.02f);
-            int lp = m->leak_pos;
+            /* Offset back from the write head, same reason as the looper - the sweep has to
+               track the window that is actually read, not crawl the whole ring. */
+            int lwin = m->loop_len_current; if (lwin > lcap) lwin = lcap; if (lwin < 1) lwin = 1;
+            int loff = m->leak_pos;
             for (int k = 0; k < lper; k++) {
-                if (++lp >= lcap) lp = 0;
-                if (lz) { m->buf[lp*2] = 0; m->buf[lp*2+1] = 0; }
-                else    { m->buf[lp*2]   = (short)(m->buf[lp*2]   * llf);
-                          m->buf[lp*2+1] = (short)(m->buf[lp*2+1] * llf); }
+                if (++loff >= lwin) loff = 0;
+                int li = write_pos - loff; while (li < 0) li += lcap;
+                if (lz) { m->buf[li*2] = 0; m->buf[li*2+1] = 0; }
+                else    { m->buf[li*2]   = (short)(m->buf[li*2]   * llf);
+                          m->buf[li*2+1] = (short)(m->buf[li*2+1] * llf); }
             }
-            m->leak_pos = lp;
+            m->leak_pos = loff;
         }
 
         /* Read at the active (fixed) tap. A length change crossfades to the new
