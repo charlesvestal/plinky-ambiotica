@@ -1669,6 +1669,19 @@ struct ambiotica : panel_t {
         } else if (fx_sm.horizon > 0.10f) {
             eh_flushed = false;
         }
+#ifdef AMB_PROFILE
+        /* What the drain slider actually produces, and whether the flush ever fires. Prints
+           only while the slider is below centre, ~4x a second, so it is quiet at rest. */
+        {
+            static unsigned eh_us = 0; eh_us += 2000;
+            if (fx_val15 < 64 && eh_us >= 250000u) {
+                eh_us = 0;
+                printf("EH: raw=%d horizon=%.3f sm=%.3f flushed=%d layer_sm=%.4f\n",
+                       (int)fx_val15, (double)fx.horizon, (double)fx_sm.horizon,
+                       (int)eh_flushed, (double)fx_sm.loop_layer);
+            }
+        }
+#endif
 
         fc_render_block(&st, looper, granular, microloop, harmony, bloom, drift,
                         &fx_sm, AMB_SR, sL, sR, oL, oR, BLOCK_SIZE);
