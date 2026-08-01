@@ -34,6 +34,7 @@ struct looper_s {
     lsamp_t *buf_L;
     lsamp_t *buf_R;
     int    buf_capacity;   /* allocated size - sets the max loop length */
+    int    clear_pos;      /* incremental-clear cursor; >= buf_capacity means idle/done */
     int    loop_len;       /* active read offset; <= buf_capacity */
     int    write_pos;
     /* Smoothed feedback - abrupt knob changes would otherwise inject a
@@ -121,6 +122,21 @@ void looper_destroy(looper_t *l) {
 }
 
 /* Clear the captured loop + feedback state (RT-safe: no alloc). Keeps params. */
+/* Incremental clear. looper_reset memsets ~4 MB of PSRAM in one go, which starves core1 over
+ * the shared QSPI bus and stalls audio for hundreds of ms - see the note in the panel's
+ * build_dsp. These let a caller spread the same work across UI frames. Returns 1 when the
+ * whole ring is clear. */
+void looper_clear_begin(looper_t *l) { if (l) l->clear_pos = 0; }
+int looper_clear_step(looper_t *l, int max_samples) {
+    if (!l) return 1;
+    if (l->clear_pos >= l->buf_capacity) return 1;
+    int n = l->buf_capacity - l->clear_pos; if (n > max_samples) n = max_samples;
+    memset(l->buf_L + l->clear_pos, 0, (size_t)n * sizeof(lsamp_t));
+    memset(l->buf_R + l->clear_pos, 0, (size_t)n * sizeof(lsamp_t));
+    l->clear_pos += n;
+    return l->clear_pos >= l->buf_capacity;
+}
+
 void looper_reset(looper_t *l) {
     if (!l) return;
     memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));

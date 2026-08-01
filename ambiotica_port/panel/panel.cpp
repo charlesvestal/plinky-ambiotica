@@ -240,6 +240,7 @@ struct ambiotica : panel_t {
     int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
     int            mode_sel = 0;             /* 0..4 = Ionian/Aeolian/Dorian/Lydian/Mixolydian (right buttons) */
     bool           eh_flushed = false;         /* Event Horizon: buffers cleared at the bottom (edge) */
+    bool           eh_clearing = false;        /* an Event Horizon buffer clear is in progress */
     float          grav_sm = 0.f;              /* Gravity macro, ramped ~2 s (plugin gravitySmooth) */
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
@@ -553,6 +554,11 @@ struct ambiotica : panel_t {
             fx.ring       = AMB_LERP(fx.ring,       0.00f, clear);
             fx.decay      = AMB_LERP(fx.decay,      0.00f, clear);
             fx.drift_amt  = AMB_LERP(fx.drift_amt,  0.00f, clear);
+            /* Spectra too. It was the one stage the drain left alone, so its high-Q
+               resonators kept full amount while their input died, rang on, and were then cut
+               dead by harmony_reset at the threshold - an instantaneous stop on a sounding
+               voice, which is the click. Fading it means the reset lands on silence. */
+            fx.spectra    = AMB_LERP(fx.spectra,    0.00f, clear);
         }
         #undef AMB_LERP
     }
@@ -1366,6 +1372,17 @@ struct ambiotica : panel_t {
         }
 
         if (nav_cooldown_us > 0) nav_cooldown_us -= dt_us;
+        /* Event Horizon buffer clear, a slice per UI frame. 24k samples is ~96 KB of PSRAM
+           per frame across the three rings - two orders below the ~5.4 MB single blast that
+           starved core1 - and at UI rates the whole job finishes well inside a second. */
+        if (eh_clearing) {
+            const int CH = 24000;
+            int done = 1;
+            if (looper)    done &= looper_clear_step(looper, CH);
+            if (granular)  done &= granular_clear_step(granular, CH);
+            if (microloop) done &= microloop_clear_step(microloop, CH);
+            if (done) eh_clearing = false;
+        }
         tick_kit_arm(dt_us);
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
@@ -1649,6 +1666,14 @@ struct ambiotica : panel_t {
                 if (harmony) harmony_reset(harmony);
                 if (bloom)   bloom_reset(bloom);
                 if (drift)   drift_reset(drift);
+                /* Queue the big rings for an INCREMENTAL clear. Doing it here in one blast is
+                   what stalled core0 and underran the audio; spread across on_ui frames it is
+                   invisible. Nothing reads them meanwhile - loop_layer is at zero - so this
+                   only affects what you hear when the slider comes back up. */
+                if (looper)    looper_clear_begin(looper);
+                if (granular)  granular_clear_begin(granular);
+                if (microloop) microloop_clear_begin(microloop);
+                eh_clearing = true;
                 eh_flushed = true;
             }
         } else if (fx_sm.horizon > 0.10f) {

@@ -58,4 +58,9 @@ void        PLINKY_DSP_RAM_FUNC(granular_process)(granular_t *g,
  * watches the delta to flash individual grain onsets. Does not affect audio. */
 unsigned    granular_grain_spawns(const granular_t *g);
 
+
+/* See looper_clear_begin / looper_clear_step. */
+void granular_clear_begin(granular_t *g);
+int  granular_clear_step(granular_t *g, int max_samples);
+
 #endif
