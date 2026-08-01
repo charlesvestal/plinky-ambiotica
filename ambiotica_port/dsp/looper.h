@@ -41,12 +41,13 @@ void      looper_set_loop_len(looper_t *l, int loop_len_samples);
 void      looper_set_layer(looper_t *l, float layer_0_1);
 
 /* One-shot: zero the entire buffer. Safe to call from set_param. */
-/* Forget the loop WITHOUT touching memory. This used to memset ~4 MB of PSRAM, which starves
-   core1 over the shared QSPI bus (measured at a 658 ms audio block); slicing it up only turns
-   one long underrun into several short ones. It now stops the read reaching back past what
-   has been recorded since the call, which sounds identical to a zeroed buffer - new material
-   accumulates, everything older is silence - for one integer compare per sample and no bus
-   traffic at all. */
+/* Empty the loop. Does BOTH halves of the job without ever blocking:
+     - immediately, reads stop reaching back past this moment, so the loop goes silent at once
+     - then the ring is genuinely zeroed by a sweep running in the audio thread, a handful of
+       samples per sample, backward from the write head so the readable window clears first
+   A straight memset here would move ~4 MB of PSRAM from core0 and starve core1 over the
+   shared QSPI bus - measured at a 658 ms audio block - and slicing it across UI frames only
+   turns one long underrun into several short ones. */
 void      looper_clear(looper_t *l);
 
 /* Process stereo block. Reads from in_l/in_r and writes them into the
