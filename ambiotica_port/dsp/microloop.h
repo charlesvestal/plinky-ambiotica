@@ -45,6 +45,11 @@ void         microloop_leak(microloop_t *m, float factor);
    per sample. */
 void         microloop_set_leak(microloop_t *m, float amount_0_1);
 
+/* Event Horizon at the bottom: declare the captured window empty. Instant and free, and it
+   covers the grain cloud and the Dilate heads, which read where no tap-length window reaches.
+   Call every block while the slider is at the bottom. */
+void         microloop_mark_clear(microloop_t *m);
+
 /* Dilate: 0 = forward, 1 = reversed (reverse-delay read of the micro-loop). */
 void         microloop_set_reverse(microloop_t *m, float amount_0_1);
 

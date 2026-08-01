@@ -118,10 +118,16 @@ static void fc_push_params(looper_t* l, granular_t* g, microloop_t* m,
     /* Event Horizon bleeds the captured loop away as the slider falls, rather than clearing
        it at the bottom - the plugin's behaviour, and the reason there is no discrete clear to
        click or stall on. Squared so the top of the travel barely touches the loop and the
-       erase concentrates at the bottom. */
+       erase concentrates at the bottom.
+       At the bottom the bleed is no longer enough on its own: a sweep only runs while the
+       gesture does, and it cannot reach the Dilate heads at all, so the loop used to come back
+       seconds after the slider was released. The last of the travel therefore also marks the
+       buffers empty, which is instant and total whatever the loop length - see drain.h. The
+       sweep keeps running underneath so the memory really is zeroed, not just unreachable. */
     { float cl = 1.0f - p->horizon; if (cl < 0.f) cl = 0.f; if (cl > 1.f) cl = 1.f;
       looper_set_leak(l, cl * cl);
-      microloop_set_leak(m, cl * cl); }
+      microloop_set_leak(m, cl * cl);
+      if (cl > 0.96f) { looper_mark_clear(l); microloop_mark_clear(m); } }
     looper_set_reverse(l, p->dilate);
     microloop_set_reverse(m, p->dilate);
     { float mb = p->micro_bars > 0.01f ? p->micro_bars : 0.25f;      /* Satellite micro length */
