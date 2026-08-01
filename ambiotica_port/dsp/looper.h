@@ -41,14 +41,15 @@ void      looper_set_loop_len(looper_t *l, int loop_len_samples);
 void      looper_set_layer(looper_t *l, float layer_0_1);
 
 /* One-shot: zero the entire buffer. Safe to call from set_param. */
-/* Empty the loop. Does BOTH halves of the job without ever blocking:
-     - immediately, reads stop reaching back past this moment, so the loop goes silent at once
-     - then the ring is genuinely zeroed by a sweep running in the audio thread, a handful of
-       samples per sample, backward from the write head so the readable window clears first
-   A straight memset here would move ~4 MB of PSRAM from core0 and starve core1 over the
-   shared QSPI bus - measured at a 658 ms audio block - and slicing it across UI frames only
-   turns one long underrun into several short ones. */
+/* Hard clear: memsets the whole ring. ~4 MB of PSRAM, so it BLOCKS - only safe where a
+   stall is acceptable (never from a live gesture; use looper_set_leak for that). */
 void      looper_clear(looper_t *l);
+
+/* Event Horizon: bleed the captured loop away as `amount` rises (0 = keep, 1 = erase what it
+   touches). Applied continuously to a slice of the loop window per sample, so the loop decays
+   as the slider falls and is empty by the bottom - no discrete clear, nothing to click, and
+   no blocking memset. A quick dip thins the loop; holding at the bottom erases it. */
+void      looper_set_leak(looper_t *l, float amount_0_1);
 
 /* Process stereo block. Reads from in_l/in_r and writes them into the
  * capture ring (with feedback). out_l/out_r receive ONLY the loop signal
