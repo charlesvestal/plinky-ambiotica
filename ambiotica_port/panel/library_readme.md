@@ -142,6 +142,11 @@ still cycles pages.
 Right-up from the play surface: **src** (off / line / mic) routes external audio into
 the chain, and **in** sets its level. Default is off - synth only.
 
+**in** reaches unity gain at 127 and tapers as a square law, so the lower half of the range
+stays fine-grained. That matters on **mic**, which shares the control: the chain feeds back
+through the looper, so a hot mic in the same room as the speaker will run away. Line inputs
+usually want the upper half; a mic rarely does.
+
 ## Credits
 
 DSP vendored from [ambiotica-plugin](https://github.com/charlesvestal/ambiotica-plugin),
