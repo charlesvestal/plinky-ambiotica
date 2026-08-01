@@ -5,7 +5,7 @@ plate reverb smears the result, and a bank of tuned resonators picks a chord bac
 Underneath all that, an 8-track drum machine.
 
 > **Built for the Chords faceplate.** Every control sits under the printed word for it, so the
-> overlay is the manual. It runs on any Plinky 12. You just lose that.
+> overlay helps to orient you to the controls. 
 
 ## Playing
 
@@ -127,8 +127,8 @@ and the right pair still cycles pages.
 
 ## Line in and mic
 
-The chain will chew on anything, not just Plinky's own voices. Guitar, a drum machine, a room
-mic.
+The chain will process live input, not just Plinky's own voices. Guitar, a drum machine, a room
+mic, try different inputs!
 
 Page **up** from the play surface with the right-hand side buttons. The first two pages are
 **src** and **in**. The left buttons change the value.
@@ -137,19 +137,6 @@ Page **up** from the play surface with the right-hand side buttons. The first tw
 |---|---|
 | **src** | `off` / `line` / `mic`. Default `off`, synth only |
 | **in** | input level, 0 to 127 |
-
-Both are panel preferences rather than part of a scene, so they survive a reboot.
-
-**On `line`, start around 100.** `in` reaches unity at 127 and tapers as a square law, which
-keeps the bottom half fine-grained for quiet sources. The side effect is that a line input at
-40 sounds like nothing is plugged in.
-
-**On `mic`, start much lower.** It shares the same control, and the chain feeds back through
-the looper, so a mic in the same room as the speaker will run away. Come up slowly.
-
-Worth knowing: Event Horizon drains the engine, not the input. With `src` live, the bottom of
-the slider empties the loop but the incoming signal still passes through dry. Set `src` to
-`off` if you want real silence down there.
 
 ## Credits
 
