@@ -45,7 +45,12 @@ labels.
 - **KEY ▲▼ / BANK ▲▼:** key around the circle of fifths, and mode
   (Ionian / Aeolian / Dorian / Lydian / Mixolydian). Both retune the surface and the
   Spectra wash.
-- **UNLOCK** toggles **Dilate** - the loop bed and micro-loop swap to backward,
+- **UNLOCK** toggles **Dilate** - the loop bed and micro-loop swap to backward.
+- **× + REC:** **New Phrase**. Empties the loop and micro-loop on contact and leaves the plate
+  and Spectra ringing, so a new phrase starts over the tail of the old one. Hold to keep them
+  empty; hold past ~0.9 s and the reverb collapses too, over ~1.2 s. Where Event Horizon
+  collapses the whole engine on the way down, this empties only what was recorded.
+- **× + TRACKS** clears the whole drum pattern.
 - **Pages** on their printed pads: **TRACKS** (drums), **SYNTH** (editor), **PRESET**,
   **SONG** (save/load a whole scene), **SCALE** to come back.
 
