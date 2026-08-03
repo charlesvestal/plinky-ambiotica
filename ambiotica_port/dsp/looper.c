@@ -94,6 +94,10 @@ looper_t* looper_create(int buf_capacity_samples, double sample_rate) {
     l->buf_L = (lsamp_t*)calloc((size_t)buf_capacity_samples, sizeof(lsamp_t));
     l->buf_R = (lsamp_t*)calloc((size_t)buf_capacity_samples, sizeof(lsamp_t));
     if (!l->buf_L || !l->buf_R) { looper_destroy(l); return NULL; }
+    /* Born empty is not declared empty - see drain.h. Without this, a virgin ring reads as
+     * "just cleared" (calloc leaves since_clear at 0 too) and drift regeneration would be
+     * silently gated off for the first loop_len of every power-on and scene load. */
+    drain_init_recorded(&l->drain, buf_capacity_samples);
     return l;
 }
 
@@ -167,6 +171,16 @@ void looper_mark_clear(looper_t *l) {
     drain_mark_clear(&l->drain);
 }
 
+/* True while the loop's own read returns silence: the buffer has been declared empty and less
+ * than one loop_len has been recorded since. Exposed because the CHAIN has to know - the drift
+ * regeneration path feeds the reverb wash back into this looper's input, and a buffer that was
+ * just cleared must refill from what you play, not from the tail of what you cleared. Same
+ * test looper_process itself makes at read_pos_a, so this agrees with what the loop actually
+ * sounds like. */
+int looper_is_empty(const looper_t *l) {
+    return l ? drain_stale(&l->drain, l->loop_len) : 0;
+}
+
 void looper_reset(looper_t *l) {
     if (!l) return;
     memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
@@ -179,6 +193,9 @@ void looper_reset(looper_t *l) {
     l->reverse_current = 0.0f;
     l->rev_counter = 0;
     l->reverse_was_active = 0;
+    /* Same reasoning as looper_create: a reset re-enters the born-empty state, not the
+     * declared-empty one, so it must not gate drift regeneration off either. */
+    drain_init_recorded(&l->drain, l->buf_capacity);
 }
 
 /* Dilate: 0 = forward output, 1 = reversed (reverse-delay read). Smoothed in

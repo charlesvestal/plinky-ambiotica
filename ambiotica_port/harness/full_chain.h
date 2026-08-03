@@ -163,12 +163,35 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     const float cleanG   = (scatter <= 0.5f) ? 1.0f : (1.0f - 2.0f * (scatter - 0.5f));
     const float shimmerG = 0.55f + 0.30f * scatter;   /* grain floor so the pitched (oct/5th)
                                                          grains blend as an in-key bed */
-    const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
+    /* Zeroed while the loop is empty, so a cleared buffer cannot refill itself from the plate.
+     * mark_clear stops READS but does nothing to WRITES: srcL/srcR (fed by this gain below) go
+     * straight into looper_process and microloop_process, so an ungated regen would record the
+     * reverb wash into a buffer that was just told it has nothing in it. Driving the GAIN rather
+     * than skipping the block keeps the existing one-pole smoothing, so the regen path fades
+     * rather than steps when the loop empties or refills. */
+    const int loopEmpty = looper_is_empty(l);
+    const float driftFbGain = loopEmpty ? 0.0f
+                            : 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
     /* Plugin one-pole cutoffs at the host rate: a 5 Hz DC blocker and a 2500 Hz low-pass
      * on the drift-regen feedback. The regen LP must stay this bright - a sub-bass cutoff
      * makes the Flux wash spiral DOWN in pitch (feeds back only lows). */
     const float dcIC = 1.0f - expf(-6.2831853f *    5.0f / (float) sr);
     const float fbIC = 1.0f - expf(-6.2831853f * 2500.0f / (float) sr);
+    /* driftFbCur's own one-pole (below) has a ~45 ms time constant, chosen so ordinary
+     * drift_amt/decay/spectra changes fade rather than step. That same slowness is what let a
+     * cleared loop's regen ring past the gate: driftFbGain snaps to 0 the instant the loop goes
+     * empty, but driftFbCur takes ~45 ms to follow, and whatever it feeds into srcL/srcR during
+     * that window lands in the micro-loop's own dead window and gets sustained by the
+     * micro-loop's own feedback for seconds afterward (measured: worst isolated micro-loop
+     * peak 0.0118 against a 0.0007 no-regen floor - see NP_DIAG_A_LIMIT in np_main.c).
+     *
+     * A ~5 ms collapse is standard declick territory - it is also slower than the 1.5 ms
+     * cutDecay this same file already uses to hide New Phrase's bed cut (a full-amplitude
+     * step, not a diffuse ~0.02-0.05 feedback gain), so it does not risk clicking here. Used
+     * ONLY on the way down into a gated (empty-loop) zero: a normal drift_amt/decay/spectra
+     * change, or the loop refilling and un-gating, still rides the slow coefficient and keeps
+     * its existing feel. */
+    const float driftFbFastIC = 1.0f - expf(-1.0f / (0.005f * (float) sr));
 
     /* Re-push coefficients only when params change, and - because the macro ramps
      * (Gravity/Flux) change a param every 2 ms block for ~2 s - throttle continuous
@@ -218,7 +241,10 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     for (int i = 0; i < n; i++) { st->srcL[i] = st->dryL[i]; st->srcR[i] = st->dryR[i]; }
     if (driftFbGain > 0.0f || st->driftFbCur > 1e-6f)   /* drift regeneration */
         for (int i = 0; i < n; i++) {
-            st->driftFbCur += 0.0007f * (driftFbGain - st->driftFbCur);
+            /* Fast collapse only while gated (target is 0 because the loop is empty); the
+               normal slow fade covers every other move, rising back up included. */
+            const float ic = loopEmpty ? driftFbFastIC : 0.0007f;
+            st->driftFbCur += ic * (driftFbGain - st->driftFbCur);
             float fl = (i < st->revFbN) ? st->revFbL[i] : 0.f, fr = (i < st->revFbN) ? st->revFbR[i] : 0.f;
             st->fbL += fbIC * (fl - st->fbL); st->fbR += fbIC * (fr - st->fbR);
             st->srcL[i] += st->driftFbCur * fast_tanhf(st->fbL); st->srcR[i] += st->driftFbCur * fast_tanhf(st->fbR);

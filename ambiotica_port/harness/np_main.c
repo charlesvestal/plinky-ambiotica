@@ -150,13 +150,15 @@ static float declick_sweep(int declick) {
 }
 
 /* ============================================================================================
- * DIAGNOSTIC (scratch, not pass/fail): does a single microloop_mark_clear actually silence the
- * micro-loop for as long as a human calls it "cleared", or does drift regeneration write the
- * buffer full again before the read tap catches up? Bug report: on hardware, a single x+REC
- * TAP clears the looper audibly but the micro-loop "does not seem to clear". See the task notes
- * for the hypothesis this is built to test (not just confirm).
- *
- * This block prints numbers for a human to read and does not touch `fail` above.
+ * Does a single microloop_mark_clear actually silence the micro-loop for as long as a human
+ * calls it "cleared", or does drift regeneration write the buffer full again before the read
+ * tap catches up? Bug report: on hardware, a single x+REC TAP clears the looper audibly but
+ * the micro-loop "does not seem to clear". Root cause: mark_clear silences READS older than
+ * the clear but does nothing to stop new WRITES, and full_chain.h's drift regen keeps feeding
+ * the reverb wash into srcL/srcR - which reaches the micro-loop - whether or not the loop it
+ * is supposedly regenerating is empty. Fix: driftFbGain is gated to 0 while looper_is_empty(l)
+ * (full_chain.h), so a cleared loop refills from what you play, not from the tail of what you
+ * cleared.
  *
  * Isolation choice - decay: lowered from the suite's 0.6 to 0.35 (spectra stays 0, as
  * elsewhere) so the plate's own tail is short and does not dominate 3 s of listening, but NOT
@@ -184,12 +186,60 @@ static float declick_sweep(int declick) {
  * measuring `built`, per the clipping-guard rule: lower the amplitude, never the guard. */
 #define NP_DIAG_TONE_AMP 0.035f
 
+/* Scenario A - TAP, drift regen ON (drift_amt=0.3): the bug case. WITHOUT the driftFbGain gate
+ * (temporarily reverted to prove this number, then restored - see the commit message), worst
+ * isolated-mic peak measured 0.0163 at t=0.5-0.6s and was STILL 0.0011 at t=2.9-3.0s: a
+ * continuously self-refilling micro-loop, audible for the whole 3 s window.
+ *
+ * WITH the gate but the ORIGINAL ~45 ms driftFbCur one-pole (the coefficient sized for ordinary
+ * drift_amt/decay/spectra moves, not for a hard gate), worst isolated-mic peak measured 0.0118:
+ * better, but still 17x the no-regen floor (scenario B: 0.0007). driftFbGain's TARGET snaps to
+ * 0 the instant looper_is_empty(l) goes true, but driftFbCur takes ~45 ms to follow, and
+ * whatever it feeds into srcL/srcR during that window lands in the micro-loop's own dead window
+ * (before its own loop_len makes reads live again) and gets sustained by the micro-loop's OWN
+ * feedback (micro_hold=0.6 here) for seconds afterward.
+ *
+ * Fix: full_chain.h now uses a separate ~5 ms coefficient (driftFbFastIC) ONLY while the loop
+ * is empty - ordinary drift_amt/decay/spectra changes, and the loop refilling and un-gating,
+ * still ride the original 45 ms fade and keep their existing feel. With that, worst isolated-mic
+ * peak measured 0.0083 - a real drop from 0.0118, but nowhere near the ~9x (45/5) a naive
+ * time-constant ratio would suggest. Traced with a temporary probe (not shipped): the WORST
+ * sample is set by driftFbCur's value AT THE INSTANT of the clear, which is identical whether
+ * the coefficient afterward is fast or slow - both curves start from the same pre-clear
+ * steady-state value and have not yet diverged. The fast coefficient only speeds how quickly
+ * LATER samples fall away, shrinking the contaminated window's tail, not its peak. Getting
+ * materially closer to the 0.0007 floor would mean touching driftFbCur's value at the gate
+ * transition itself (a discontinuity, the thing the one-pole exists to avoid) or the
+ * micro-loop's own capture feedback - both out of scope here.
+ *
+ * The same probe measured the fast coefficient's own worst per-sample step in driftFbCur:
+ * 0.0003 (driftFbFastIC * driftFbCur's typical pre-clear level here, ~0.006 * 0.048) - about
+ * 130-200x smaller than this file's own declick_sweep numbers a few dozen lines up (raw jump
+ * 0.0616, declicked to 0.0398), which is this project's own working definition of "small enough
+ * not to click". Not audible as a step.
+ *
+ * 0.011 sits with real margin below the gate-removed number (0.0163) and above the fixed one
+ * (0.0083) - it catches the gate being removed, the coefficient being reverted to the slow one,
+ * or the wrong buffer being checked, without chasing the micro-loop's own decaying tail (whose
+ * mechanism is understood, see above) down to the noise floor. */
+#define NP_DIAG_A_LIMIT   0.011f
+/* Scenario B - TAP, drift regen OFF (drift_amt=0.0): the control. driftFbGain is 0 throughout
+ * regardless of the gate, so this is what "clear" looks like with nothing to refill from -
+ * measured 0.0007. 0.002 gives headroom for float noise without hiding a genuinely broken
+ * control (which would silently invalidate the margin NP_DIAG_A_LIMIT above is built on). */
+#define NP_DIAG_B_LIMIT   0.002f
+/* Scenario C - HOLD, drift regen ON (drift_amt=0.3): an invariant, not a regression case. HOLD
+ * re-stamps both mark_clears every block (as the real x+REC hold does), so the micro-loop's own
+ * read never stops being stale for the whole 3 s - true independent of this fix. Measured
+ * 0.0000; pinned so a future change to the hold path cannot silently break it. */
+#define NP_DIAG_C_LIMIT   0.001f
+
 static float np_diag_out_peaks[NP_DIAG_WINDOWS];   /* full chain output - loop+gran+mic+plate+dry */
 static float np_diag_mic_peaks[NP_DIAG_WINDOWS];   /* st.micL/micR alone - the micro-loop's own
                                                         output, isolated from the plate's tail */
 
 /* Render NP_DIAG_WINDOWS windows of NP_DIAG_WINSEC seconds each with silent input, storing the
- * peak of each window in np_diag_out_peaks/np_diag_mic_peaks (caller prints). hold_clear:
+ * peak of each window in np_diag_out_peaks/np_diag_mic_peaks (caller prints/asserts). hold_clear:
  * re-stamp BOTH mark_clears every block, as the real x+REC hold does; 0 = the clear already
  * happened once, just listen - the TAP case. */
 static void np_diag_windows(int hold_clear) {
@@ -212,10 +262,13 @@ static void np_diag_windows(int hold_clear) {
 /* One full scenario: reset every module to silence (RT-safe resets, no realloc - see
  * amb_calloc/amb_free in this file: free() is a no-op, so re-creating modules per scenario
  * would burn through the 24 MB bump pool for no reason), set params, build 8 s of material,
- * clear once (or hold it every block for the whole measurement), then measure. Returns 1 if the
- * build clipped or never built up - measurement not trustworthy, caller should report BLOCKED
- * rather than print the numbers as if they meant something. */
-static int np_diag_scenario(const char *label, float drift_amt, int hold_clear) {
+ * clear once (or hold it every block for the whole measurement), then measure. Prints a
+ * decimated window table (every 5th, plus the last) so a human still sees the decay shape
+ * without 30 rows of noise. *worst_out_out/*worst_mic_out receive the worst peaks seen: the
+ * caller asserts on them. Returns 1 if the build clipped or never built up - measurement not
+ * trustworthy, caller must treat this as a failure rather than assert on meaningless numbers. */
+static int np_diag_scenario(const char *label, float drift_amt, int hold_clear,
+                             float *worst_out_out, float *worst_mic_out) {
     dattorro_t *dat = st.dat;              /* fc_init below memsets st, including this pointer -
                                                save it and restore it rather than leaking a new
                                                dattorro_create() into the bump pool every call */
@@ -258,9 +311,10 @@ static int np_diag_scenario(const char *label, float drift_amt, int hold_clear) 
     printf("           chain out (loop+gran+mic+plate+dry)   isolated micL/R (mic stage alone)\n");
     float worst_out = 0.f, worst_mic = 0.f; int worst_out_w = 0, worst_mic_w = 0;
     for (int w = 0; w < NP_DIAG_WINDOWS; w++) {
-        printf("  t=%4.1f-%4.1fs  %.4f                              %.4f\n",
-               (double)(w * NP_DIAG_WINSEC), (double)((w + 1) * NP_DIAG_WINSEC),
-               (double)np_diag_out_peaks[w], (double)np_diag_mic_peaks[w]);
+        if (w % 5 == 0 || w == NP_DIAG_WINDOWS - 1)
+            printf("  t=%4.1f-%4.1fs  %.4f                              %.4f\n",
+                   (double)(w * NP_DIAG_WINSEC), (double)((w + 1) * NP_DIAG_WINSEC),
+                   (double)np_diag_out_peaks[w], (double)np_diag_mic_peaks[w]);
         if (np_diag_out_peaks[w] > worst_out) { worst_out = np_diag_out_peaks[w]; worst_out_w = w; }
         if (np_diag_mic_peaks[w] > worst_mic) { worst_mic = np_diag_mic_peaks[w]; worst_mic_w = w; }
     }
@@ -268,6 +322,8 @@ static int np_diag_scenario(const char *label, float drift_amt, int hold_clear) 
            (double)(worst_out_w * NP_DIAG_WINSEC), (double)((worst_out_w + 1) * NP_DIAG_WINSEC));
     printf("  worst isolated-mic peak %.4f at t=%.1f-%.1fs\n", (double)worst_mic,
            (double)(worst_mic_w * NP_DIAG_WINSEC), (double)((worst_mic_w + 1) * NP_DIAG_WINSEC));
+    if (worst_out_out) *worst_out_out = worst_out;
+    if (worst_mic_out) *worst_mic_out = worst_mic;
     return 0;
 }
 
@@ -421,15 +477,44 @@ int main(void) {
     }
     st.tailKill = 0.f;
 
-    /* ---- DIAGNOSTIC: does one micro-loop clear actually stay silent? ---- */
-    printf("\n================ DIAGNOSTIC: micro-loop clear vs drift regen ================\n");
+    /* ---- a single micro-loop clear must actually stay silent ---- */
+    printf("\n================ micro-loop clear vs drift regen ================\n");
     int diag_blocked = 0;
-    diag_blocked |= np_diag_scenario("A: TAP,  drift regen ON  (drift_amt=0.3)", 0.3f, 0);
-    diag_blocked |= np_diag_scenario("B: TAP,  drift regen OFF (drift_amt=0.0)", 0.0f, 0);
-    diag_blocked |= np_diag_scenario("C: HOLD, drift regen ON  (drift_amt=0.3)", 0.3f, 1);
+    float worst_a = 0.f, worst_b = 0.f, worst_c = 0.f;
+    diag_blocked |= np_diag_scenario("A: TAP,  drift regen ON  (drift_amt=0.3)", 0.3f, 0, NULL, &worst_a);
+    diag_blocked |= np_diag_scenario("B: TAP,  drift regen OFF (drift_amt=0.0)", 0.0f, 0, NULL, &worst_b);
+    diag_blocked |= np_diag_scenario("C: HOLD, drift regen ON  (drift_amt=0.3)", 0.3f, 1, NULL, &worst_c);
     if (diag_blocked) {
-        printf("\nDIAGNOSTIC BLOCKED - at least one scenario above could not get a clean "
-               "measurement (see BLOCKED lines).\n");
+        printf("\nFAIL: at least one scenario above could not get a clean measurement (see "
+               "BLOCKED lines) - cannot assert on numbers that do not mean anything.\n");
+        fail = 1;
+    } else {
+        /* Scenario A is the bug: see NP_DIAG_A_LIMIT above for the measured before/after and
+           why the limit sits where it does. */
+        if (worst_a > NP_DIAG_A_LIMIT) {
+            printf("\nFAIL: A's worst isolated-mic peak %.4f exceeds %.4f - the cleared "
+                   "micro-loop is refilling from drift regen\n", (double)worst_a, (double)NP_DIAG_A_LIMIT);
+            fail = 1;
+        } else {
+            printf("\nPASS A: worst isolated-mic peak %.4f stays below %.4f - the clear holds\n",
+                   (double)worst_a, (double)NP_DIAG_A_LIMIT);
+        }
+        if (worst_b > NP_DIAG_B_LIMIT) {
+            printf("FAIL: B (the control, drift_amt=0) reads %.4f, above %.4f - the control "
+                   "itself is not clean, so A's margin above is not trustworthy\n",
+                   (double)worst_b, (double)NP_DIAG_B_LIMIT);
+            fail = 1;
+        } else {
+            printf("PASS B: control stays below %.4f\n", (double)NP_DIAG_B_LIMIT);
+        }
+        if (worst_c > NP_DIAG_C_LIMIT) {
+            printf("FAIL: C (HOLD) reads %.4f, above %.4f - a continuously re-stamped clear "
+                   "should never let the micro-loop's read go live\n",
+                   (double)worst_c, (double)NP_DIAG_C_LIMIT);
+            fail = 1;
+        } else {
+            printf("PASS C: HOLD invariant stays below %.4f\n", (double)NP_DIAG_C_LIMIT);
+        }
     }
     printf("===============================================================================\n");
 
