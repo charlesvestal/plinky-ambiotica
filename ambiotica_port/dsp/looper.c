@@ -94,6 +94,11 @@ looper_t* looper_create(int buf_capacity_samples, double sample_rate) {
     l->buf_L = (lsamp_t*)calloc((size_t)buf_capacity_samples, sizeof(lsamp_t));
     l->buf_R = (lsamp_t*)calloc((size_t)buf_capacity_samples, sizeof(lsamp_t));
     if (!l->buf_L || !l->buf_R) { looper_destroy(l); return NULL; }
+    /* Born empty is not declared empty - see drain.h. Without this, a virgin ring reads as
+     * "just cleared" (calloc leaves since_clear at 0 too) and the New Phrase refill would take
+     * every power-on and scene load at full input gain instead of the instrument's designed
+     * slow build at high Layer. */
+    drain_init_recorded(&l->drain, buf_capacity_samples);
     return l;
 }
 
@@ -167,6 +172,16 @@ void looper_mark_clear(looper_t *l) {
     drain_mark_clear(&l->drain);
 }
 
+/* True while the loop's own read returns silence: the buffer has been declared empty and less
+ * than one loop_len has been recorded since. Exposed because the CHAIN has to know - the drift
+ * regeneration path feeds the reverb wash back into this looper's input, and a buffer that was
+ * just cleared must refill from what you play, not from the tail of what you cleared. Same
+ * test looper_process itself makes at read_pos_a, so this agrees with what the loop actually
+ * sounds like. */
+int looper_is_empty(const looper_t *l) {
+    return l ? drain_stale(&l->drain, l->loop_len) : 0;
+}
+
 void looper_reset(looper_t *l) {
     if (!l) return;
     memset(l->buf_L, 0, (size_t)l->buf_capacity * sizeof(lsamp_t));
@@ -179,6 +194,9 @@ void looper_reset(looper_t *l) {
     l->reverse_current = 0.0f;
     l->rev_counter = 0;
     l->reverse_was_active = 0;
+    /* Same reasoning as looper_create: a reset re-enters the born-empty state, not the
+     * declared-empty one, so it must not trigger the New Phrase fast refill either. */
+    drain_init_recorded(&l->drain, l->buf_capacity);
 }
 
 /* Dilate: 0 = forward output, 1 = reversed (reverse-delay read). Smoothed in
@@ -240,8 +258,12 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
          * silence and skips the fetch entirely - see drain.h. */
         int read_pos_a = pos - l->loop_len;
         if (read_pos_a < 0) read_pos_a += cap;
+        /* Hoisted: the write below needs to know there was nothing to read, not just the
+         * read itself. During a loop-length crossfade the PENDING read may disagree, but the
+         * active length is the one the write law is balanced against, so this is the one. */
+        const int stale_a = drain_stale(&l->drain, l->loop_len);
         float loopL = 0.0f, loopR = 0.0f;
-        if (!drain_stale(&l->drain, l->loop_len)) {
+        if (!stale_a) {
             loopL = ld(l->buf_L[read_pos_a]);
             loopR = ld(l->buf_R[read_pos_a]);
         }
@@ -282,7 +304,20 @@ void PLINKY_DSP_RAM_FUNC(looper_process)(looper_t *l,
          * runaway. At fb=1.0 the input term goes to zero, naturally freezing
          * the buffer (true looper). soft_sat kept as safety against
          * transient peaks. */
-        float in_g = 1.0f - fb_curr;
+        /* REFILL AFTER A CLEAR. The normalised law above balances input against what is
+         * already in the buffer, so once a clear makes `old` read as silence it also makes
+         * the input term the only term - and at Layer 100% that term is 1-0.97 = 0.03. A
+         * cleared loop would take ~33 passes to come back to level, which is minutes, and
+         * which is exactly what Event Horizon's release used to sound like.
+         *
+         * So take the input at FULL gain precisely while there is nothing to mix it with.
+         * `stale_a` is true for exactly one loop_len after a clear (drain.h), so this
+         * self-terminates after one pass and needs no counter of its own.
+         *
+         * The handover needs no smoothing: at the first non-stale sample `old` is the
+         * full-level material the previous pass just wrote, so (1-fb)*in + fb*old still
+         * evaluates to about `in`. There is no step to fade. */
+        float in_g = stale_a ? 1.0f : (1.0f - fb_curr);
         /* Event Horizon leak. What it does is in looper_set_leak; why the cursor is shaped
            the way it is, and why the rate is 2, is in drain.h. Placed after the read at
            read_pos_a so the tap always plays a sample before the sweep erases it. */

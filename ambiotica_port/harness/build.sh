@@ -35,3 +35,12 @@ $CC "$od"/looper.o "$od"/granular.o "$od"/microloop.o "$od"/harmony.o \
     -lm -o "amb_eh_test"
 echo "built: $HN/amb_eh_test"
 "$HN/amb_eh_test"
+
+# New Phrase end-to-end check. Same objects again, a third driver: clear the loop mid-play and
+# assert it refills in one pass, that the plate keeps ringing, and that a long hold collapses it.
+$CC -DLOOPER_I16 -c "$HN/np_main.c" -o "$od/np_main.o"
+$CC "$od"/looper.o "$od"/granular.o "$od"/microloop.o "$od"/harmony.o \
+    "$od"/drift.o "$od"/bloom.o "$od"/lfo.o "$od"/dattorro.o "$od"/np_main.o \
+    -lm -o "amb_np_test"
+echo "built: $HN/amb_np_test"
+"$HN/amb_np_test"
