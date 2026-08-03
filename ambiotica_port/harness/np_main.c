@@ -87,6 +87,36 @@ static float run(int samples, int tone) {
     return worst;
 }
 
+/* Same as run(), but with the tone amplitude as a parameter instead of run()'s fixed 0.12 -
+ * needed because the diagnostic below runs micro_hold around 0.6, where full_chain.h's own
+ * Satellite makeup gain (mk, up to ~4.3x at micro_hold=0.6: og=0.25*sqrt(0.6), mk=1.1/og*0.75)
+ * pushes 0.12 well past the clipper on its own. Never touch the clipping guard - lower the
+ * amplitude here instead, per the task.
+ *
+ * Also tracks the peak of st.micL/st.micR - the micro-loop's OWN output, before it is summed
+ * with the looper/granular bed and the reverb wet into wbL/wbR and mixed to out_l/out_r. Reading
+ * it is legitimate without touching dsp/ or full_chain.h: fc_state is a plain struct, not
+ * opaque, and micL/micR are already fields on it - this just looks at state that already exists,
+ * the same way the AMB_PROFILE block inside full_chain.h itself does. If mic_peak_out is
+ * non-NULL, *mic_peak_out receives the worst |micL|/|micR| seen. Used so the chain-output peak
+ * (contaminated by the plate's own tail - see the block comment above) is not the only number
+ * this diagnostic can offer. */
+static float run_amp(int samples, float amp, float *mic_peak_out) {
+    float worst = 0.f, mic_worst = 0.f;
+    for (int n = 0; n < samples; n += BLK) {
+        for (int i = 0; i < BLK; i++) {
+            float s = (float)(sin(phase) * amp);
+            phase += 2.0 * M_PI * 220.0 / SR;
+            inL[i] = inR[i] = s;
+        }
+        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
+        float q = peak(outL, outR, BLK); if (q > worst) worst = q;
+        float qm = peak(st.micL, st.micR, BLK); if (qm > mic_worst) mic_worst = qm;
+    }
+    if (mic_peak_out) *mic_peak_out = mic_worst;
+    return worst;
+}
+
 /* One 16-phase declick sweep. Rebuilds the bed, cuts it, and repeats 16 times, each time after
    a different amount of extra tone so the cut lands at a different point in the 220 Hz cycle -
    see the call site for why a single cut can't tell this apart. `declick` selects whether the
@@ -117,6 +147,128 @@ static float declick_sweep(int declick) {
         }
     }
     return worst;
+}
+
+/* ============================================================================================
+ * DIAGNOSTIC (scratch, not pass/fail): does a single microloop_mark_clear actually silence the
+ * micro-loop for as long as a human calls it "cleared", or does drift regeneration write the
+ * buffer full again before the read tap catches up? Bug report: on hardware, a single x+REC
+ * TAP clears the looper audibly but the micro-loop "does not seem to clear". See the task notes
+ * for the hypothesis this is built to test (not just confirm).
+ *
+ * This block prints numbers for a human to read and does not touch `fail` above.
+ *
+ * Isolation choice - decay: lowered from the suite's 0.6 to 0.35 (spectra stays 0, as
+ * elsewhere) so the plate's own tail is short and does not dominate 3 s of listening, but NOT
+ * all the way to 0. `full_chain.h` uses p->decay in two other places besides driftFbGain's own
+ * factor:
+ *   - t = (decay - 0.30) / 0.70, clamped 0..1, fed to dattorro_set_decay - below decay=0.30
+ *     this is exactly 0: the tank has NO internal sustain, each block just diffuses whatever
+ *     enters once and stops holding it.
+ *   - dryToRev = decay - the send of blL/blR (bloom's near-transparent-at-bloom=0 copy of
+ *     srcL/srcR) into the reverb: rinL = dryToRev*blL + layL + microRevSend*micL.
+ * At decay=0 BOTH go to zero together: the tank cannot hold anything AND nothing but layL/micL
+ * (themselves near-silent right after a clear) feeds it, so wetL/R collapses near-silent fast,
+ * driftFbCur has nothing to tap, and the regen path under test would go quiet for a reason that
+ * has nothing to do with the micro-loop. (driftFbGain's OWN (1 - 0.78*decay) factor does NOT
+ * need decay>0 - it is actually LARGEST at decay=0 - so that term alone would not have flagged
+ * this.) 0.35 sits just above the t=0 floor: a short but real tank tail (t=0.071) and a present
+ * dry send (dryToRev=0.35), while driftFbGain's decay factor is 0.727 of its max - comparable
+ * to, if not higher than, the suite's default (0.532 at decay=0.6).
+ */
+#define NP_DIAG_DECAY   0.35f
+#define NP_DIAG_WINDOWS 30
+#define NP_DIAG_WINSEC  0.1
+/* Tone amplitude for the build-up phase only. Lowered from run()'s 0.12 because micro_hold=0.6
+ * (vs the suite's 0) adds a large Satellite makeup gain (see run_amp's comment) - found by
+ * measuring `built`, per the clipping-guard rule: lower the amplitude, never the guard. */
+#define NP_DIAG_TONE_AMP 0.035f
+
+static float np_diag_out_peaks[NP_DIAG_WINDOWS];   /* full chain output - loop+gran+mic+plate+dry */
+static float np_diag_mic_peaks[NP_DIAG_WINDOWS];   /* st.micL/micR alone - the micro-loop's own
+                                                        output, isolated from the plate's tail */
+
+/* Render NP_DIAG_WINDOWS windows of NP_DIAG_WINSEC seconds each with silent input, storing the
+ * peak of each window in np_diag_out_peaks/np_diag_mic_peaks (caller prints). hold_clear:
+ * re-stamp BOTH mark_clears every block, as the real x+REC hold does; 0 = the clear already
+ * happened once, just listen - the TAP case. */
+static void np_diag_windows(int hold_clear) {
+    int wsamp = (int)(NP_DIAG_WINSEC * SR + 0.5);
+    for (int w = 0; w < NP_DIAG_WINDOWS; w++) {
+        float worst_out = 0.f, worst_mic = 0.f;
+        for (int n = 0; n < wsamp; n += BLK) {
+            int take = (BLK < wsamp - n) ? BLK : (wsamp - n);
+            if (hold_clear) { looper_mark_clear(l); microloop_mark_clear(m); }
+            for (int i = 0; i < take; i++) { inL[i] = inR[i] = 0.f; }
+            fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, take);
+            float qo = peak(outL, outR, take); if (qo > worst_out) worst_out = qo;
+            float qm = peak(st.micL, st.micR, take); if (qm > worst_mic) worst_mic = qm;
+        }
+        np_diag_out_peaks[w] = worst_out;
+        np_diag_mic_peaks[w] = worst_mic;
+    }
+}
+
+/* One full scenario: reset every module to silence (RT-safe resets, no realloc - see
+ * amb_calloc/amb_free in this file: free() is a no-op, so re-creating modules per scenario
+ * would burn through the 24 MB bump pool for no reason), set params, build 8 s of material,
+ * clear once (or hold it every block for the whole measurement), then measure. Returns 1 if the
+ * build clipped or never built up - measurement not trustworthy, caller should report BLOCKED
+ * rather than print the numbers as if they meant something. */
+static int np_diag_scenario(const char *label, float drift_amt, int hold_clear) {
+    dattorro_t *dat = st.dat;              /* fc_init below memsets st, including this pointer -
+                                               save it and restore it rather than leaking a new
+                                               dattorro_create() into the bump pool every call */
+    looper_reset(l); granular_reset(g); microloop_reset(m);
+    harmony_reset(h); bloom_reset(b);      drift_reset(d);
+    fc_init(&st, 1.0f);
+    st.dat = dat;
+    dattorro_reset(st.dat);
+    phase = 0.0;
+    g_prev_l = g_prev_r = 0.f;
+
+    memset(&p, 0, sizeof p);
+    p.mix = 1.0f; p.grain_size = 0.4f; p.scatter = 0.f;
+    p.micro_hold = 0.6f; p.decay = NP_DIAG_DECAY; p.mod_depth = 0.3f; p.mod_rate = 0.4f;
+    p.bloom = 0.f; p.drift_amt = drift_amt; p.spectra = 0.f; p.ring = 0.f;
+    p.bpm = 120.f; p.key = 0; p.chord = 0;
+    p.gravity = 0.f; p.horizon = 1.f; p.dilate = 0.f;
+    p.loop_layer = 1.0f;
+    p.loop_length_bars = 1.0f; p.micro_bars = 0.125f;   /* small, per the task: shortest window */
+
+    float built_mic = 0.f;
+    float built = run_amp(SECS(8), NP_DIAG_TONE_AMP, &built_mic);
+    printf("\n[%s]\n  after 8 s of playing:  chain peak %.4f   isolated micL/R peak %.4f\n",
+           label, (double)built, (double)built_mic);
+    if (built > 0.90f) {
+        printf("  BLOCKED: built to %.4f, at or near the clipper - not trustworthy.\n", (double)built);
+        return 1;
+    }
+    if (built < 0.05f || built_mic < 0.01f) {
+        printf("  BLOCKED: nothing built up (chain %.4f, mic %.4f) - measurement would be "
+               "meaningless.\n", (double)built, (double)built_mic);
+        return 1;
+    }
+
+    looper_mark_clear(l); microloop_mark_clear(m);   /* the clear itself: always at least once,
+                                                          whether this is a tap or the first
+                                                          block of a hold */
+    np_diag_windows(hold_clear);
+
+    printf("           chain out (loop+gran+mic+plate+dry)   isolated micL/R (mic stage alone)\n");
+    float worst_out = 0.f, worst_mic = 0.f; int worst_out_w = 0, worst_mic_w = 0;
+    for (int w = 0; w < NP_DIAG_WINDOWS; w++) {
+        printf("  t=%4.1f-%4.1fs  %.4f                              %.4f\n",
+               (double)(w * NP_DIAG_WINSEC), (double)((w + 1) * NP_DIAG_WINSEC),
+               (double)np_diag_out_peaks[w], (double)np_diag_mic_peaks[w]);
+        if (np_diag_out_peaks[w] > worst_out) { worst_out = np_diag_out_peaks[w]; worst_out_w = w; }
+        if (np_diag_mic_peaks[w] > worst_mic) { worst_mic = np_diag_mic_peaks[w]; worst_mic_w = w; }
+    }
+    printf("  worst chain-out peak %.4f at t=%.1f-%.1fs\n", (double)worst_out,
+           (double)(worst_out_w * NP_DIAG_WINSEC), (double)((worst_out_w + 1) * NP_DIAG_WINSEC));
+    printf("  worst isolated-mic peak %.4f at t=%.1f-%.1fs\n", (double)worst_mic,
+           (double)(worst_mic_w * NP_DIAG_WINSEC), (double)((worst_mic_w + 1) * NP_DIAG_WINSEC));
+    return 0;
 }
 
 int main(void) {
@@ -268,6 +420,18 @@ int main(void) {
         printf("PASS: a long hold empties the plate\n");
     }
     st.tailKill = 0.f;
+
+    /* ---- DIAGNOSTIC: does one micro-loop clear actually stay silent? ---- */
+    printf("\n================ DIAGNOSTIC: micro-loop clear vs drift regen ================\n");
+    int diag_blocked = 0;
+    diag_blocked |= np_diag_scenario("A: TAP,  drift regen ON  (drift_amt=0.3)", 0.3f, 0);
+    diag_blocked |= np_diag_scenario("B: TAP,  drift regen OFF (drift_amt=0.0)", 0.0f, 0);
+    diag_blocked |= np_diag_scenario("C: HOLD, drift regen ON  (drift_amt=0.3)", 0.3f, 1);
+    if (diag_blocked) {
+        printf("\nDIAGNOSTIC BLOCKED - at least one scenario above could not get a clean "
+               "measurement (see BLOCKED lines).\n");
+    }
+    printf("===============================================================================\n");
 
     return fail;
 }
