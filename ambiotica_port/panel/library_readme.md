@@ -49,6 +49,18 @@ Column 15 is one bipolar slider. Centre is neutral, and white.
 **Down, red: Event Horizon.** Everything drains away. At the bottom the loop is empty and the
 next phrase starts from silence.
 
+## New phrase
+
+Hold **×** and tap **REC**, the record circle right beside it. The loop and the micro-loop empty
+on the spot and the reverb keeps ringing, so the next thing you play starts over the tail of the
+last thing instead of after it.
+
+Keep holding and they stay empty, so you can let the wash breathe and come back in where you
+want rather than where you happened to press. Hold about a second longer and the reverb goes
+too, fading over the second after that. The pad dims as the tail does, and black is silence.
+
+Event Horizon collapses the whole engine on the way down. This empties only what was recorded.
+
 ## Dilate
 
 Tap **UNLOCK**, top right of the sequencer row, and the loop bed and micro-loop run backward.
