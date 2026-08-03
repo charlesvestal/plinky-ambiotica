@@ -104,6 +104,16 @@ enum {
     COL_TRACKS = 9,     /* "TRACKS" (row 14) - drum sequencer page */
     COL_SAVE   = 12,    /* "SAVE"   (row 14) - commit, on the picker pages only */
     COL_LOAD   = 13,    /* "LOAD"   (row 14) - commit, on the picker pages only */
+    /* "REC" (row 15, col 12) - the printed record circle, immediately left of x. New Phrase:
+       x + REC empties the loop and micro-loop and leaves the plate ringing. This is stock
+       Chords grammar rather than a repurpose - the manual says x "lets you reset or delete
+       individual things across all of Plinky 12 Chords if you hold it and tap one of the
+       other pads", and the MIDI chord flow says "you can tap the X pad to wipe your
+       recording". On this panel the rolling looper IS the recording.
+       Dark unless x is held: we have no sequencer to record into, so the pad has no function
+       of its own. NB stock Chords also uses Rec alone as the RANDOMISE modifier; we put
+       randomise on FILL and claim only the x combination, so nothing collides. */
+    COL_REC    = 12,
     COL_X      = 13,    /* printed × (row 15) - the stock SHIFT key. The Chords manual:
                            "hold it and tap one of the other pads" to reset or delete. */
     COL_STOP   = 14,    /* printed ▢ (row 15) - the stock transport corner */
@@ -240,6 +250,9 @@ struct ambiotica : panel_t {
     int            key_pos = 0;                /* circle-of-fifths position 0..11 (left buttons) */
     int            mode_sel = 0;             /* 0..4 = Ionian/Aeolian/Dorian/Lydian/Mixolydian (right buttons) */
     bool           eh_flushed = false;         /* Event Horizon: buffers cleared at the bottom (edge) */
+    newphrase_t    newphrase = {0, 0};   /* x + REC hold timer; see newphrase.h */
+    float          np_tail_sm = 0.f;     /* smoothed tail_kill, pushed to fc_state each block */
+    bool           np_was_down = false;  /* edge detect, so the residual is seeded once */
     float          grav_sm = 0.f;              /* Gravity macro, ramped ~2 s (plugin gravitySmooth) */
     int            synth_preset = 0;
     unsigned short voices_active = 0, voices_seen = 0;
@@ -709,6 +722,32 @@ struct ambiotica : panel_t {
            consuming the press itself. */
         bool xh = shift_held(page_y);
         set_led(COL_X, page_y + CTL_DN, xh ? WHITE : DIMMESTEST(WHITE));
+
+        /* NEW PHRASE - x + REC. Read as a widget so the press edge is clean, but only while x
+           is held; with x up the pad is dark and inert, because a panel with no sequencer has
+           nothing to record. The whole gesture is on the bottom-right corner, two adjacent
+           pads, so it is a one-handed move. */
+        {
+            const float tk = newphrase_tail_kill(&newphrase);
+            uint32_t rc = 0;
+            if (xh) {
+                /* Past the threshold the pad darkens in step with the tail it is collapsing,
+                   reaching black exactly as the tail goes. The timing is the only part of this
+                   gesture you cannot feel, so it is the part that has to be visible. */
+                rc = newphrase_held(&newphrase) ? fade_col(RED, (int)(255.f * (1.f - tk)))
+                                                 : DIMMER(RED);
+            }
+            set_led(COL_REC, page_y + CTL_DN, rc);
+            const bool rec_down = xh && get_touch_down(COL_REC, page_y + CTL_DN) != 0;
+            if (rec_down && !newphrase_held(&newphrase)) newphrase_press(&newphrase);
+            else if (!rec_down && newphrase_held(&newphrase)) newphrase_release(&newphrase);
+            /* Two calls, not a ternary into the format argument - set_help_text is a printf
+               style function and a non-literal format is a warning waiting to happen. */
+            if (newphrase_held(&newphrase)) {
+                if (tk > 0.f) set_help_text("New phrase - clearing the tail too");
+                else          set_help_text("New phrase - clear the loop, keep the tail");
+            }
+        }
 
         if (button(COL_TRACKS, page_y + CTL_UP,
                    xh ? RED : (page == PAGE_DRUMS ? here : away), ISOLATED,
@@ -1372,6 +1411,7 @@ struct ambiotica : panel_t {
 
         if (nav_cooldown_us > 0) nav_cooldown_us -= dt_us;
         tick_kit_arm(dt_us);
+        newphrase_tick(&newphrase, (unsigned)(dt_us < 0 ? 0 : dt_us));
 
         /* Commit a staged scene load once the system reports it complete. Polled here rather
            than at the button because the precondition is not satisfied in the same frame, and
@@ -1628,6 +1668,27 @@ struct ambiotica : panel_t {
         #undef AMB_SM
         fx_sm.loop_length_bars = fx.loop_length_bars; fx_sm.micro_bars = fx.micro_bars;
         fx_sm.bpm = fx.bpm; fx_sm.key = fx.key; fx_sm.chord = fx.chord;
+
+        /* NEW PHRASE. Re-stamped every block for as long as the pad is down, exactly like the
+           Event Horizon flush below and for the same reason: holding then means "stay empty",
+           and releasing starts recording from empty. The plate, Spectra, bloom and drift are
+           all left alone, so the tail rings out - that is the entire difference between this
+           gesture and Event Horizon. */
+        {
+            const bool np_down = newphrase_held(&newphrase) != 0;
+            if (np_down) {
+                if (!np_was_down) st.cutPending = 1;   /* seed the edge residual, once */
+                if (looper)    looper_mark_clear(looper);
+                if (microloop) microloop_mark_clear(microloop);
+            }
+            np_was_down = np_down;
+            /* One-pole toward the target, ~50 ms, so releasing mid-fade returns the reverb
+               send to unity smoothly. Negligible lag against a 1200 ms ramp. */
+            const float tgt = newphrase_tail_kill(&newphrase);
+            np_tail_sm += 0.04f * (tgt - np_tail_sm);
+            if (np_tail_sm < 5e-4f && tgt == 0.f) np_tail_sm = 0.f;
+            st.tailKill = np_tail_sm;
+        }
 
         /* Event Horizon: at the BOTTOM of col-15 the drain ends in a one-shot flush that
            clears the content buffers, so bringing the slider back up starts empty.
