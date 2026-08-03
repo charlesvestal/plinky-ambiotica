@@ -41,6 +41,7 @@ trap 'rm -f "$BODY"' EXIT
     strip "$HARN/full_chain.h"
     for c in $MODULES; do strip "$DSP/$c.c"; done
     strip "$HN/stepcond.h"
+    strip "$HN/newphrase.h"           # x + REC hold timer, used by panel.cpp
     strip "$HN/panel.cpp"
 } | python3 "$HN/strip_comments.py" /dev/stdin > "$BODY"
 
