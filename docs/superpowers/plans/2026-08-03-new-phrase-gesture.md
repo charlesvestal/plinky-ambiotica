@@ -306,249 +306,40 @@ git commit -m "Add the New Phrase hold timer, with tests"
 
 ---
 
-### Task 2: Repair the looper's refill after a clear
+### Task 2: Repair the looper's refill after a clear - PARKED
 
-**Goal:** After the buffer is marked clear, take the input at full gain for exactly one loop pass, so a new phrase establishes immediately instead of blooming in over tens of passes at high LOOP.
+**Status: parked, not implemented on this branch.** The fix works and is verified, but
+shipping it turned out to also change Event Horizon's release behaviour by an amount nobody
+could explain, and the user decided an unexplained hardware behaviour change is worse than
+living with the slow bloom-in at LOOP 100% that the instrument already ships. The complete
+fix - the `in_g` write-law change, the `since_clear` seed needed to keep it from firing at
+power-on, a `looper_is_empty` predicate and a drift-regeneration gate that narrowed but did not
+close the unexplained gap, a regression test, and the corrected `np_main.c` measurement window
+that finally made the test trustworthy - is preserved on the `refill-fix-investigation` branch,
+along with a full writeup at
+`docs/superpowers/notes/2026-08-03-looper-refill-investigation.md`. Read that file before
+reviving this task; it records what was proven, what was retracted, and the next thing to try
+(the Dilate reverse-head read, which shares the same drain cursor and was never isolated).
 
-**Files:**
-- Create: `ambiotica_port/harness/np_main.c`
-- Modify: `ambiotica_port/dsp/looper.c:244`, `ambiotica_port/dsp/looper.c:285`
-- Modify: `ambiotica_port/harness/build.sh:36`
-
-**Acceptance Criteria:**
-- [ ] At `loop_layer = 1.0` (`fb` capped at 0.97), the loop is back to within 20% of its pre-clear level one `loop_len` after a clear
-- [ ] Before the fix the same measurement is under 10%, so the test genuinely fails first
-- [ ] Behaviour at low LOOP is unchanged, because `1 - fb` was already near 1 there
-- [ ] `sh ambiotica_port/harness/build.sh` builds and runs `amb_np_test` and it exits 0
-
-**Verify:** `sh ambiotica_port/harness/build.sh` → `PASS: refill reaches ...` and exit 0
-
-**Steps:**
-
-- [ ] **Step 1: Write the failing test**
-
-Create `ambiotica_port/harness/np_main.c`. This file is extended in Task 3; for now it covers the refill only.
-
-```c
-/* New Phrase end-to-end, over the REAL chain.
- *
- * panel/newphrase_test.c pins the hold timer in isolation. This drives every module through
- * fc_render_block exactly as the panel does, which is the only way to see the things the unit
- * test cannot: what the looper's write law does to a freshly cleared buffer, and whether the
- * plate is still ringing after the clear.
- *
- * As in eh_main.c: ONE persistent fc_state, driven a block at a time. NOT fc_render, which
- * calls fc_init - a memset of the whole state including the dattorro pointer - on every call,
- * so looping over it per block silently rebuilds the chain and passes vacuously.
- */
-#include <stdio.h>
-#include <stdint.h>
-#include <stddef.h>
-#include <string.h>
-#include <math.h>
-
-#include "full_chain.h"
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-#define POOL_BYTES (24u * 1024u * 1024u)
-static unsigned char g_pool[POOL_BYTES];
-static size_t g_used = 0;
-static void* bump(size_t bytes) {
-    size_t a = (g_used + 7u) & ~((size_t)7u);
-    if (a + bytes > POOL_BYTES) { fprintf(stderr, "POOL OOM\n"); return NULL; }
-    g_used = a + bytes; return g_pool + a;
-}
-void* amb_calloc(size_t n, size_t sz) { size_t b = n*sz; void* p = bump(b); if (p) memset(p,0,b); return p; }
-void* amb_malloc(size_t sz)           { return bump(sz); }
-void* amb_realloc(void* p, size_t sz) { (void)p; return bump(sz); }
-void  amb_free(void* p)               { (void)p; }
-
-#define SR      32000
-#define BLK     FC_BLK
-#define SECS(x) ((int)((x) * SR))
-
-static float inL[BLK], inR[BLK], outL[BLK], outR[BLK];
-static fc_state st;
-
-static looper_t   *l; static granular_t *g; static microloop_t *m;
-static harmony_t  *h; static bloom_t    *b; static drift_t     *d;
-static full_params p;
-static double phase = 0.0;
-
-static float peak(const float *a, const float *c, int n) {
-    float pk = 0.f;
-    for (int i = 0; i < n; i++) {
-        float lv = fabsf(a[i]), rv = fabsf(c[i]);
-        if (lv > pk) pk = lv; if (rv > pk) pk = rv;
-    }
-    return pk;
-}
-
-/* Render `samples` frames. tone != 0 plays a 220 Hz sine in; otherwise the input is silent.
-   Returns the worst peak seen. */
-static float run(int samples, int tone) {
-    float worst = 0.f;
-    for (int n = 0; n < samples; n += BLK) {
-        for (int i = 0; i < BLK; i++) {
-            float s = tone ? (float)(sin(phase) * 0.4) : 0.f;
-            phase += 2.0 * M_PI * 220.0 / SR;
-            inL[i] = inR[i] = s;
-        }
-        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
-        float q = peak(outL, outR, BLK); if (q > worst) worst = q;
-    }
-    return worst;
-}
-
-int main(void) {
-    const int loopcap = 32 * SR;
-    l = looper_create(loopcap, SR); g = granular_create(SR); m = microloop_create(SR);
-    h = harmony_create(SR);         b = bloom_create(SR);    d = drift_create(SR);
-    if (!l || !g || !m || !h || !b || !d) { fprintf(stderr, "create failed\n"); return 2; }
-
-    memset(&p, 0, sizeof p);
-    p.mix = 1.0f; p.grain_size = 0.4f; p.scatter = 0.f;
-    p.micro_hold = 0.f; p.decay = 0.6f; p.mod_depth = 0.3f; p.mod_rate = 0.4f;
-    p.bloom = 0.f; p.drift_amt = 0.f; p.spectra = 0.f; p.ring = 0.f;
-    p.bpm = 120.f; p.key = 0; p.chord = 0;
-    p.gravity = 0.f; p.horizon = 1.f; p.dilate = 0.f;
-    /* The case that exposes the write law: LOOP at maximum, where fb caps at 0.97 and the
-       input term is 0.03. One bar at 120 bpm is 2 s, short enough to measure a single pass. */
-    p.loop_layer = 1.0f;
-    p.loop_length_bars = 1.0f; p.micro_bars = 0.25f;
-
-    fc_init(&st, p.mix);
-    st.dat = dattorro_create(SR);
-    if (!st.dat) { fprintf(stderr, "dattorro create failed\n"); return 2; }
-
-    int fail = 0;
-    const int loop_len = SECS(2.0);    /* 1 bar at 120 bpm, 4 beats per bar */
-
-    /* ---- establish a loop ---- */
-    float built = run(SECS(12), 1);
-    printf("after 12 s of playing:                 peak %.4f\n", built);
-    if (built < 0.05f) { printf("  (nothing built up - test is meaningless)\n"); return 1; }
-
-    /* ---- clear, then keep playing at the same level ---- */
-    looper_mark_clear(l);
-    microloop_mark_clear(m);
-    float refilled = run(loop_len, 1);
-    printf("one loop pass after the clear:         peak %.4f\n", refilled);
-
-    /* The bug: buf = (1-fb)*in + fb*old with fb 0.97 means the input enters at 3% once `old`
-       reads as silence, so a cleared loop takes ~33 passes to come back to level. For a
-       gesture called "new phrase" that reads as broken. Full gain while there is nothing to
-       mix with fixes it in exactly one pass. */
-    const float WANT = 0.80f * built;
-    if (refilled < WANT) {
-        printf("\nFAIL: refill reached %.4f of %.4f (%.0f%%), want >= 80%%\n",
-               refilled, built, (double)(100.f * refilled / built));
-        fail = 1;
-    } else {
-        printf("\nPASS: refill reaches %.0f%% of the pre-clear level in one pass\n",
-               (double)(100.f * refilled / built));
-    }
-    return fail;
-}
-```
-
-- [ ] **Step 2: Wire it into the harness build**
-
-In `ambiotica_port/harness/build.sh`, after line 37 (`"$HN/amb_eh_test"`), append:
-
-```sh
-
-# New Phrase end-to-end check. Same objects again, a third driver: clear the loop mid-play and
-# assert it refills in one pass, that the plate keeps ringing, and that a long hold collapses it.
-$CC -DLOOPER_I16 -c "$HN/np_main.c" -o "$od/np_main.o"
-$CC "$od"/looper.o "$od"/granular.o "$od"/microloop.o "$od"/harmony.o \
-    "$od"/drift.o "$od"/bloom.o "$od"/lfo.o "$od"/dattorro.o "$od"/np_main.o \
-    -lm -o "amb_np_test"
-echo "built: $HN/amb_np_test"
-"$HN/amb_np_test"
-```
-
-- [ ] **Step 3: Run it to verify it fails**
-
-Run: `sh ambiotica_port/harness/build.sh`
-Expected: `amb_np_test` builds, runs, and prints `FAIL: refill reached ...` with a percentage well under 80, and `build.sh` exits non-zero (it is `set -e`).
-
-- [ ] **Step 4: Apply the fix**
-
-In `ambiotica_port/dsp/looper.c`, hoist the staleness test so the write can see it. Replace lines 243-247:
-
-```c
-        float loopL = 0.0f, loopR = 0.0f;
-        if (!drain_stale(&l->drain, l->loop_len)) {
-            loopL = ld(l->buf_L[read_pos_a]);
-            loopR = ld(l->buf_R[read_pos_a]);
-        }
-```
-
-with:
-
-```c
-        /* Hoisted: the write below needs to know there was nothing to read, not just the
-         * read itself. During a loop-length crossfade the PENDING read may disagree, but the
-         * active length is the one the write law is balanced against, so this is the one. */
-        const int stale_a = drain_stale(&l->drain, l->loop_len);
-        float loopL = 0.0f, loopR = 0.0f;
-        if (!stale_a) {
-            loopL = ld(l->buf_L[read_pos_a]);
-            loopR = ld(l->buf_R[read_pos_a]);
-        }
-```
-
-Then replace line 285:
-
-```c
-        float in_g = 1.0f - fb_curr;
-```
-
-with:
-
-```c
-        /* REFILL AFTER A CLEAR. The normalised law above balances input against what is
-         * already in the buffer, so once a clear makes `old` read as silence it also makes
-         * the input term the only term - and at Layer 100% that term is 1-0.97 = 0.03. A
-         * cleared loop would take ~33 passes to come back to level, which is minutes, and
-         * which is exactly what Event Horizon's release used to sound like.
-         *
-         * So take the input at FULL gain precisely while there is nothing to mix it with.
-         * `stale_a` is true for exactly one loop_len after a clear (drain.h), so this
-         * self-terminates after one pass and needs no counter of its own.
-         *
-         * The handover needs no smoothing: at the first non-stale sample `old` is the
-         * full-level material the previous pass just wrote, so (1-fb)*in + fb*old still
-         * evaluates to about `in`. There is no step to fade. */
-        float in_g = stale_a ? 1.0f : (1.0f - fb_curr);
-```
-
-- [ ] **Step 5: Run it to verify it passes**
-
-Run: `sh ambiotica_port/harness/build.sh`
-Expected: `PASS: refill reaches` at 80% or better, and the pre-existing `amb_eh_test` still prints `PASS: stays below 0.0200 for 20 s after release`.
-
-- [ ] **Step 6: Check the panel tests still pass**
-
-Run: `sh ambiotica_port/panel/tests.sh`
-Expected: no `FAIL` lines. `drain_test` in particular must be unaffected.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add ambiotica_port/dsp/looper.c ambiotica_port/harness/np_main.c ambiotica_port/harness/build.sh
-git commit -m "Refill a cleared loop in one pass instead of thirty-three"
-```
+What DID ship on this branch, because it stands on its own: `ambiotica_port/harness/np_main.c`
+exists with the allocator, `run()`, `peak()`, and the chain setup, plus a clipping guard on
+`built` (the desktop harness hard-clips at unity since `FC_SOFT_CLIP` is panel-only, and an
+over-hot test signal makes any ratio-based assertion read 100% regardless of the code under
+test). `ambiotica_port/harness/build.sh` builds and runs it. `ambiotica_port/dsp/looper.c`,
+`looper.h`, `microloop.c`, `drain.h`, and `ambiotica_port/harness/full_chain.h` are all back to
+their pre-Task-2 state.
 
 ---
 
 ### Task 3: Tail collapse and the edge declick
 
 **Goal:** Add `tail_kill` and the edge residual to `fc_state`, so a long hold collapses the plate and an instant clear does not click.
+
+**Note: this task no longer inherits Task 2's measurement.** Task 2 is parked (see above), so
+`np_main.c` on this branch has no refill assertion to build on top of - only the scaffolding
+(allocator, `run()`, `peak()`, chain setup, the clipping guard on `built`). Any code block below
+that assumes a `refilled` variable or a clear-then-measure flow already exists needs to
+establish that context itself, or add it fresh, rather than editing something already there.
 
 **Files:**
 - Modify: `ambiotica_port/harness/full_chain.h:61-75` (the `fc_state` struct)
