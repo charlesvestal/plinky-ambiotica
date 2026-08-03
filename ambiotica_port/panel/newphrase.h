@@ -41,13 +41,15 @@ static inline void newphrase_release(newphrase_t *np) { np->active = 0; np->held
 
 /* Advance the hold. SATURATES rather than wraps: this is an unsigned counter fed by the UI
    frame delta, and a pad leant on for long enough would otherwise overflow back through the
-   threshold and bring the reverb up under a finger that never moved. */
+   threshold and bring the reverb up under a finger that never moved. The check is done on
+   the remaining headroom, not on the sum, so held_us + dt_us is never computed and there is
+   nothing left to overflow. */
 static inline void newphrase_tick(newphrase_t *np, unsigned dt_us) {
     if (!np->active) return;
     const unsigned cap = NP_TAIL_HOLD_US + NP_TAIL_FADE_US;
     if (np->held_us >= cap) return;
+    if (dt_us >= cap - np->held_us) { np->held_us = cap; return; }
     np->held_us += dt_us;
-    if (np->held_us > cap) np->held_us = cap;
 }
 
 /* 1 while held. The clear is RE-STAMPED every block rather than fired once on the edge, for
