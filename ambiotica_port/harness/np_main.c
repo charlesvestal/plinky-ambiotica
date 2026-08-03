@@ -55,6 +55,19 @@ static float peak(const float *a, const float *c, int n) {
     return pk;
 }
 
+/* Largest sample-to-sample jump in a block, carried across the block boundary. A hard cut
+   shows up here as a step the size of the signal that was cut; a declicked one does not. */
+static float g_prev_l = 0.f, g_prev_r = 0.f;
+static float max_step(const float *a, const float *c, int n) {
+    float mx = 0.f;
+    for (int i = 0; i < n; i++) {
+        float dl = fabsf(a[i] - g_prev_l), dr = fabsf(c[i] - g_prev_r);
+        if (dl > mx) mx = dl; if (dr > mx) mx = dr;
+        g_prev_l = a[i]; g_prev_r = c[i];
+    }
+    return mx;
+}
+
 /* Render `samples` frames. tone != 0 plays a 220 Hz sine in; otherwise the input is silent.
    Returns the worst peak seen. 0.12, not something louder: at 1.0 mix and 100% Layer the loop
    bed's makeup gains push a hotter tone past unity, into the harness's hard clip (FC_SOFT_CLIP
@@ -134,6 +147,87 @@ int main(void) {
      * and discard it, then measure) all live on `refill-fix-investigation` instead of here.
      * See docs/superpowers/notes/2026-08-03-looper-refill-investigation.md.
      */
+
+    /* ---- the tail must survive the clear ---- */
+    /* This is the feature. It is also the assertion that fails the day someone adds a plate
+       reset for tidiness, which is why it is worth its own check rather than an eyeball. */
+    run(SECS(4), 1);
+    looper_mark_clear(l); microloop_mark_clear(m);
+    st.tailKill = 0.f;
+    float tail = run(SECS(0.5), 0);      /* input silent: anything heard is the plate */
+    printf("half a second after a clear, no input: peak %.4f\n", tail);
+    if (tail < 0.02f) {
+        printf("\nFAIL: the tail died with the loop (%.4f) - the plate must ring out\n", tail);
+        fail = 1;
+    } else {
+        printf("PASS: the plate is still ringing after the clear\n");
+    }
+
+    /* ---- the edge must be a slope, not a step ---- */
+    /* Measured against the signal's OWN slew rather than against its peak. Comparing to the
+       peak would let a hard cut pass: the cut removes the bed but not the wet, so the step is
+       smaller than the full output and a peak-based limit never fires. What a click actually
+       is, is a jump far larger than anything the running signal produces, so that is what
+       gets measured - baseline first, then the cut. */
+    run(SECS(6), 1);
+    float baseline = 0.f;
+    g_prev_l = outL[BLK-1]; g_prev_r = outR[BLK-1];
+    for (int n = 0; n < SECS(0.2); n += BLK) {
+        for (int i = 0; i < BLK; i++) {
+            float s = (float)(sin(phase) * 0.4); phase += 2.0 * M_PI * 220.0 / SR;
+            inL[i] = inR[i] = s;
+        }
+        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
+        float q = max_step(outL, outR, BLK); if (q > baseline) baseline = q;
+    }
+    looper_mark_clear(l); microloop_mark_clear(m);
+    st.cutPending = 1;
+    float step = 0.f;
+    for (int n = 0; n < SECS(0.05); n += BLK) {
+        for (int i = 0; i < BLK; i++) { inL[i] = inR[i] = 0.f; }
+        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
+        float q = max_step(outL, outR, BLK); if (q > step) step = q;
+    }
+    printf("largest jump across the cut:           %.4f (steady play was %.4f)\n", step, baseline);
+    if (step > 3.0f * baseline) {
+        printf("\nFAIL: the cut jumps %.1fx the signal's own slew - it will click\n",
+               (double)(step / baseline));
+        fail = 1;
+    } else {
+        printf("PASS: the cut is smoothed into a slope\n");
+    }
+
+    /* ---- a long hold collapses the plate ---- */
+    /* This is tail_kill in isolation, so the loop has to be cleared here even though
+       tail_kill itself never touches the loop - on the real pad the hold clears the loop and
+       ramps tail_kill together (see Task 4's on_dsp), and with loop_layer at 1.0 and no leak
+       an UNcleared loop is a genuinely persistent, non-decaying signal that tail_kill was
+       never designed to silence; without the clear this assertion would fail regardless of
+       what the DSP change under test does.
+       The clear needs its own settling time too: reading age == loop_len is a single step,
+       not a ramp (see looper.c), so for one full loop_len of samples after the clear every
+       read at that age is stale and silent, and only past that point does the position hold
+       whatever was actually written during the clear - here, more silence. A peak taken over
+       the raw hold would be dominated by that flush plus the last diffusion pass still
+       finishing in the tank, neither of which means the collapse failed. "After holding
+       tail_kill for 2 s" describes the state at the END of the hold, so the first second is
+       left unmeasured on purpose and only the second is checked - confirmed against a run
+       with tail_kill left at 0 (same clear, same settle): that reads 0.0246, comfortably
+       above the 0.01 line, so the margin below is tail_kill's decay collapse, not the clear
+       or the passage of time on their own. */
+    run(SECS(6), 1);
+    looper_mark_clear(l); microloop_mark_clear(m);
+    st.tailKill = 1.f;
+    run(SECS(1.0), 0);
+    float collapsed = run(SECS(1.0), 0);
+    printf("2 s of full tail_kill, no input:       peak %.4f\n", collapsed);
+    if (collapsed > 0.01f) {
+        printf("\nFAIL: the plate is still sounding at %.4f after a full collapse\n", collapsed);
+        fail = 1;
+    } else {
+        printf("PASS: a long hold empties the plate\n");
+    }
+    st.tailKill = 0.f;
 
     return fail;
 }
