@@ -96,7 +96,24 @@ Event Horizon and starts it sounding like the room shrinking, which is what it i
 On release `tail_kill` returns to 0 through a one-pole of about 50 ms, so the reverb send does
 not step back to unity. Against a 1200 ms fade that lag is negligible.
 
-## The refill fix
+## The refill fix (PARKED 2026-08-03, not shipped)
+
+**This section describes a repair that was attempted and then parked. The gesture does not
+depend on it and ships without it.** The work, and three traps worth more than the fix itself,
+live on branch `refill-fix-investigation` with notes at
+`docs/superpowers/notes/2026-08-03-looper-refill-investigation.md`.
+
+It was parked because it moves `eh_main`'s post-Event-Horizon remnant from 0.0078 to 0.0237 for
+reasons that were never explained. Phases 1 and 2 of that test match the original exactly, and
+phase 3 has no external input with regeneration gated, so `in_g` multiplies zero there. The
+remaining suspect is Dilate's reverse-head read sharing `l->drain` via
+`drain_stale(&l->drain, 2 * ph)`, with `eh_main` running `dilate = 1.0`. Shipping an unexplained
+3x change in what leaks out of Event Horizon is a worse trade than keeping the slow bloom, which
+is the behaviour the instrument already has.
+
+What follows is the original analysis, kept because the diagnosis is correct and the fix does
+work in isolation (a boundary-sample probe measured 105% of pre-clear level in one pass, against
+3% unfixed).
 
 The looper writes `buf = (1 - fb) * in + fb * old` (`looper.c:279-285`) with `fb = LOOP²` capped
 at 0.97 (`looper.c:210-220`). After a clear, `old` reads as 0, so the input enters at `1 - fb`:
@@ -128,6 +145,21 @@ second pass on, the loop content is the normal high-feedback blend.
 
 This also repairs the same slow bloom on Event Horizon's release. The panel is unreleased and
 single-user, so changing that behaviour costs nothing.
+
+**What the attempt actually taught us**, all three of which cost a round to find and are the
+reason this section is kept rather than deleted:
+
+- **Born empty is not declared empty.** `looper_create` callocs, so a virgin ring has
+  `since_clear = 0`, bit-identical to just-cleared. `drain_stale` cannot tell the two apart, so
+  anything treating staleness as "the user just cleared this" also fires at power-on.
+- **The measurement window.** `drain_stale` is `age > since_clear`, so the loop's own read is
+  silent for samples `0..loop_len-1` after a clear and only returns at sample `loop_len`. A test
+  measuring exactly `loop_len` sees granular and micro-loop residue and nothing of the looper,
+  and reads identical numbers fixed and unfixed.
+- **The desktop harness hard-clips at unity**, because `FC_SOFT_CLIP` is only defined in
+  `panel.cpp`. Any measurement above 1.0 pins to 1.0000, so ratio-based assertions read 100%
+  regardless of the signal. `np_main.c` now carries a permanent guard that fails loudly if the
+  built-up level reaches the clipper, and that guard ships whatever happens to the fix.
 
 ## The edge, not the action
 
