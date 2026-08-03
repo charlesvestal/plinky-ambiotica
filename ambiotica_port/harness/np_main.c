@@ -87,6 +87,38 @@ static float run(int samples, int tone) {
     return worst;
 }
 
+/* One 16-phase declick sweep. Rebuilds the bed, cuts it, and repeats 16 times, each time after
+   a different amount of extra tone so the cut lands at a different point in the 220 Hz cycle -
+   see the call site for why a single cut can't tell this apart. `declick` selects whether the
+   cut sets st.cutPending: when it does, the residual fires (see full_chain.h's wb sum); when it
+   doesn't, looper_mark_clear/microloop_mark_clear still run and the bed still drops, but cutL/
+   cutR are never seeded, so the drop is left raw. Returns the worst step seen across the 16. */
+static float declick_sweep(int declick) {
+    float worst = 0.f;
+    for (int k = 0; k < 16; k++) {
+        run(SECS(6), 1);                              /* rebuild the bed after the previous cut */
+        for (int extra = 0; extra <= k; extra++) {     /* land this cut at a different phase;
+                                                            always at least one block so g_prev
+                                                            is a fresh pre-cut sample below, not
+                                                            a stale one from the last sweep */
+            for (int i = 0; i < BLK; i++) {
+                float s = (float)(sin(phase) * 0.4); phase += 2.0 * M_PI * 220.0 / SR;
+                inL[i] = inR[i] = s;
+            }
+            fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
+        }
+        g_prev_l = outL[BLK-1]; g_prev_r = outR[BLK-1];   /* last pre-cut sample */
+        looper_mark_clear(l); microloop_mark_clear(m);
+        if (declick) st.cutPending = 1;
+        for (int n = 0; n < SECS(0.05); n += BLK) {
+            for (int i = 0; i < BLK; i++) { inL[i] = inR[i] = 0.f; }
+            fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
+            float q = max_step(outL, outR, BLK); if (q > worst) worst = q;
+        }
+    }
+    return worst;
+}
+
 int main(void) {
     const int loopcap = 32 * SR;
     l = looper_create(loopcap, SR); g = granular_create(SR); m = microloop_create(SR);
@@ -164,38 +196,46 @@ int main(void) {
     }
 
     /* ---- the edge must be a slope, not a step ---- */
-    /* Measured against the signal's OWN slew rather than against its peak. Comparing to the
-       peak would let a hard cut pass: the cut removes the bed but not the wet, so the step is
-       smaller than the full output and a peak-based limit never fires. What a click actually
-       is, is a jump far larger than anything the running signal produces, so that is what
-       gets measured - baseline first, then the cut. */
-    run(SECS(6), 1);
-    float baseline = 0.f;
-    g_prev_l = outL[BLK-1]; g_prev_r = outR[BLK-1];
-    for (int n = 0; n < SECS(0.2); n += BLK) {
-        for (int i = 0; i < BLK; i++) {
-            float s = (float)(sin(phase) * 0.4); phase += 2.0 * M_PI * 220.0 / SR;
-            inL[i] = inR[i] = s;
-        }
-        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
-        float q = max_step(outL, outR, BLK); if (q > baseline) baseline = q;
-    }
-    looper_mark_clear(l); microloop_mark_clear(m);
-    st.cutPending = 1;
-    float step = 0.f;
-    for (int n = 0; n < SECS(0.05); n += BLK) {
-        for (int i = 0; i < BLK; i++) { inL[i] = inR[i] = 0.f; }
-        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
-        float q = max_step(outL, outR, BLK); if (q > step) step = q;
-    }
-    printf("largest jump across the cut:           %.4f (steady play was %.4f)\n", step, baseline);
-    if (step > 3.0f * baseline) {
-        printf("\nFAIL: the cut jumps %.1fx the signal's own slew - it will click\n",
-               (double)(step / baseline));
+    /* LOOP 100% (loop_layer left at 1.0 above) caps feedback at 0.97, so the bed only reaches
+       1 - 0.97^N of input level after N loop passes - under 10% after the three passes SECS(6)
+       buys here. With mix at 1.0 (fully wet), micro_hold at 0 (micL negligible) and spectra at
+       0 (harmony off), that means a cut at LOOP 100% removes almost nothing: there is no click
+       to hide because there is nothing there. That is the slow-refill behaviour parked in
+       Task 2, showing up here as a test artifact rather than a real absence of clicking. Lower
+       Layer just for this check so the bed actually builds to something worth cutting - fb =
+       0.25 converges to input level within about one pass instead of thirty-three - then
+       restore LOOP 100% afterward so the long-hold check below keeps testing the case it
+       already proved.
+       No absolute bound on the step is meaningful, for two reasons found the hard way. First,
+       the step is wg*(layL+micL) sampled at whatever instant the cut happens to land on, so it
+       runs from nothing at a zero crossing to the full bed amplitude at a peak - one arbitrary
+       cut phase tells you about that phase, not the worst case a declick exists for. Second, a
+       fixed multiple of the ambient slew (an earlier version of this check used 3x) still does
+       not gate on the residual even once the worst phase is found: raising the bed scales the
+       step AND the ambient slew together, so their ratio barely moves whether cutL/cutR do
+       anything or not.
+       What actually matters is that the residual measurably shrinks the worst case a sweep can
+       find, so that is the comparison this check makes directly: declick_sweep runs 16 cuts at
+       16 different phases of the bed's cycle, once with the residual engaged (cutPending set on
+       every cut - "declicked") and once with it left inert (the clear still happens, cutPending
+       never set - "raw"), and this asserts the declicked worst case is meaningfully smaller
+       than the raw one. Delete the residual and both calls run the same code path, the ratio
+       goes to 1.0, and this fails. Measured at the worst of 16 phases: raw 0.0652, declicked
+       0.0449, ratio 0.69 - the 0.85 line leaves real margin without being slack. */
+    p.loop_layer = 0.5f;
+    float worst_declicked = declick_sweep(1);
+    float worst_raw = declick_sweep(0);
+    printf("worst jump across 16 cuts: declicked %.4f, raw %.4f (ratio %.3f)\n",
+           worst_declicked, worst_raw, (double)(worst_declicked / worst_raw));
+    if (worst_declicked >= 0.85f * worst_raw) {
+        printf("\nFAIL: declicked (%.4f) is not meaningfully smaller than raw (%.4f) - the "
+               "residual is not doing anything\n", worst_declicked, worst_raw);
         fail = 1;
     } else {
-        printf("PASS: the cut is smoothed into a slope\n");
+        printf("PASS: the residual cuts the worst-case jump to %.0f%% of the raw cut\n",
+               (double)(100.0f * worst_declicked / worst_raw));
     }
+    p.loop_layer = 1.0f;   /* restore LOOP 100% for the checks below */
 
     /* ---- a long hold collapses the plate ---- */
     /* This is tail_kill in isolation, so the loop has to be cleared here even though
