@@ -57,6 +57,12 @@ void      looper_set_leak(looper_t *l, float amount_0_1);
    at the bottom; holding there keeps the loop silent, releasing lets it record again. */
 void      looper_mark_clear(looper_t *l);
 
+/* True while the loop's own read returns silence: the buffer has been declared empty and less
+   than one loop_len has been recorded since. Exposed because the CHAIN has to know - the drift
+   regeneration path feeds the reverb wash back into this looper's input, and a buffer that was
+   just cleared must refill from what you play, not from the tail of what you cleared. */
+int       looper_is_empty(const looper_t *l);
+
 /* Process stereo block. Reads from in_l/in_r and writes them into the
  * capture ring (with feedback). out_l/out_r receive ONLY the loop signal
  * (fb × delayed_read) - no dry. The caller is responsible for mixing dry
