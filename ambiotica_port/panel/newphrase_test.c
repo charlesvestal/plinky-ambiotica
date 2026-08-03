@@ -60,6 +60,22 @@ static void test_a_very_long_hold_saturates(void) {
           (double)newphrase_tail_kill(&np));
 }
 
+/* Same guarantee as above, but forced through the vulnerable path directly: one enormous
+   dt_us in a single call, from a held_us a hair below the cap. Under the old clamp-after-add
+   code this summed to held_us + dt_us = 2099999 + 4292867297 = 4294967296, exactly 2^32,
+   which wraps a 32 bit unsigned to 0 - past the cap by the intent of the check, but the
+   stored value is 0, so tail_kill would drop from ~1.0 back to 0.0 in a single tick. The
+   accumulation test above never hits this because it only ever adds small deltas. */
+static void test_a_single_enormous_tick_saturates_without_wrapping(void) {
+    newphrase_t np = {0, 0};
+    newphrase_press(&np);
+    newphrase_tick(&np, 2099999u);
+    newphrase_tick(&np, 4292867297u);
+    CHECK(NEAR(newphrase_tail_kill(&np), 1.f),
+          "a single huge tick wrapped tail_kill to %.4f, want 1.0",
+          (double)newphrase_tail_kill(&np));
+}
+
 static void test_release_returns_to_idle(void) {
     newphrase_t np = {0, 0};
     newphrase_press(&np);
@@ -85,6 +101,7 @@ int main(void) {
     test_short_hold_never_touches_the_tail();
     test_tail_collapse_is_linear_across_the_fade();
     test_a_very_long_hold_saturates();
+    test_a_single_enormous_tick_saturates_without_wrapping();
     test_release_returns_to_idle();
     test_idle_ticks_do_not_accumulate();
     if (failures) { printf("newphrase_test: %d failure(s)\n", failures); return 1; }
