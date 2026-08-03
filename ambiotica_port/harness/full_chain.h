@@ -72,6 +72,17 @@ typedef struct {
     unsigned push_ctr;         /* throttles the coefficient re-push during slow macro ramps */
     float gravPhase;           /* Gravity tremolo LFO phase */
     dattorro_t* dat;           /* Dattorro plate; created by the panel / fc_render */
+
+    /* NEW PHRASE (x + REC). Written directly by the panel each block.
+     *
+     * DELIBERATELY NOT IN full_params. fc_render_block memcmps full_params to gate
+     * fc_push_params, so a float moving across a 1200 ms fade would clear that gate on
+     * roughly every fourth block and turn a slow visual fade into several hundred
+     * powf/expf coefficient re-pushes. Here the gate never sees them. */
+    float tailKill;              /* 0..1, applied; the panel one-poles toward its target */
+    int   cutPending;            /* set by the panel on the block a clear lands */
+    float cutL, cutR;            /* decaying residual that turns the cut into a slope */
+    float lastBedL, lastBedR;    /* previous block's final bed sample, to seed the residual */
 } fc_state;
 
 /* Spectra wash = the selected MODE's tonic chord, as semitone offsets above the key
@@ -194,6 +205,12 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
      * too expensive on the RP2350. */
     const float horizonClear = p->horizon >= 1.0f ? 0.0f : 1.0f - p->horizon;   /* 0..1 */
 
+    /* New Phrase's long hold, clamped once and used twice below. The plate cannot be silenced
+     * by decay alone (decay is the tank's feedback, not its input gain - see the reverb send
+     * comment), so collapsing the tail means cutting what goes IN as well as what recirculates.
+     * 0 = untouched, 1 = fully collapsed. */
+    const float tk = st->tailKill < 0.f ? 0.f : (st->tailKill > 1.f ? 1.f : st->tailKill);
+
     for (int i = 0; i < n; i++) {                        /* DC block */
         st->dcL += dcIC * (in_l[i] - st->dcL); st->dcR += dcIC * (in_r[i] - st->dcR);
         st->dryL[i] = in_l[i] - st->dcL; st->dryR[i] = in_r[i] - st->dcR;
@@ -238,11 +255,17 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
        * Tail 0 leaves the plate fed only by time-displaced material (loop, granular, micro),
        * so MIX full really is silent until the loop comes round. */
       const float dryToRev = p->decay < 0.f ? 0.f : (p->decay > 1.f ? 1.f : p->decay);
-      for (int i = 0; i < n; i++) { st->rinL[i] = dryToRev * st->blL[i] + st->layL[i] + microRevSend * st->micL[i];
-                                    st->rinR[i] = dryToRev * st->blR[i] + st->layR[i] + microRevSend * st->micR[i]; } }
+      /* Half of the collapse. Folded into the existing send rather than added as a pass. */
+      const float sendG = 1.0f - tk;
+      for (int i = 0; i < n; i++) { st->rinL[i] = sendG * (dryToRev * st->blL[i] + st->layL[i] + microRevSend * st->micL[i]);
+                                    st->rinR[i] = sendG * (dryToRev * st->blR[i] + st->layR[i] + microRevSend * st->micR[i]); } }
     STG(2);   /* bloom + microloop + makeup */
 
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
+      /* The other half. NOT an output duck: ducking would hide a tail that is still in the
+       * tank, and releasing mid-hold would swell it back. Killing the feedback empties the
+       * tank for real, so everything heard was real and release can resurrect nothing. */
+      t *= (1.0f - tk);
       dattorro_set_decay(st->dat, t);                       /* Tail -> tail length (tracks the plugin) */
       dattorro_set_mod(st->dat, 0.25f + 0.75f * p->mod_depth); /* Flux + a floor so the tank always shimmers */
       dattorro_set_damp(st->dat, 0.22f); }                  /* bright, lush tail */
@@ -259,8 +282,24 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
      * the wash and let harmony sit on top. */
     for (int i = 0; i < n; i++) { st->revFbL[i] = st->wetL[i]; st->revFbR[i] = st->wetR[i]; } st->revFbN = n;
     harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* add the Spectra chord */
-    for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i];
-                                  st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i]; }
+    /* THE EDGE, NOT THE ACTION. Marking the buffer clear takes the bed from full level to zero
+     * in one sample, which is a step and therefore a click. Fading the bed out and clearing at
+     * the bottom would fix it by DELAYING the clear, and the whole point of the gesture is that
+     * it is immediate - so the clear stays on the first available sample and the edge is
+     * smoothed instead. The residual is seeded from the last bed sample before the cut and
+     * decayed to zero over about 5 ms, added on top of an output that is already silent, so
+     * nothing waits on it. Kept out of the reverb send: 5 ms of decaying residual into a
+     * diffusion network is inaudible and the output bus alone is simpler. */
+    if (st->cutPending) {
+        st->cutL = st->lastBedL; st->cutR = st->lastBedR;
+        st->cutPending = 0;
+    }
+    const float cutDecay = 1.0f - (1.0f / (0.0015f * (float)sr));   /* ~1.5 ms one-pole */
+    for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i] + st->cutL;
+                                  st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i] + st->cutR;
+                                  st->cutL *= cutDecay; st->cutR *= cutDecay; }
+    if (n > 0) { st->lastBedL = st->layL[n-1] + st->micL[n-1];
+                 st->lastBedR = st->layR[n-1] + st->micR[n-1]; }
     STG(4);   /* harmony (Spectra) */
     drift_process(d, st->wbL, st->wbR, st->wbL, st->wbR, n);                /* wet-bus detune */
 
