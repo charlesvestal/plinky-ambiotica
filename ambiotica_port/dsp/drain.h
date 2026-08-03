@@ -73,6 +73,15 @@ typedef struct {
  * becoming unreachable. It is now hygiene, not the mechanism. */
 static inline void drain_mark_clear(drain_cursor_t *dc) { dc->since_clear = 0; }
 
+/* BORN EMPTY IS NOT DECLARED EMPTY.
+ *
+ * A freshly created ring is calloc'd, so its buffer reads as silence and `since_clear` starts
+ * at 0 - bit-identical to the state `drain_mark_clear` produces. That is fine for reads, which
+ * correctly skip the fetch either way, but callers that treat staleness as "the user just
+ * cleared this" must not fire at power-on. Seed a new ring as fully recorded so only an
+ * explicit clear makes it stale. */
+static inline void drain_init_recorded(drain_cursor_t *dc, int cap) { dc->since_clear = cap; }
+
 /* One recorded sample. Saturates at the ring size: past that everything is post-clear and the
  * counter must not wrap back into the stale range. */
 static inline void drain_tick(drain_cursor_t *dc, int cap) {

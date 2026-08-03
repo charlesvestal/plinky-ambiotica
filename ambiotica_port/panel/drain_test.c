@@ -74,6 +74,34 @@ static double comeback(int hold_s, int gated) {
     return -1.0;
 }
 
+/* BORN EMPTY IS NOT DECLARED EMPTY (drain.h). A freshly-seeded ring must read as fully
+ * recorded, not as just-cleared - calloc alone leaves since_clear at 0, indistinguishable
+ * from a real drain_mark_clear, and a caller that fast-refills on staleness (New Phrase)
+ * would otherwise fire on every power-on and scene load instead of only on the gesture.
+ * Pinned directly so nobody "simplifies" drain_init_recorded back to a redundant zero-init. */
+static int test_born_empty_is_not_declared_empty(void) {
+    int fail = 0;
+    drain_cursor_t dc; drain_restart(&dc);
+    drain_init_recorded(&dc, CAP);
+
+    /* Not stale for any age up to the seeded capacity - the whole ring reads as recorded. */
+    if (drain_stale(&dc, 0) || drain_stale(&dc, WIN) || drain_stale(&dc, CAP)) {
+        printf("FAIL: a freshly-seeded ring reads stale before anyone ever asked for a clear\n");
+        fail = 1;
+    }
+
+    /* Only an explicit clear may make it stale. */
+    drain_mark_clear(&dc);
+    if (!drain_stale(&dc, 1)) {
+        printf("FAIL: drain_mark_clear did not make the ring stale\n");
+        fail = 1;
+    }
+
+    printf("%s\n", fail ? "FAIL: born-empty and declared-empty are not being told apart"
+                         : "PASS: a seeded ring stays not-stale until an explicit clear");
+    return fail;
+}
+
 int main(void) {
     printf("holding the drain for %d s on a %d-sample (%.0f s) loop\n\n", HOLD, WIN, (double)WIN / SR);
     printf("  cursor      per   goes silent at   audible samples\n");
@@ -106,5 +134,9 @@ int main(void) {
     }
     printf("\n%s\n", fail ? "FAIL: loop returned after the slider was released"
                           : "PASS: cleared loop stays silent however briefly the slider is held");
+
+    printf("\n");
+    if (test_born_empty_is_not_declared_empty()) fail = 1;
+
     return fail;
 }

@@ -218,6 +218,10 @@ microloop_t* microloop_create(double sample_rate) {
     m->spawn_timer = 0;
     m->cloud_tick = 0; m->cloud_l = m->cloud_r = 0.0f;
     for (int i = 0; i < M_GRAINS; i++) m->grain[i].active = 0;
+    /* Born empty is not declared empty - see drain.h. Without this, a virgin ring reads as
+     * "just cleared" (calloc leaves since_clear at 0 too), which would affect any caller that
+     * treats staleness as a user gesture rather than as "nothing recorded yet". */
+    drain_init_recorded(&m->drain, m->buf_capacity);
     return m;
 }
 
@@ -243,6 +247,9 @@ void microloop_reset(microloop_t *m) {
     m->freeze_mix = 0.0f; m->spawn_timer = 0;
     m->cloud_tick = 0; m->cloud_l = m->cloud_r = 0.0f;
     for (int i = 0; i < M_GRAINS; i++) m->grain[i].active = 0;
+    /* Same reasoning as microloop_create: a reset re-enters the born-empty state, not the
+     * declared-empty one. */
+    drain_init_recorded(&m->drain, m->buf_capacity);
 }
 
 /* Dilate: 0 = forward output, 1 = reversed (reverse-delay read). Smoothed. */

@@ -152,7 +152,11 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
     const float cleanG   = (scatter <= 0.5f) ? 1.0f : (1.0f - 2.0f * (scatter - 0.5f));
     const float shimmerG = 0.55f + 0.30f * scatter;   /* grain floor so the pitched (oct/5th)
                                                          grains blend as an in-key bed */
-    const float driftFbGain = 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
+    /* Zeroed while the loop is empty, so a cleared buffer cannot refill itself from the plate.
+       Driving the GAIN rather than skipping the block keeps the existing one-pole smoothing, so
+       the regen path fades rather than steps. */
+    const float driftFbGain = looper_is_empty(l) ? 0.0f
+                            : 0.22f * p->drift_amt * (1.0f - 0.78f * p->decay) * (1.0f - 0.50f * p->spectra);
     /* Plugin one-pole cutoffs at the host rate: a 5 Hz DC blocker and a 2500 Hz low-pass
      * on the drift-regen feedback. The regen LP must stay this bright - a sub-bass cutoff
      * makes the Flux wash spiral DOWN in pitch (feeds back only lows). */
