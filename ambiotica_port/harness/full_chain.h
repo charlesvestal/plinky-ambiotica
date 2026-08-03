@@ -271,34 +271,6 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
       float tp = (mh - 0.7f) * (1.0f / 0.3f); if (tp < 0.f) tp = 0.f; else if (tp > 1.f) tp = 1.f;
       mk += (1.0f - mk) * tp; mk *= 0.75f;
       for (int i = 0; i < n; i++) { st->micL[i] *= mk; st->micR[i] *= mk; } }
-    /* THE EDGE, NOT THE ACTION. Marking the buffer clear takes the bed from full level to zero
-     * in one sample, which is a step and therefore a click. Fading the bed out and clearing at
-     * the bottom would fix it by DELAYING the clear, and the whole point of the gesture is that
-     * it is immediate - so the clear stays on the first available sample and the edge is
-     * smoothed instead. The residual is seeded from the last bed sample before the cut and
-     * decayed to zero over about 5 ms.
-     *
-     * It goes into BOTH the reverb send (rinL/rinR, below) and the output bus (wbL/wbR,
-     * further down): layL+micL is a term in both, so a residual on only one leaves the other
-     * with an uncompensated step. dattorro.c explains why the send cannot be left alone the
-     * way a comb-based reverb's could: "A Dattorro plate has no such gap. Its input allpasses
-     * pass a scaled copy of the input straight through" - so the step reaches wetL/wetR within
-     * a sample or two, and wetL/wetR is summed into wbL/wbR with no residual of its own,
-     * putting the click right back on the output bus the compensation below was supposed to
-     * have already smoothed.
-     *
-     * Seeded here, before the rin loop runs, so the very block the cut lands on carries the
-     * residual into the send as well as the bus. The rin loop below decays a LOCAL copy (cl/cr)
-     * from this seed using cutDecay; the wb loop further down decays st->cutL/cutR itself the
-     * same way from the same seed. Same seed, same coefficient, so the two loops produce
-     * identical per-sample sequences despite running at different points in the block, and
-     * st->cutL/cutR still end the block at the correct value for the next one. */
-    if (st->cutPending) {
-        st->cutL = st->lastBedL; st->cutR = st->lastBedR;
-        st->cutPending = 0;
-    }
-    const float cutDecay = 1.0f - (1.0f / (0.0015f * (float)sr));   /* ~1.5 ms one-pole */
-
     /* Micro reverb send: full for short/mid delays, reduced in the held-pad zone (plugin).
      * rin = bloom + layered + microRevSend*micro; the wet bus below uses the full micro. */
     { float mp = (p->micro_hold - 0.80f) * (1.0f / 0.15f); if (mp < 0.f) mp = 0.f; else if (mp > 1.f) mp = 1.f;
@@ -311,14 +283,8 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
       const float dryToRev = p->decay < 0.f ? 0.f : (p->decay > 1.f ? 1.f : p->decay);
       /* Half of the collapse. Folded into the existing send rather than added as a pass. */
       const float sendG = 1.0f - tk;
-      /* New Phrase's cut residual (see above), added raw like the wb loop's - not folded into
-       * sendG's collapse, since it stands in for the bed sample the cut removed, not for the
-       * live send. A local copy so this loop and the wb loop below decay from the same seed
-       * without either of them touching st->cutL/cutR twice. */
-      float cl = st->cutL, cr = st->cutR;
-      for (int i = 0; i < n; i++) { st->rinL[i] = sendG * (dryToRev * st->blL[i] + st->layL[i] + microRevSend * st->micL[i]) + cl;
-                                    st->rinR[i] = sendG * (dryToRev * st->blR[i] + st->layR[i] + microRevSend * st->micR[i]) + cr;
-                                    cl *= cutDecay; cr *= cutDecay; } }
+      for (int i = 0; i < n; i++) { st->rinL[i] = sendG * (dryToRev * st->blL[i] + st->layL[i] + microRevSend * st->micL[i]);
+                                    st->rinR[i] = sendG * (dryToRev * st->blR[i] + st->layR[i] + microRevSend * st->micR[i]); } }
     STG(2);   /* bloom + microloop + makeup */
 
     { float t = (p->decay - 0.30f) * (1.0f / 0.70f); if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
@@ -342,10 +308,43 @@ static void fc_render_block(fc_state* st, looper_t* l, granular_t* g, microloop_
      * the wash and let harmony sit on top. */
     for (int i = 0; i < n; i++) { st->revFbL[i] = st->wetL[i]; st->revFbR[i] = st->wetR[i]; } st->revFbN = n;
     harmony_process(h, st->wetL, st->wetR, st->wetL, st->wetR, n);          /* add the Spectra chord */
-    /* Output-bus half of the residual seeded above (see the comment there for why it now feeds
-     * both the send and the bus). st->cutL/cutR continue decaying from wherever the rin loop's
-     * local copy left off - same seed, same cutDecay coefficient, so this picks up exactly
-     * where that one would be at each sample index. */
+    /* THE EDGE, NOT THE ACTION. Marking the buffer clear takes the bed from full level to zero
+     * in one sample, which is a step and therefore a click. Fading the bed out and clearing at
+     * the bottom would fix it by DELAYING the clear, and the whole point of the gesture is that
+     * it is immediate - so the clear stays on the first available sample and the edge is
+     * smoothed instead.
+     *
+     * The residual is the GAP left by the cut, not the last bed sample verbatim - an earlier
+     * version of this fix seeded cutL/cutR to lastBedL/lastBedR directly and over-compensated.
+     * The bed does not actually go to zero at the cut: looper_mark_clear/microloop_mark_clear
+     * only gate READS, so granular_process keeps emitting grains already in flight (its capture
+     * ring is untouched, so layL = cleanG*loopL + shimmerG*granL still has a live granL term),
+     * and the micro-loop's own output one-pole holds a filtered tail after its read gates shut,
+     * so micL decays rather than dropping. With cutL = lastBedL (the old seed), wbL[0] =
+     * layL[0] + micL[0] + wetL[0] + lastBedL, one sample after a previous value of lastBedL +
+     * wetL_prev - a step of layL[0] + micL[0], i.e. exactly the part of the bed that survived
+     * the cut, added a SECOND time on top of itself. The declick was causing the click.
+     * cutL = lastBedL - (layL[0] + micL[0]) fixes this: wbL[0] becomes wetL[0] + lastBedL,
+     * matching the previous sample to within wetL's ordinary smoothness, so sample 0 is
+     * continuous by construction. It also self-corrects when the bed genuinely does hit zero
+     * (nothing in flight, the one-pole already settled): the subtraction is then zero and this
+     * is the original seed. layL[]/micL[] are fully computed for this block well before this
+     * point (granular_process and the microloop makeup gain both ran above), so index 0 is
+     * available here.
+     *
+     * Deliberately NOT sent to the reverb (rinL/rinR) as well - a prior version of this fix did
+     * that and it bought nothing measurable. dattorro.c gives the plate an explicit 50 ms
+     * predelay (PREDELAY_MS, "Hold the input back so the plate starts after the note, not with
+     * it" - dattorro_tick) precisely so it cannot answer within a sample or two the way its
+     * input allpasses would on their own. A step in the send is 50 ms from ever reaching
+     * wetL/wetR, ten times longer than this residual's ~5 ms decay, so by the time the plate
+     * could answer, there is nothing left in the send to hear. */
+    if (st->cutPending) {
+        st->cutL = st->lastBedL - (st->layL[0] + st->micL[0]);
+        st->cutR = st->lastBedR - (st->layR[0] + st->micR[0]);
+        st->cutPending = 0;
+    }
+    const float cutDecay = 1.0f - (1.0f / (0.0015f * (float)sr));   /* ~1.5 ms one-pole */
     for (int i = 0; i < n; i++) { st->wbL[i] = st->layL[i] + st->micL[i] + st->wetL[i] + st->cutL;
                                   st->wbR[i] = st->layR[i] + st->micR[i] + st->wetR[i] + st->cutR;
                                   st->cutL *= cutDecay; st->cutR *= cutDecay; }

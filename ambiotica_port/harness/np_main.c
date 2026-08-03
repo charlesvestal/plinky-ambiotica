@@ -428,14 +428,25 @@ int main(void) {
        every cut - "declicked") and once with it left inert (the clear still happens, cutPending
        never set - "raw"), and this asserts the declicked worst case is meaningfully smaller
        than the raw one. Delete the residual and both calls run the same code path, the ratio
-       goes to 1.0, and this fails. Measured at the worst of 16 phases: raw 0.0652, declicked
-       0.0449, ratio 0.69 - the 0.85 line leaves real margin without being slack. */
+       goes to 1.0, and this fails.
+
+       The threshold has moved twice. Originally measured raw 0.0652, declicked 0.0449, ratio
+       0.69 against a 0.85 line. Seeding cutL/cutR straight from lastBedL/lastBedR (the residual
+       as a raw value) measured raw 0.0616, declicked 0.0398, ratio 0.646 - no real change,
+       because that seed was over-compensating: the bed does not actually reach zero at the cut
+       (granular grains already in flight, the micro-loop's output one-pole decaying rather than
+       dropping - see full_chain.h's wb-loop comment), so adding the FULL last bed value on top
+       of what already survived just replaced a downward step with an upward one of about the
+       same size. Seeding the residual as the GAP - lastBedL/R minus what the bed's first sample
+       of the new block actually is - fixed that, and only then did the ratio move: raw 0.0616
+       (unaffected, the raw path never sets cutPending), declicked 0.0309, ratio 0.502. The 0.65
+       line leaves real margin above that without inheriting the old 0.85's slack. */
     p.loop_layer = 0.5f;
     float worst_declicked = declick_sweep(1);
     float worst_raw = declick_sweep(0);
     printf("worst jump across 16 cuts: declicked %.4f, raw %.4f (ratio %.3f)\n",
            worst_declicked, worst_raw, (double)(worst_declicked / worst_raw));
-    if (worst_declicked >= 0.85f * worst_raw) {
+    if (worst_declicked >= 0.65f * worst_raw) {
         printf("\nFAIL: declicked (%.4f) is not meaningfully smaller than raw (%.4f) - the "
                "residual is not doing anything\n", worst_declicked, worst_raw);
         fail = 1;
