@@ -728,6 +728,14 @@ struct ambiotica : panel_t {
            nothing to record. The whole gesture is on the bottom-right corner, two adjacent
            pads, so it is a one-handed move. */
         {
+            /* Edge detection FIRST, so the LED and the help text below are drawn from one
+               snapshot. Computing the colour before this ran left the pad showing last frame's
+               state on the press and release frames while the help line showed this frame's:
+               imperceptible at UI rates, but an easy trap for the next edit. */
+            const bool rec_down = xh && get_touch_down(COL_REC, page_y + CTL_DN) != 0;
+            if (rec_down && !newphrase_held(&newphrase)) newphrase_press(&newphrase);
+            else if (!rec_down && newphrase_held(&newphrase)) newphrase_release(&newphrase);
+
             const float tk = newphrase_tail_kill(&newphrase);
             uint32_t rc = 0;
             if (xh) {
@@ -738,9 +746,6 @@ struct ambiotica : panel_t {
                                                  : DIMMER(RED);
             }
             set_led(COL_REC, page_y + CTL_DN, rc);
-            const bool rec_down = xh && get_touch_down(COL_REC, page_y + CTL_DN) != 0;
-            if (rec_down && !newphrase_held(&newphrase)) newphrase_press(&newphrase);
-            else if (!rec_down && newphrase_held(&newphrase)) newphrase_release(&newphrase);
             /* Two calls, not a ternary into the format argument - set_help_text is a printf
                style function and a non-literal format is a warning waiting to happen. */
             if (newphrase_held(&newphrase)) {
@@ -1686,6 +1691,13 @@ struct ambiotica : panel_t {
                send to unity smoothly. Negligible lag against a 1200 ms ramp. */
             const float tgt = newphrase_tail_kill(&newphrase);
             np_tail_sm += 0.04f * (tgt - np_tail_sm);
+            /* Snap the last of the tail off rather than letting the one-pole approach zero
+               forever. Unlike AMB_SM's deadband, this is NOT protecting a memcmp push gate -
+               tailKill deliberately lives in fc_state where no gate watches it. It is here so
+               "collapsed" is bit-exact zero: fc_render_block's sendG and decay scale both read
+               it every block, and a value that never quite arrives leaves the plate fractionally
+               ducked forever after a gesture that is supposed to be over. Only fires on the way
+               back to idle, so it can never truncate a hold. */
             if (np_tail_sm < 5e-4f && tgt == 0.f) np_tail_sm = 0.f;
             st.tailKill = np_tail_sm;
         }
