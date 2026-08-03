@@ -43,7 +43,10 @@ static inline void newphrase_release(newphrase_t *np) { np->active = 0; np->held
    frame delta, and a pad leant on for long enough would otherwise overflow back through the
    threshold and bring the reverb up under a finger that never moved. The check is done on
    the remaining headroom, not on the sum, so held_us + dt_us is never computed and there is
-   nothing left to overflow. */
+   nothing left to overflow. dt_us is unsigned on purpose - it is what keeps that headroom
+   check clean - so a caller reading a signed UI tick delta must clamp negative values to 0
+   before calling; a raw cast would wrap a negative delta to a huge one and slam the hold
+   straight to its cap. */
 static inline void newphrase_tick(newphrase_t *np, unsigned dt_us) {
     if (!np->active) return;
     const unsigned cap = NP_TAIL_HOLD_US + NP_TAIL_FADE_US;
@@ -52,10 +55,12 @@ static inline void newphrase_tick(newphrase_t *np, unsigned dt_us) {
     np->held_us += dt_us;
 }
 
-/* 1 while held. The clear is RE-STAMPED every block rather than fired once on the edge, for
-   the same reason Event Horizon re-stamps at the bottom of its slider: holding then means
-   "stay empty", and releasing starts recording from empty. */
-static inline int newphrase_stamp(const newphrase_t *np) { return np->active ? 1 : 0; }
+/* 1 while the pad is held - that is the whole of the state this header tracks. The DSP side
+   re-marks the loop and micro-loop clear every block for as long as this reads true, rather
+   than firing once on the press edge, for the same reason Event Horizon re-stamps at the
+   bottom of its slider: holding means "stay empty", and releasing starts recording from
+   empty. */
+static inline int newphrase_held(const newphrase_t *np) { return np->active ? 1 : 0; }
 
 /* 0..1 target for the plate collapse. A TARGET, not the applied value: the DSP one-poles
    toward it, so releasing mid-fade returns the reverb send to unity smoothly instead of
