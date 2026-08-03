@@ -167,7 +167,7 @@ typedef struct { unsigned held_us; unsigned char active; } newphrase_t;
 void  newphrase_press(newphrase_t *np);
 void  newphrase_release(newphrase_t *np);
 void  newphrase_tick(newphrase_t *np, unsigned dt_us);
-int   newphrase_stamp(const newphrase_t *np);       /* 1 while held: keep the buffers empty */
+int   newphrase_held(const newphrase_t *np);        /* 1 while held: keep the buffers empty */
 float newphrase_tail_kill(const newphrase_t *np);   /* 0..1 target, DSP one-poles toward it */
 ```
 
@@ -177,7 +177,7 @@ Constants: `NP_TAIL_HOLD_US = 900000`, `NP_TAIL_FADE_US = 1200000`.
 lands in `dsp/looper.c`; the edge residual into the `wb` sum.
 
 **`panel/panel.cpp`**: add `COL_REC = 12` to the `CTL_DN` group with the manual quote as its
-comment. Drive `newphrase_tick` from the UI thread, consume `newphrase_stamp` and
+comment. Drive `newphrase_tick` from the UI thread, consume `newphrase_held` and
 `newphrase_tail_kill` in `on_dsp` beside the existing `eh_flushed` block.
 
 **`amalgamate.sh`** inlines `newphrase.h` ahead of `panel.cpp`; **`tests.sh`** builds

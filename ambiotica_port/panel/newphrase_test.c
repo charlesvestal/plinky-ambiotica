@@ -20,7 +20,7 @@ static int failures = 0;
 static void test_press_stamps_immediately_and_spares_the_tail(void) {
     newphrase_t np = {0, 0};
     newphrase_press(&np);
-    CHECK(newphrase_stamp(&np) == 1, "press did not ask for a stamp");
+    CHECK(newphrase_held(&np) == 1, "press did not register as held");
     CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
           "press already collapsing the tail: %.4f", (double)newphrase_tail_kill(&np));
 }
@@ -32,7 +32,7 @@ static void test_short_hold_never_touches_the_tail(void) {
     newphrase_tick(&np, NP_TAIL_HOLD_US - 1000u);
     CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
           "tail collapsing 1 ms early: %.4f", (double)newphrase_tail_kill(&np));
-    CHECK(newphrase_stamp(&np) == 1, "stamp dropped while still held");
+    CHECK(newphrase_held(&np) == 1, "held dropped while pad still down");
 }
 
 static void test_tail_collapse_is_linear_across_the_fade(void) {
@@ -81,7 +81,7 @@ static void test_release_returns_to_idle(void) {
     newphrase_press(&np);
     newphrase_tick(&np, NP_TAIL_HOLD_US + NP_TAIL_FADE_US);
     newphrase_release(&np);
-    CHECK(newphrase_stamp(&np) == 0, "still stamping after release");
+    CHECK(newphrase_held(&np) == 0, "still held after release");
     CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
           "still collapsing the tail after release: %.4f", (double)newphrase_tail_kill(&np));
 }
@@ -96,6 +96,48 @@ static void test_idle_ticks_do_not_accumulate(void) {
           "idle ticks leaked into the next press: %.4f", (double)newphrase_tail_kill(&np));
 }
 
+/* The planned call site clamps a negative UI delta to exactly 0 rather than skipping the
+   call, so a zero-length tick is a real path, not a hypothetical - it must be a true no-op
+   and must not disturb a hold already in progress. */
+static void test_zero_tick_is_a_no_op(void) {
+    newphrase_t np = {0, 0};
+    newphrase_press(&np);
+    newphrase_tick(&np, NP_TAIL_HOLD_US / 2u);
+    const float before = newphrase_tail_kill(&np);
+    newphrase_tick(&np, 0u);
+    CHECK(NEAR(newphrase_tail_kill(&np), before),
+          "a zero-length tick moved tail_kill from %.4f to %.4f",
+          (double)before, (double)newphrase_tail_kill(&np));
+    CHECK(newphrase_held(&np) == 1, "a zero-length tick dropped the hold");
+}
+
+/* A re-press mid-hold is a fresh contact, not a continuation of the old one, so held_us must
+   snap back to 0 rather than carry the running timer forward - pin that it is intended. */
+static void test_press_while_active_resets_held_us(void) {
+    newphrase_t np = {0, 0};
+    newphrase_press(&np);
+    newphrase_tick(&np, NP_TAIL_HOLD_US + NP_TAIL_FADE_US);
+    CHECK(NEAR(newphrase_tail_kill(&np), 1.f),
+          "setup: expected a fully collapsed tail before the re-press");
+    newphrase_press(&np);
+    CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
+          "re-press did not reset held_us: tail_kill reads %.4f, want 0.0",
+          (double)newphrase_tail_kill(&np));
+    CHECK(newphrase_held(&np) == 1, "re-press dropped the hold");
+}
+
+/* The panel calls release on the down-to-up edge without first checking whether it was
+   already idle (a stray release, or two in a row), so this must be harmless and idempotent. */
+static void test_release_while_idle_is_harmless(void) {
+    newphrase_t np = {0, 0};
+    newphrase_release(&np);
+    CHECK(newphrase_held(&np) == 0, "release while idle set the hold");
+    CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
+          "release while idle disturbed tail_kill: %.4f", (double)newphrase_tail_kill(&np));
+    newphrase_release(&np);
+    CHECK(newphrase_held(&np) == 0, "a second release while idle set the hold");
+}
+
 int main(void) {
     test_press_stamps_immediately_and_spares_the_tail();
     test_short_hold_never_touches_the_tail();
@@ -104,6 +146,9 @@ int main(void) {
     test_a_single_enormous_tick_saturates_without_wrapping();
     test_release_returns_to_idle();
     test_idle_ticks_do_not_accumulate();
+    test_zero_tick_is_a_no_op();
+    test_press_while_active_resets_held_us();
+    test_release_while_idle_is_harmless();
     if (failures) { printf("newphrase_test: %d failure(s)\n", failures); return 1; }
     printf("newphrase_test: all passed\n");
     return 0;

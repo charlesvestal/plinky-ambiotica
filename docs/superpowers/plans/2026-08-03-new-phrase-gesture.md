@@ -23,7 +23,7 @@
 
 | File | Status | Responsibility |
 | --- | --- | --- |
-| `ambiotica_port/panel/newphrase.h` | Create | Pure hold-timer logic: press/release/tick to `stamp` + `tail_kill`. No SDK types |
+| `ambiotica_port/panel/newphrase.h` | Create | Pure hold-timer logic: press/release/tick to `held` + `tail_kill`. No SDK types |
 | `ambiotica_port/panel/newphrase_test.c` | Create | Unit tests for the above |
 | `ambiotica_port/harness/np_main.c` | Create | End-to-end driver over the real chain: refill, clear, tail collapse |
 | `ambiotica_port/dsp/looper.c` | Modify | The `in_g` refill fix, ~line 244 and ~line 285 |
@@ -39,7 +39,7 @@ Task order is bottom-up so every task is independently verifiable on the desktop
 
 ### Task 1: New Phrase hold timer
 
-**Goal:** A pure, tested header that turns "how long has `× + REC` been held" into a stamp flag and a 0..1 tail-collapse target.
+**Goal:** A pure, tested header that turns "how long has `× + REC` been held" into a held flag and a 0..1 tail-collapse target.
 
 **Files:**
 - Create: `ambiotica_port/panel/newphrase.h`
@@ -48,7 +48,7 @@ Task order is bottom-up so every task is independently verifiable on the desktop
 - Modify: `ambiotica_port/panel/amalgamate.sh:43`
 
 **Acceptance Criteria:**
-- [ ] `newphrase_stamp` is 1 from the instant of press until release
+- [ ] `newphrase_held` is 1 from the instant of press until release
 - [ ] `newphrase_tail_kill` stays exactly 0 for the first 900 ms of hold
 - [ ] It reaches 0.5 at 900 + 600 ms and 1.0 at 900 + 1200 ms
 - [ ] It stays clamped at 1.0 for an arbitrarily long hold, never wrapping back toward 0
@@ -86,7 +86,7 @@ static int failures = 0;
 static void test_press_stamps_immediately_and_spares_the_tail(void) {
     newphrase_t np = {0, 0};
     newphrase_press(&np);
-    CHECK(newphrase_stamp(&np) == 1, "press did not ask for a stamp");
+    CHECK(newphrase_held(&np) == 1, "press did not register as held");
     CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
           "press already collapsing the tail: %.4f", (double)newphrase_tail_kill(&np));
 }
@@ -98,7 +98,7 @@ static void test_short_hold_never_touches_the_tail(void) {
     newphrase_tick(&np, NP_TAIL_HOLD_US - 1000u);
     CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
           "tail collapsing 1 ms early: %.4f", (double)newphrase_tail_kill(&np));
-    CHECK(newphrase_stamp(&np) == 1, "stamp dropped while still held");
+    CHECK(newphrase_held(&np) == 1, "held dropped while pad still down");
 }
 
 static void test_tail_collapse_is_linear_across_the_fade(void) {
@@ -147,7 +147,7 @@ static void test_release_returns_to_idle(void) {
     newphrase_press(&np);
     newphrase_tick(&np, NP_TAIL_HOLD_US + NP_TAIL_FADE_US);
     newphrase_release(&np);
-    CHECK(newphrase_stamp(&np) == 0, "still stamping after release");
+    CHECK(newphrase_held(&np) == 0, "still held after release");
     CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
           "still collapsing the tail after release: %.4f", (double)newphrase_tail_kill(&np));
 }
@@ -162,6 +162,48 @@ static void test_idle_ticks_do_not_accumulate(void) {
           "idle ticks leaked into the next press: %.4f", (double)newphrase_tail_kill(&np));
 }
 
+/* The planned call site clamps a negative UI delta to exactly 0 rather than skipping the
+   call, so a zero-length tick is a real path, not a hypothetical - it must be a true no-op
+   and must not disturb a hold already in progress. */
+static void test_zero_tick_is_a_no_op(void) {
+    newphrase_t np = {0, 0};
+    newphrase_press(&np);
+    newphrase_tick(&np, NP_TAIL_HOLD_US / 2u);
+    const float before = newphrase_tail_kill(&np);
+    newphrase_tick(&np, 0u);
+    CHECK(NEAR(newphrase_tail_kill(&np), before),
+          "a zero-length tick moved tail_kill from %.4f to %.4f",
+          (double)before, (double)newphrase_tail_kill(&np));
+    CHECK(newphrase_held(&np) == 1, "a zero-length tick dropped the hold");
+}
+
+/* A re-press mid-hold is a fresh contact, not a continuation of the old one, so held_us must
+   snap back to 0 rather than carry the running timer forward - pin that it is intended. */
+static void test_press_while_active_resets_held_us(void) {
+    newphrase_t np = {0, 0};
+    newphrase_press(&np);
+    newphrase_tick(&np, NP_TAIL_HOLD_US + NP_TAIL_FADE_US);
+    CHECK(NEAR(newphrase_tail_kill(&np), 1.f),
+          "setup: expected a fully collapsed tail before the re-press");
+    newphrase_press(&np);
+    CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
+          "re-press did not reset held_us: tail_kill reads %.4f, want 0.0",
+          (double)newphrase_tail_kill(&np));
+    CHECK(newphrase_held(&np) == 1, "re-press dropped the hold");
+}
+
+/* The panel calls release on the down-to-up edge without first checking whether it was
+   already idle (a stray release, or two in a row), so this must be harmless and idempotent. */
+static void test_release_while_idle_is_harmless(void) {
+    newphrase_t np = {0, 0};
+    newphrase_release(&np);
+    CHECK(newphrase_held(&np) == 0, "release while idle set the hold");
+    CHECK(NEAR(newphrase_tail_kill(&np), 0.f),
+          "release while idle disturbed tail_kill: %.4f", (double)newphrase_tail_kill(&np));
+    newphrase_release(&np);
+    CHECK(newphrase_held(&np) == 0, "a second release while idle set the hold");
+}
+
 int main(void) {
     test_press_stamps_immediately_and_spares_the_tail();
     test_short_hold_never_touches_the_tail();
@@ -170,6 +212,9 @@ int main(void) {
     test_a_single_enormous_tick_saturates_without_wrapping();
     test_release_returns_to_idle();
     test_idle_ticks_do_not_accumulate();
+    test_zero_tick_is_a_no_op();
+    test_press_while_active_resets_held_us();
+    test_release_while_idle_is_harmless();
     if (failures) { printf("newphrase_test: %d failure(s)\n", failures); return 1; }
     printf("newphrase_test: all passed\n");
     return 0;
@@ -234,7 +279,10 @@ static inline void newphrase_release(newphrase_t *np) { np->active = 0; np->held
    frame delta, and a pad leant on for long enough would otherwise overflow back through the
    threshold and bring the reverb up under a finger that never moved. The check is done on
    the remaining headroom, not on the sum, so held_us + dt_us is never computed and there is
-   nothing left to overflow. */
+   nothing left to overflow. dt_us is unsigned on purpose - it is what keeps that headroom
+   check clean - so a caller reading a signed UI tick delta must clamp negative values to 0
+   before calling; a raw cast would wrap a negative delta to a huge one and slam the hold
+   straight to its cap. */
 static inline void newphrase_tick(newphrase_t *np, unsigned dt_us) {
     if (!np->active) return;
     const unsigned cap = NP_TAIL_HOLD_US + NP_TAIL_FADE_US;
@@ -243,10 +291,12 @@ static inline void newphrase_tick(newphrase_t *np, unsigned dt_us) {
     np->held_us += dt_us;
 }
 
-/* 1 while held. The clear is RE-STAMPED every block rather than fired once on the edge, for
-   the same reason Event Horizon re-stamps at the bottom of its slider: holding then means
-   "stay empty", and releasing starts recording from empty. */
-static inline int newphrase_stamp(const newphrase_t *np) { return np->active ? 1 : 0; }
+/* 1 while the pad is held - that is the whole of the state this header tracks. The DSP side
+   re-marks the loop and micro-loop clear every block for as long as this reads true, rather
+   than firing once on the press edge, for the same reason Event Horizon re-stamps at the
+   bottom of its slider: holding means "stay empty", and releasing starts recording from
+   empty. */
+static inline int newphrase_held(const newphrase_t *np) { return np->active ? 1 : 0; }
 
 /* 0..1 target for the plate collapse. A TARGET, not the applied value: the DSP one-poles
    toward it, so releasing mid-fade returns the reverb send to unity smoothly instead of
@@ -288,7 +338,7 @@ for t in stepcond mipmap steptime newphrase; do
 In `ambiotica_port/panel/amalgamate.sh`, after line 43 (`strip "$HN/stepcond.h"`), add:
 
 ```sh
-    strip "$HN/newphrase.h"           # x + REC hold timer, used by panel.cpp
+    strip "$HN/newphrase.h"           # x + REC hold timer; inlined ahead of panel.cpp
 ```
 
 - [ ] **Step 7: Run the full panel test suite**
@@ -651,16 +701,16 @@ In `draw_nav`, after the `×` LED line (line 711, `set_led(COL_X, page_y + CTL_D
                 /* Past the threshold the pad darkens in step with the tail it is collapsing,
                    reaching black exactly as the tail goes. The timing is the only part of this
                    gesture you cannot feel, so it is the part that has to be visible. */
-                rc = newphrase_stamp(&newphrase) ? fade_col(RED, (int)(255.f * (1.f - tk)))
+                rc = newphrase_held(&newphrase) ? fade_col(RED, (int)(255.f * (1.f - tk)))
                                                  : DIMMER(RED);
             }
             set_led(COL_REC, page_y + CTL_DN, rc);
             const bool rec_down = xh && get_touch_down(COL_REC, page_y + CTL_DN) != 0;
-            if (rec_down && !newphrase_stamp(&newphrase)) newphrase_press(&newphrase);
-            else if (!rec_down && newphrase_stamp(&newphrase)) newphrase_release(&newphrase);
+            if (rec_down && !newphrase_held(&newphrase)) newphrase_press(&newphrase);
+            else if (!rec_down && newphrase_held(&newphrase)) newphrase_release(&newphrase);
             /* Two calls, not a ternary into the format argument - set_help_text is a printf
                style function and a non-literal format is a warning waiting to happen. */
-            if (newphrase_stamp(&newphrase)) {
+            if (newphrase_held(&newphrase)) {
                 if (tk > 0.f) set_help_text("New phrase - clearing the tail too");
                 else          set_help_text("New phrase - clear the loop, keep the tail");
             }
@@ -686,7 +736,7 @@ In `on_dsp`, immediately before the Event Horizon block at line 1640 (`if (fx_sm
            all left alone, so the tail rings out - that is the entire difference between this
            gesture and Event Horizon. */
         {
-            const bool np_down = newphrase_stamp(&newphrase) != 0;
+            const bool np_down = newphrase_held(&newphrase) != 0;
             if (np_down) {
                 if (!np_was_down) st.cutPending = 1;   /* seed the edge residual, once */
                 if (looper)    looper_mark_clear(looper);
