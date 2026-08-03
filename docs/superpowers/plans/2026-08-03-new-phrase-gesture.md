@@ -456,43 +456,53 @@ Then replace the body of `main` after the refill check (from `const float WANT` 
     }
 
     /* ---- the edge must be a slope, not a step ---- */
-    /* Measured against the signal's OWN slew rather than against its peak. Comparing to the
-       peak would let a hard cut pass: the cut removes the bed but not the wet, so the step is
-       smaller than the full output and a peak-based limit never fires. What a click actually
-       is, is a jump far larger than anything the running signal produces, so that is what
-       gets measured - baseline first, then the cut. */
-    run(SECS(6), 1);
-    float baseline = 0.f;
-    g_prev_l = outL[BLK-1]; g_prev_r = outR[BLK-1];
-    for (int n = 0; n < SECS(0.2); n += BLK) {
-        for (int i = 0; i < BLK; i++) {
-            float s = (float)(sin(phase) * 0.4); phase += 2.0 * M_PI * 220.0 / SR;
-            inL[i] = inR[i] = s;
-        }
-        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
-        float q = max_step(outL, outR, BLK); if (q > baseline) baseline = q;
-    }
-    looper_mark_clear(l); microloop_mark_clear(m);
-    st.cutPending = 1;
-    float step = 0.f;
-    for (int n = 0; n < SECS(0.05); n += BLK) {
-        for (int i = 0; i < BLK; i++) { inL[i] = inR[i] = 0.f; }
-        fc_render_block(&st, l, g, m, h, b, d, &p, SR, inL, inR, outL, outR, BLK);
-        float q = max_step(outL, outR, BLK); if (q > step) step = q;
-    }
-    printf("largest jump across the cut:           %.4f (steady play was %.4f)\n", step, baseline);
-    if (step > 3.0f * baseline) {
-        printf("\nFAIL: the cut jumps %.1fx the signal's own slew - it will click\n",
-               (double)(step / baseline));
-        fail = 1;
-    } else {
-        printf("PASS: the cut is smoothed into a slope\n");
-    }
+    /* REWRITTEN THREE TIMES. See `declick_sweep` in np_main.c for what shipped; this note is
+       why, because every earlier version printed PASS while proving nothing, and the failure
+       was different each time.
+
+       1. Measuring the cut's jump against the output PEAK. A hard cut passes: the cut removes
+          the bed but not the wet, so the step is always smaller than the full output.
+       2. Measuring against the signal's own slew, but at loop_layer 1.0. The input gain there
+          is 1 - 0.97 = 0.03, so the bed holds under 10% of the input after any reasonable test
+          duration and almost all the output is plate fed through bloom. Cutting a nearly empty
+          bed produces no step, and the check read IDENTICAL with the declick on and off.
+       3. Same, at loop_layer 0.5 so the bed is genuinely present. Still identical to four
+          decimal places, because a single cut lands at one arbitrary phase of the bed's cycle
+          and that phase happened to be near a zero crossing. The step size is
+          `wg * (layL + micL)` sampled at the cut instant: anything from nothing at a zero
+          crossing to the full bed amplitude at a peak. Raising the bed does not help, because
+          it scales the step and the ambient slew together.
+
+       What ships instead is a differential, which is the only form that gates on the residual
+       actually working. `declick_sweep(declick)` runs 16 cuts at 16 phases of the bed's cycle
+       and returns the worst jump; the check calls it twice, once with `cutPending` set on every
+       cut and once never set, and asserts the declicked worst case is under 85% of the raw one.
+       The residual only fires on `cutPending`, so the test controls its own A/B with no code
+       changes and no temporary edits.
+
+       Self-validating in the way an absolute bound never was: remove the residual and the two
+       sweeps collapse to the same path, the ratio goes to 1.0, and the check fails. Verified by
+       doing exactly that - ratio 1.025 with the residual zeroed, 0.646 with it restored.
+       Observed: raw 0.0616, declicked 0.0398, so the residual takes about a third off the worst
+       case a 16-phase sweep can find. `loop_layer` is lowered to 0.5 for this check, because at
+       1.0 the bed is too empty to be worth cutting (see 2 above). */
 
     /* ---- a long hold collapses the plate ---- */
+    /* CORRECTED after the first attempt failed at 0.2972. `tail_kill` touches only the reverb
+       send and the decay, by design - it was never meant to silence the loop and micro beds. At
+       this test's loop_layer with no leak, an UNCLEARED loop is a genuinely non-decaying signal
+       and no value of tail_kill can bring it under the bar. So clear the beds first, which is
+       what a real hold does anyway (on_dsp stamps the clear every block), then let the flush and
+       the tank's last diffusion pass settle before measuring.
+       The settle matters: looper.c's read flips at age == loop_len, so a clear takes a full
+       loop_len to finish flushing, and a peak measured across that window is dominated by the
+       flush rather than by the collapse. Measured non-vacuous: the identical clear and settle
+       with tail_kill held at 0 reads 0.0246 and fails this line, against 0.0018 with it at 1. */
     run(SECS(6), 1);
+    looper_mark_clear(l); microloop_mark_clear(m);
     st.tailKill = 1.f;
-    float collapsed = run(SECS(2), 0);
+    run(SECS(1), 0);                     /* discard: the flush and the last diffusion pass */
+    float collapsed = run(SECS(1), 0);
     printf("2 s of full tail_kill, no input:       peak %.4f\n", collapsed);
     if (collapsed > 0.01f) {
         printf("\nFAIL: the plate is still sounding at %.4f after a full collapse\n", collapsed);
