@@ -50,9 +50,15 @@ trap 'rm -f "$BODY"' EXIT
     # the panel library parses (plinkysynth/community-panels), so it is emitted here rather
     # than passing through the comment stripper, which would eat it.
     #
-    # @Author is the ONLY required field. @Artwork is banned for community submissions (ship
-    # artwork.png beside the .cpp instead). @Category is free text and is displayed but not
-    # used for grouping or filtering, so it buys little.
+    # @Author and @Firmware are the required fields. @Artwork is banned for community
+    # submissions (ship artwork.png beside the .cpp instead). @Category is free text and is
+    # displayed but not used for grouping or filtering, so it buys little.
+    #
+    # @Firmware is the firmware base to build against: `latest`, a channel (`beta` / `alpha` /
+    # `release`), or a four-character build code pinning a specific base. `c019` is the pin the
+    # community-panels MAINTAINER chose for us in their commit f4e5074, and it is kept rather
+    # than moved to `latest` because they can only bless artifacts for firmware listed in
+    # Plinky's versions.json. Do not change it without asking them.
     #
     # THIS BLOCK IS THE ONLY SOURCE OF TRUTH FOR THE SUBMITTED HEADER. @Video was once added
     # by hand to the copy living in community-panels (their commit 680d7e9) and not here, so
@@ -74,6 +80,7 @@ trap 'rm -f "$BODY"' EXIT
 /*
 @Name: Ambiotica
 @Author: Charles Vestal
+@Firmware: c019
 @Version: 1.1
 @Description: Play a few notes and let go. A rolling looper, a granular cloud, a plate reverb and a bank of tuned resonators turn them into a slow wash, with an 8-track drum machine running dry underneath.
 @Preferred Panels: chords
