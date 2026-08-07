@@ -727,7 +727,8 @@ struct ambiotica : panel_t {
        under it is, by definition, pressure that arrived from somewhere else.
        touch_originates_inside_region() takes the rect directly, so there is no region state to
        set or restore, and it rejects only the offending touch instead of all input. It also
-       covers dragging from a nav pad into the grid at any time, which the freeze never did. */
+       covers dragging from a nav pad into the grid at any time, which the freeze never did.
+
        HARDWARE 2026-08-07: origin gating alone was NOT enough, and the old comment predicted
        exactly how. Pages are a window onto a taller surface, so page N's row 0 is logical
        y = N*16: PRESET sits at page_y + 0, which is y=16 on the drums page. While the scroll
