@@ -206,7 +206,6 @@ struct ambiotica : panel_t {
        timer expires does the selection become real. */
     int             drum_kit_sel = -1;
     int             drum_kit_arm_us = 0;
-    int             nav_cooldown_us = 0;  /* input ignored this long after a page change */
 
     full_params fx;      /* target macros (set from the sliders in on_ui) */
     full_params fx_sm;   /* per-block-smoothed macros actually fed to the chain (de-click) */
@@ -383,12 +382,91 @@ struct ambiotica : panel_t {
        now zero, so rebuild it: the DSP chain (see build_dsp), the macro smoother, and any
        runtime latches. Voices are released because the note-ons that started them belonged
        to the panel we just replaced. */
-    /* Raw touch, not a widget: a modifier has to be readable by OTHER pads on the same frame,
-       and it must not swallow its own press. */
-    bool shift_held(int page_y) const { return get_touch_down(COL_X, page_y + CTL_DN) != 0; }
-    /* Every sequencer modifier lives on row 1, so one accessor covers all of them. Adding a
-       modifier pad is then one row in kModPads below, not three edits in three places. */
-    bool mod_held(int col, int page_y) const { return get_touch_down(col, page_y + CTL_TOP2) != 0; }
+    /* Modifier state for THIS frame. Emitted once by read_modifiers() at the top of on_ui and
+       read by everything else through these members.
+       These were raw get_touch_down() comparisons, which is the one thing the SDK says never to
+       do: touch is "mostly pad-by-pad and stateless", so a momentary pressure dip read as a
+       release and pressure sliding in from a neighbour read as a press. A spurious mod_x in
+       particular turned every paint into a silent ERASE, because the grid writes
+       `pattern[idx] = (erase_mod || ...) ? 0 : 127`.
+       shift_button() is the supported form - "the same as button(...), except it returns true
+       for as long as the pad is held" - and carries real edges via is_last_widget_*().
+       CACHED rather than queried, because a widget may only be emitted ONCE per frame: a second
+       shift_button() on the same pad would draw it twice and stomp the last-widget state the
+       edge accessors read. On the drums page these used to be read twice a frame. */
+    bool mod_x = false;                 /* the printed x shift key (row 15) */
+    bool mod_fill = false;              /* FILL (row 1) - on every page: x + SYNTH works anywhere */
+    bool mod_rec = false;               /* REC (row 15), already ANDed with mod_x */
+    bool mod_pattern = false, mod_modulo = false, mod_prob = false;
+    bool mod_length = false,  mod_rhythm = false;          /* drums page only */
+    bool mod_mute = false, mod_mute_pressed = false, mod_mute_released = false;
+
+    /* Which row-1 pads light on the drums page, in what colour, and what they say. */
+    struct mod_pad_t { int col; uint32_t col_on; const char* help; };
+    static constexpr mod_pad_t kModPads[] = {
+        { COL_PATTERN, GREEN,  "Euclid - hold and press a step for that many pulses, slide to rotate" },
+        { COL_MODULO,  ORANGE, "Modulo - hold and tap a step to play it every Nth time round" },
+        { COL_PROB,    CYAN,   "Probability - hold and tap a step to set its chance of firing" },
+        { COL_LENGTH,  YELLOW, "Length - hold and press a step to set that track's loop length" },
+        { COL_RHYTHM,  TEAL,   "Shuffle - hold, then row picks the style and column the depth" },
+    };
+
+    /* Emit every modifier pad exactly ONCE per frame, BEFORE anything reads it.
+       Immediate-mode widgets are order-dependent, so a pad that tests a modifier has to be
+       emitted after it. That is why this runs at the top of on_ui and not inside draw_nav,
+       which draws last - under raw touch the order did not matter and it did.
+       Every one is NOT_ISOLATED, deliberately. ISOLATED "rejects taps that are crowded by
+       neighbouring touches", and a modifier exists precisely to be held WHILE another pad is
+       tapped: x + REC is two adjacent pads on purpose, so crowding IS the gesture here.
+       Colour trick: pass the dim colour to the widget, then set_led the bright one over it
+       when held. set_led lands after the widget and wins, so the highlight is same-frame
+       without emitting a second widget for the same pad. */
+    void read_modifiers(int page_y, int page) {
+        mod_x = shift_button(COL_X, page_y + CTL_DN, DIMMEST(WHITE), NOT_ISOLATED,
+                             "Shift - hold and tap a pad to clear or reset it");
+        if (mod_x) set_led(COL_X, page_y + CTL_DN, WHITE);
+
+        /* FILL is emitted on every page because x + SYNTH rerolls the sound from anywhere. */
+        mod_fill = shift_button(COL_REROLL, page_y + CTL_TOP2, DIMMEST(PURPLE), NOT_ISOLATED,
+                                "Randomise - hold and tap a target");
+        if (mod_fill) set_led(COL_REROLL, page_y + CTL_TOP2, PURPLE);
+
+        /* REC is emitted unconditionally so the widget exists every frame, then gated on x.
+           With x up it is drawn black and its touches are discarded: we have no sequencer to
+           record into, so the pad has no function of its own. draw_nav paints the tail-kill
+           fade over this later. */
+        const bool rec_raw = shift_button(COL_REC, page_y + CTL_DN,
+                                          mod_x ? DIMMER(RED) : 0, NOT_ISOLATED,
+                                          "New phrase - clear the loop, keep the tail");
+        mod_rec = mod_x && rec_raw;
+
+        /* The step-grid modifiers edit the pattern and would be lying about themselves
+           anywhere else, so they are only live on the drums page. A pad stays dark until it
+           has a function that matches its printed label. */
+        if (page == PAGE_DRUMS) {
+            bool* const tgt[] = { &mod_pattern, &mod_modulo, &mod_prob, &mod_length, &mod_rhythm };
+            for (unsigned i = 0; i < sizeof kModPads / sizeof kModPads[0]; i++) {
+                *tgt[i] = shift_button(kModPads[i].col, page_y + CTL_TOP2,
+                                       DIMMEST(kModPads[i].col_on), NOT_ISOLATED,
+                                       kModPads[i].help);
+                if (*tgt[i]) set_led(kModPads[i].col, page_y + CTL_TOP2, kModPads[i].col_on);
+            }
+            /* MUTE needs both edges: pressed clears the "did this hold touch a track" latch,
+               released with the latch still clear means it was a lone tap = unmute all. Read
+               them straight after its widget - is_last_widget_*() refers to the most recently
+               emitted one, so nothing may come between. */
+            const int mute_y = page_y + ROW_MUTE;
+            mod_mute = shift_button(COL_MUTE, mute_y, drum_mute ? RED : DIMMEST(RED),
+                                    NOT_ISOLATED,
+                                    "Mute - hold and tap a track; tap alone to unmute all");
+            mod_mute_pressed  = is_last_widget_pressed();
+            mod_mute_released = is_last_widget_released();
+            if (mod_mute) set_led(COL_MUTE, mute_y, DIMMER(RED));
+        } else {
+            mod_pattern = mod_modulo = mod_prob = mod_length = mod_rhythm = false;
+            mod_mute = mod_mute_pressed = mod_mute_released = false;
+        }
+    }
 
     /* xorshift32. Only ever drives UI-level randomisation, never audio, so it needs to be
        cheap and non-repeating rather than statistically good. */
@@ -626,68 +704,60 @@ struct ambiotica : panel_t {
        (drops the audition preview and the pending delete), so leaving via SCALE is a real
        cancel rather than just a scroll. */
     /* scroll_to_page ANIMATES, and the incoming page slides upward under whatever finger is
-       still down from the tap that started it. Anything that pad passes over fires:
+       still down from the tap that started it. Anything that pad passes over used to fire:
          - nav pads sit on rows 0/14, so tapping TRACKS could land on the preset browser
          - worse, the drums grid sweeps past too, and TRACKS is column 9 - so holding it
            wrote step 10 on nearly every track as the rows went by
-       So freeze ALL touch-driven input until the scroll has finished. Everything still
-       draws; only actions are suppressed.
-       There is no "page settled" callback, but the state is exact: get_scroll_y_16() is the
-       live position in 1/16 LED units and page N sits at y = N*16, so it has settled when
-       that equals N*256. That is better than guessing a duration - it releases input the
-       instant the grid stops rather than a fixed time later.
-       The ceiling exists because scroll_settled() rests on my reading of those units: if it
-       is wrong and never returns true, input would be dead forever. With the ceiling the
-       worst case degrades to a one-second timer. If input feels frozen for a beat after
-       every page change, that assumption is what to look at. */
-    static constexpr int NAV_FREEZE_CEILING_US = 1000000;
-    bool scroll_settled() const { return get_scroll_y_16() == get_scroll_page() * 256; }
-    bool input_frozen()  const { return nav_cooldown_us > 0 && !scroll_settled(); }
-    void nav_goto(int page) { scroll_to_page(page); nav_cooldown_us = NAV_FREEZE_CEILING_US; }
+       This was handled by freezing ALL touch input until the scroll finished, released by
+       comparing get_scroll_y_16() to get_scroll_page()*256 with a one-second ceiling in case
+       that reading was wrong. Both are gone. Comparing a raw value is the anti-pattern this
+       panel was full of, an exact == on an animated value may never land, and when it does not
+       the ceiling costs a full second of dead input after EVERY page change - which is what
+       "the buttons are not 100% responsive" turned out to describe.
+       The supported answer is origin tracking: a finger already down when the page scrolled
+       under it is, by definition, pressure that arrived from somewhere else.
+       touch_originates_inside_region() takes the rect directly, so there is no region state to
+       set or restore, and it rejects only the offending touch instead of all input. It also
+       covers dragging from a nav pad into the grid at any time, which the freeze never did. */
+    void nav_goto(int page) { scroll_to_page(page); }
+
+    /* True when the touch on this pad STARTED on this pad. Nav pads are single cells, so the
+       rect is the cell. Buttons do not do this themselves - the SDK exposes origin tracking
+       explicitly rather than folding it into the widget. */
+    static bool touch_started_here(int x, int y) {
+        return touch_originates_inside_region(x, y, x, y, 1, 1);
+    }
 
     void draw_nav(int page_y, int page) {
-        /* Which row-1 pads light on the drums page, and in what colour. */
-        struct mod_pad_t { int col; uint32_t col_on; };
-        static const mod_pad_t kModPads[] = {
-            { COL_PATTERN, GREEN }, { COL_MODULO, ORANGE },
-            { COL_PROB,    CYAN  }, { COL_LENGTH, YELLOW },
-            { COL_RHYTHM,  TEAL  },
-        };
         uint32_t here = fade_col(WHITE, 90 + (int)(nav_pulse * 166.f)), away = DIMMER(WHITE);
-        const bool armed = !input_frozen();
         if (button(COL_SCALE, page_y + CTL_UP, page == PAGE_PLAY ? here : away, ISOLATED,
                    page == PAGE_PRESET || page == PAGE_SCENE ? "Cancel - back to play" : "Play surface")
-            && armed) {
+            && touch_started_here(COL_SCALE, page_y + CTL_UP)) {
             if (page == PAGE_PRESET) presets.picker.on_done();
             if (page == PAGE_SCENE)  scene_picker.on_done();
             nav_goto(PAGE_PLAY);
         }
-        /* The row-1 modifiers, on their printed pads. Read with raw touch and drawn with
-           set_led for the same reason × is: a modifier has to be legible to OTHER pads on
-           the same frame and must not swallow its own press.
-           FILL is drawn on every page because ⭕ + SYNTH works from anywhere; the rest edit
-           the step grid and would be lying about themselves off the drums page. */
-        bool rr = mod_held(COL_REROLL, page_y);
-        set_led(COL_REROLL, page_y + CTL_TOP2, rr ? PURPLE : DIMMESTEST(PURPLE));
-        /* The step-grid modifiers, drums page only: each edits the pattern and would be
-           lying about itself anywhere else, and a pad stays dark until it has a function
-           that matches its label. Colours are all distinct so the row reads apart at a
-           glance - PROB's CYAN beside MODULO's ORANGE, PATTERN's GREEN beside FILL's PURPLE,
-           LENGTH's YELLOW over in the SEQUENCE group. */
-        if (page == PAGE_DRUMS)
-            for (unsigned i = 0; i < sizeof kModPads / sizeof kModPads[0]; i++)
-                set_led(kModPads[i].col, page_y + CTL_TOP2,
-                        mod_held(kModPads[i].col, page_y) ? kModPads[i].col_on
-                                                          : DIMMESTEST(kModPads[i].col_on));
+        /* The modifier pads (x, FILL, REC, and the drums row-1 set) are emitted by
+           read_modifiers() at the top of the frame, not here: immediate-mode widgets are
+           order-dependent and draw_nav runs LAST, so a modifier emitted here would be read a
+           frame late by the grid. Only their state is used below. */
+        const bool rr = mod_fill;
 
+        /* SONG (col 10) and SYNTH (col 11) are ADJACENT, and ISOLATED "rejects taps that are
+           crowded by neighbouring touches" - so a finger landing across both was thrown away,
+           and only a squarely-placed press got through. A user reported that as "it only lets
+           me switch when above a certain threshold", losing about half of ordinary taps.
+           NOT_ISOLATED here: neither pad is half of a chord gesture, so there is nothing for
+           isolation to protect. The transport corner keeps ISOLATED because it neighbours x. */
         if (button(COL_SYNTH,  page_y + CTL_DN,
-                   rr ? PURPLE : (page == PAGE_SYNTH ? here : away), ISOLATED,
-                   rr ? "Randomise the synth" : "Synth editor") && armed) {
+                   rr ? PURPLE : (page == PAGE_SYNTH ? here : away), NOT_ISOLATED,
+                   rr ? "Randomise the synth" : "Synth editor")
+            && touch_started_here(COL_SYNTH, page_y + CTL_DN)) {
             if (rr) reroll_synth();          /* ⭕ + SYNTH = new sound, no page change */
             else    nav_goto(PAGE_SYNTH);
         }
         if (button(COL_PRESET, page_y + CTL_TOP, page == PAGE_PRESET ? here : away, ISOLATED,
-                   "Synth presets") && armed)
+                   "Synth presets") && touch_started_here(COL_PRESET, page_y + CTL_TOP))
             nav_goto(PAGE_PRESET);
 
         /* DILATE, on the printed UNLOCK pad. Not an obvious word for "play backward" until
@@ -709,30 +779,28 @@ struct ambiotica : panel_t {
                                  : fade_col(RED,    18 + (int)(saw *  60.f));
             if (button(COL_UNLOCK, page_y + CTL_TOP2, dc, ISOLATED,
                        dilate ? "REV - the bed is playing backward, tap for forward"
-                              : "REV - play the loop and micro-loop backward") && armed) {
+                              : "REV - play the loop and micro-loop backward")
+                && touch_started_here(COL_UNLOCK, page_y + CTL_TOP2)) {
                 dilate = (unsigned char)!dilate;
                 push_fx_from_ui();
             }
         }
 
-        if (button(COL_SONG,   page_y + CTL_DN,  page == PAGE_SCENE  ? here : away, ISOLATED, "Save/load scene") && armed)
+        if (button(COL_SONG, page_y + CTL_DN, page == PAGE_SCENE ? here : away, NOT_ISOLATED,
+                   "Save/load scene") && touch_started_here(COL_SONG, page_y + CTL_DN))
             nav_goto(PAGE_SCENE);
-        /* × - the printed shift key, on every page. Drawn with set_led and read with raw
-           touch rather than as a widget, so holding it modifies other pads instead of
-           consuming the press itself. */
-        bool xh = shift_held(page_y);
-        set_led(COL_X, page_y + CTL_DN, xh ? WHITE : DIMMESTEST(WHITE));
+        /* x is emitted by read_modifiers(), which also draws it. Only its state is read here. */
+        const bool xh = mod_x;
 
-        /* NEW PHRASE - x + REC. Read as a widget so the press edge is clean, but only while x
-           is held; with x up the pad is dark and inert, because a panel with no sequencer has
-           nothing to record. The whole gesture is on the bottom-right corner, two adjacent
-           pads, so it is a one-handed move. */
+        /* NEW PHRASE - x + REC. The pad itself is emitted in read_modifiers() (it has to be,
+           so the grid and everything else can see it in the same frame); this owns the gesture
+           timing and the LED, which is drawn over the widget's colour. */
         {
             /* Edge detection FIRST, so the LED and the help text below are drawn from one
                snapshot. Computing the colour before this ran left the pad showing last frame's
                state on the press and release frames while the help line showed this frame's:
                imperceptible at UI rates, but an easy trap for the next edit. */
-            const bool rec_down = xh && get_touch_down(COL_REC, page_y + CTL_DN) != 0;
+            const bool rec_down = mod_rec;
             if (rec_down && !newphrase_held(&newphrase)) newphrase_press(&newphrase);
             else if (!rec_down && newphrase_held(&newphrase)) newphrase_release(&newphrase);
 
@@ -756,7 +824,8 @@ struct ambiotica : panel_t {
 
         if (button(COL_TRACKS, page_y + CTL_UP,
                    xh ? RED : (page == PAGE_DRUMS ? here : away), ISOLATED,
-                   xh ? "Clear the whole pattern" : "Drum sequencer") && armed) {
+                   xh ? "Clear the whole pattern" : "Drum sequencer")
+            && touch_started_here(COL_TRACKS, page_y + CTL_UP)) {
             if (xh) clear_drum_pattern();
             else    nav_goto(PAGE_DRUMS);
         }
@@ -1011,27 +1080,28 @@ struct ambiotica : panel_t {
            behave like a toggle while a drag stays coherent: without the latch, each pad the
            finger crossed would flip on its own and a swipe would just invert the row.
            × forces erase regardless, so you can scrub out a run that starts on a gap. */
-        bool erase_mod = shift_held(page_y);
-        bool prob_mod  = mod_held(COL_PROB,    page_y);
-        bool rr_mod    = mod_held(COL_REROLL,  page_y);
-        bool eu_mod    = mod_held(COL_PATTERN, page_y);
-        bool mod_mod   = mod_held(COL_MODULO,  page_y);
-        bool len_mod   = mod_held(COL_LENGTH,  page_y);
-        bool sh_mod    = mod_held(COL_RHYTHM,  page_y);
+        /* All emitted by read_modifiers() at the top of the frame; these are just readable
+           local names for the cached state. */
+        const bool erase_mod = mod_x;
+        const bool prob_mod  = mod_prob;
+        const bool rr_mod    = mod_fill;
+        const bool eu_mod    = mod_pattern;
+        const bool mod_mod   = mod_modulo;
+        const bool len_mod   = mod_length;
+        const bool sh_mod    = mod_rhythm;
+        const bool mute_mod  = mod_mute;
         if (!len_mod) len_sel = -1;
         /* The selection belongs to a single hold: let go of both CONDITION pads and the next
            tap inspects again rather than silently advancing whatever was last touched. */
         if (!prob_mod && !mod_mod) cond_sel = -1;
+        const bool any_mod = mute_mod || rr_mod || len_mod || eu_mod || prob_mod || mod_mod || sh_mod;
         /* MUTE: hold + tap a track toggles it; a tap on its own unmutes everything, which is
            how every Plinky panel's mute behaves. "On its own" is tracked across the hold
            rather than guessed at, so a hold that did toggle something does not also
-           un-mute-all when released. */
-        const int mute_y = page_y + ROW_MUTE;
-        bool mute_mod = get_touch_down(COL_MUTE, mute_y) != 0;
-        /* Declared after mute_mod, which it reads. */
-        const bool any_mod = mute_mod || rr_mod || len_mod || eu_mod || prob_mod || mod_mod || sh_mod;
-        if (get_touch_pressed(COL_MUTE, mute_y)) mute_hit_track = false;
-        if (get_touch_released(COL_MUTE, mute_y) && !mute_hit_track) drum_mute = 0;
+           un-mute-all when released. The edges come from is_last_widget_*() captured beside
+           MUTE's own widget in read_modifiers(), not from get_touch_pressed/released(). */
+        if (mod_mute_pressed) mute_hit_track = false;
+        if (mod_mute_released && !mute_hit_track) drum_mute = 0;
         bool any_down  = false;
         for (int t = 0; t < DRUM_TRACKS; t++) {
             int y = page_y + UI_Y + t;
@@ -1044,11 +1114,64 @@ struct ambiotica : panel_t {
             const int head_s = playing ? (int)(drum_tick - tpass * tlen) : -1;
             const int hue = (t * 2 + 1) & 15;
             const bool muted = (drum_mute & (1u << t)) != 0;
+            /* This cell's colour, from the state as it stands right now. Called twice for a
+               pad being touched: once to give the widget its colour, and again after the
+               touch has changed the pattern, so the step you are painting lights on the same
+               frame instead of one late. set_led after the widget wins. */
+            auto cell_col = [&](int s) -> uint32_t {
+                if (sh_mod) {
+                    /* Style rows down, depth across. The selected row fills to its depth so
+                       the setting reads as a bar; every other row keeps a single dot so the
+                       styles you are not on stay findable. */
+                    return (t == (int)shuffle_style)
+                             ? (s <= (int)shuffle_depth ? palette[10][6] : DIMMEST(WHITE))
+                             : (s == 0 ? DIMMEST(WHITE) : 0);
+                }
+                const int i = t * DRUM_STEPS + s;
+                const unsigned char vel = pattern[i];
+                const bool head = (s == head_s);
+                if (s >= (int)tlen) {
+                    /* Past this track's loop point. Content is kept and shown faintly rather
+                       than erased, so shortening a track and lengthening it again is
+                       lossless - and while LENGTH is held the boundary is where the row
+                       visibly stops. */
+                    return vel ? DIMMEST(WHITE) : 0;
+                }
+                if (muted) {
+                    /* A muted track still shows its pattern, just dimmed - you need to see
+                       what you are about to bring back in. Red while MUTE is held, so the
+                       gesture reads before you commit to it. */
+                    return vel ? (mute_mod ? DIMMER(RED) : DIMMEST(WHITE)) : 0;
+                }
+                if (vel) {
+                    /* Brightness carries probability, so holding PROB turns the grid into a
+                       readout of how often each step fires rather than a separate page.
+                       A step with a modulo condition is dimmed on the passes it is NOT due,
+                       so a 1:4 visibly breathes across four bars instead of looking like a
+                       plain hit that mysteriously does not sound. */
+                    int sh = 3 + (vel * 6) / 127; if (head) sh += 4; if (sh > 15) sh = 15;
+                    /* Guarded so an unconditioned step - almost all of them - does not even
+                       evaluate the check. */
+                    if (pattern_mod[i] && !mod_due(pattern_mod[i], tpass))
+                        sh = sh > 6 ? sh - 4 : 2;
+                    return palette[sh][hue];
+                }
+                if (head)         return DIMMER(WHITE);   /* playhead over an empty step */
+                if ((s & 3) == 0) return DIMMEST(WHITE);  /* beat ruler */
+                return 0;
+            };
             for (int s = 0; s < DRUM_STEPS; s++) {
                 int idx = t * DRUM_STEPS + s;
-                /* Frozen during a page transition - otherwise the finger still down from the
-                   TRACKS tap writes a step on every row the grid slides past it. */
-                if (!input_frozen() && get_touch_down(s, y)) {
+                /* NOT_ISOLATED: painting a run means crossing pads whose neighbours are also
+                   under the finger, which is exactly what ISOLATED throws away.
+                   The origin check replaces the old input_frozen() page-transition freeze. A
+                   finger still down from the TRACKS tap has its ORIGIN outside the grid, so
+                   the rows sliding under it no longer write a step on every track - and
+                   unlike the freeze this also holds mid-performance, not just during a
+                   scroll, and blocks only that touch instead of all input. */
+                const bool down = shift_button(s, y, cell_col(s), NOT_ISOLATED, nullptr);
+                if (down && touch_originates_inside_region(s, y, 0, page_y + UI_Y,
+                                                           DRUM_STEPS, DRUM_TRACKS)) {
                     any_down = true;
                     /* One latch for every gesture on this page. `press` means "first pad
                        since the last full release"; PAINT_MOD means a modifier owns the
@@ -1121,51 +1244,10 @@ struct ambiotica : panel_t {
                         if (press) drum_paint = pattern[idx] ? PAINT_ERASE : PAINT_ON;
                         pattern[idx] = (erase_mod || drum_paint == PAINT_ERASE) ? 0 : 127;
                     }
+                    /* The branches above may have changed what this pad should look like, and
+                       the widget was already drawn with the pre-touch colour. Redraw it. */
+                    set_led(s, y, cell_col(s));
                 }
-                if (sh_mod) {
-                    /* Style rows down, depth across. The selected row fills to its depth so
-                       the setting reads as a bar; every other row keeps a single dot so the
-                       styles you are not on stay findable. */
-                    uint32_t c = (t == (int)shuffle_style)
-                                   ? (s <= (int)shuffle_depth ? palette[10][6] : DIMMESTEST(WHITE))
-                                   : (s == 0 ? DIMMEST(WHITE) : 0);
-                    set_led(s, y, c);
-                    continue;
-                }
-                unsigned char vel = pattern[idx];
-                /* Each track has its own head, so a 7-step track visibly wraps while a
-                   16-step one is still crossing the bar. */
-                bool head = (s == head_s);
-                bool beyond = s >= (int)tlen;
-                uint32_t c;
-                if (beyond) {
-                    /* Past this track's loop point. Content is kept and shown faintly rather
-                       than erased, so shortening a track and lengthening it again is
-                       lossless - and while LENGTH is held the boundary is where the row
-                       visibly stops. */
-                    c = vel ? DIMMESTEST(WHITE) : 0;
-                } else if (muted) {
-                    /* A muted track still shows its pattern, just dimmed - you need to see
-                       what you are about to bring back in. Red while MUTE is held, so the
-                       gesture reads before you commit to it. */
-                    c = vel ? (mute_mod ? DIMMER(RED) : DIMMESTEST(WHITE)) : 0;
-                } else if (vel) {
-                    /* Brightness carries probability, so holding PROB turns the grid into a
-                       readout of how often each step fires rather than a separate page.
-                       A step with a modulo condition is dimmed on the passes it is NOT due,
-                       so a 1:4 visibly breathes across four bars instead of looking like a
-                       plain hit that mysteriously does not sound. */
-                    int sh = 3 + (vel * 6) / 127; if (head) sh += 4; if (sh > 15) sh = 15;
-                    /* Guarded so an unconditioned step - almost all of them - does not even
-                       evaluate the check. */
-                    if (pattern_mod[idx] && !mod_due(pattern_mod[idx], tpass))
-                        sh = sh > 6 ? sh - 4 : 2;
-                    c = palette[sh][hue];
-                }
-                else if (head)         c = DIMMER(WHITE);               /* playhead over an empty step */
-                else if ((s & 3) == 0) c = DIMMESTEST(WHITE);           /* beat ruler */
-                else                   c = 0;
-                set_led(s, y, c);
             }
         }
         /* The gesture ends only when the grid is fully released. eu_track is cleared in the
@@ -1228,9 +1310,11 @@ struct ambiotica : panel_t {
             else          set_help_text("Step modulo: #fc2#*%s#. of the loop", txt);
         }
 
-        /* Drawn after the kit-name overlay, which spans these rows while a kit is armed and
-           would otherwise paint over it. */
-        set_led(COL_MUTE, mute_y, drum_mute ? RED : (mute_mod ? DIMMER(RED) : DIMMESTEST(RED)));
+        /* REDRAWN after the kit-name overlay, which spans these rows while a kit is armed and
+           would otherwise paint over it. read_modifiers() emitted MUTE's widget at the top of
+           the frame; this only restores the LED it drew. */
+        set_led(COL_MUTE, page_y + ROW_MUTE,
+                drum_mute ? RED : (mute_mod ? DIMMER(RED) : DIMMEST(RED)));
 
         draw_nav(page_y, PAGE_DRUMS);
     }
@@ -1414,7 +1498,6 @@ struct ambiotica : panel_t {
                    (unsigned)(g_amb_ps_used >> 10));
         }
 
-        if (nav_cooldown_us > 0) nav_cooldown_us -= dt_us;
         tick_kit_arm(dt_us);
         newphrase_tick(&newphrase, (unsigned)(dt_us < 0 ? 0 : dt_us));
 
@@ -1455,6 +1538,10 @@ struct ambiotica : panel_t {
         int page = get_scroll_page();
         if (page < 0) { draw_settings_page(page); return; }
         leds_clear();
+        /* Modifiers FIRST, once, for every page. Immediate-mode widgets are order-dependent,
+           so everything that tests a modifier has to be emitted after it - and the grid and
+           the nav bar both do. Under raw touch the order was free; it no longer is. */
+        read_modifiers(page * 16, page);
         if (page != PAGE_PLAY) {
             release_all_voices();
             if (page == PAGE_DRUMS)       draw_drums_page();
@@ -1827,10 +1914,26 @@ struct ambiotica : panel_t {
         int pattern_bytes = (int)sizeof(o.pattern);
         int mod_bytes     = (int)sizeof(o.pattern_mod);
         int len_bytes     = (int)sizeof(o.drum_len);
-        /* Named fields are only written back when present, so a scene saved before per-track
-           length existed would otherwise inherit whatever the LAST scene set. Reset to full
-           bars first and let the field overwrite them if it is there. */
-        if (s.reading) memset(o.drum_len, DRUM_STEPS, sizeof o.drum_len);
+        /* Named fields are only written back when PRESENT, so anything a scene omits keeps
+           whatever is already in the object - which is the PREVIOUSLY LOADED scene's value,
+           not a default. This is NOT a backward-compatibility concern: two scenes written by
+           the same build differ if one of them never set a field, so loading A then B leaks
+           A's state into B. Reset the whole deserialised set here and let the file overwrite
+           only what it actually carries.
+           Only drum_len used to do this, which is how a scene with no "dmod" inherited the
+           previous scene's modulo conditions - steps that then drew at palette[2][hue] and
+           silently refused to fire on passes they were not due. */
+        if (s.reading) {
+            memset(o.pattern,     0,          sizeof o.pattern);
+            memset(o.pattern_mod, 0,          sizeof o.pattern_mod);
+            memset(o.drum_len,    DRUM_STEPS, sizeof o.drum_len);
+            o.drum_kit       = -1;   /* generated kit; refresh_drum_slices() handles < 0 */
+            o.drum_mute      = 0;
+            o.drum_transpose = 0;
+            o.dilate         = 0;
+            o.shuffle_style  = 0;
+            o.shuffle_depth  = 0;
+        }
         OBJECT_BEGIN(s);
         FIELD("orbit",   o.fx_val[FX_ORBIT],       0u, 127u);
         FIELD("satel",   o.fx_val[FX_SATELLITE],   0u, 127u);
@@ -1860,7 +1963,10 @@ struct ambiotica : panel_t {
         FIELD_SYNTH_PRESET("preset", 0);
         FIELD_MIX_PRESET("presetMix");
         OBJECT_END(s);
-        if (s.reading) { apply_key_mode(); push_fx_from_ui(); fx_sm = fx; }
+        /* drum_kit_sel is the BANK cursor and is not serialised, so without this it kept the
+           PREVIOUS scene's selection while drum_kit held the new one - the two then read as
+           an armed kit change that never fired, and BANK showed the wrong kit. */
+        if (s.reading) { apply_key_mode(); push_fx_from_ui(); fx_sm = fx; drum_kit_sel = drum_kit; }
         return true;
     }
 
