@@ -1175,7 +1175,13 @@ struct ambiotica : panel_t {
                        A step with a modulo condition is dimmed on the passes it is NOT due,
                        so a 1:4 visibly breathes across four bars instead of looking like a
                        plain hit that mysteriously does not sound. */
-                    int sh = 3 + (vel * 6) / 127; if (head) sh += 4; if (sh > 15) sh = 15;
+                    /* Shade 2..7 of 15, plus a lift under the playhead. Was 3..9, which read
+                       as too bright on hardware - a written kick sat at 9 and shouted over
+                       the rest of the grid. The SPREAD is what matters here, not the top of
+                       the range: brightness is how per-step probability is displayed, so this
+                       keeps six distinguishable levels and simply starts them lower.
+                       These two numbers are the tuning knob if it wants to move again. */
+                    int sh = 2 + (vel * 5) / 127; if (head) sh += 4; if (sh > 15) sh = 15;
                     /* Guarded so an unconditioned step - almost all of them - does not even
                        evaluate the check. */
                     if (pattern_mod[i] && !mod_due(pattern_mod[i], tpass))
