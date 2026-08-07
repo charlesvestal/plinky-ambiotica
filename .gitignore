@@ -26,3 +26,7 @@ llm.txt
 ambiotica_port/panel/dist/
 
 ambiotica_port/panel/plinky_ambiotica_profile.cpp
+
+# Compiled harness test binaries - build outputs, not sources.
+ambiotica_port/harness/amb_eh_test
+ambiotica_port/harness/amb_np_test
