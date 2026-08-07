@@ -159,6 +159,12 @@ Page **up** from the play surface with the right-hand side buttons. The first tw
 There is a [demo of this](https://www.youtube.com/watch?v=nSFfK28sIks) if you want to hear what
 it does to a live signal.
 
+Pick **mic** and you will notice four pads go dark, in the top corners either side of the
+Chords. That is Plinky itself, not this panel: an LED right next to a microphone hole puts its
+own noise into whatever the mic is recording, so the firmware switches those four off while the
+mic is live. They still respond to your touch, and they come back when you go back to `line` or
+`off`. On this panel that costs you the lit UNLOCK pad and the top-left corner of the step grid.
+
 ## Credits
 
 DSP from [ambiotica-plugin](https://github.com/charlesvestal/ambiotica-plugin),

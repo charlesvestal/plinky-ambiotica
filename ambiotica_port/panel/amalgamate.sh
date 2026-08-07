@@ -81,7 +81,7 @@ trap 'rm -f "$BODY"' EXIT
 @Name: Ambiotica
 @Author: Charles Vestal
 @Firmware: c019
-@Version: 1.2
+@Version: 1.1
 @Description: Play a few notes and let go. A rolling looper, a granular cloud, a plate reverb and a bank of tuned resonators turn them into a slow wash, with an 8-track drum machine running dry underneath.
 @Preferred Panels: chords
 @Tags: ambient, generative, looper, granular, reverb, drone, drums, sequencer
