@@ -411,6 +411,15 @@ struct ambiotica : panel_t {
         { COL_RHYTHM,  TEAL,   "Shuffle - hold, then row picks the style and column the depth" },
     };
 
+    /* The grid's "present but not active" tier: written steps past a track's loop point,
+       written steps on a MUTED track, and the beat ruler.
+       The macros are too coarse here. WHITE is LED_RGB(15,15,15) - already half scale - so
+       DIMMESTEST(WHITE) is 15>>3 = 1, the dimmest thing the hardware can show and effectively
+       invisible (a user reported muted tracks as blank). The next step up, DIMMEST(WHITE), is
+       3, which read as too bright on hardware. fade_col gives the level in between:
+       (15 * 48) >> 8 = 2 of 31. */
+    static uint32_t dim_step() { return fade_col(WHITE, 48); }
+
     /* Emit every modifier pad exactly ONCE per frame, BEFORE anything reads it.
        Immediate-mode widgets are order-dependent, so a pad that tests a modifier has to be
        emitted after it. That is why this runs at the top of on_ui and not inside draw_nav,
@@ -719,7 +728,24 @@ struct ambiotica : panel_t {
        touch_originates_inside_region() takes the rect directly, so there is no region state to
        set or restore, and it rejects only the offending touch instead of all input. It also
        covers dragging from a nav pad into the grid at any time, which the freeze never did. */
-    void nav_goto(int page) { scroll_to_page(page); }
+       HARDWARE 2026-08-07: origin gating alone was NOT enough, and the old comment predicted
+       exactly how. Pages are a window onto a taller surface, so page N's row 0 is logical
+       y = N*16: PRESET sits at page_y + 0, which is y=16 on the drums page. While the scroll
+       animates, a finger held at physical row 14 sweeps upward through the logical rows, and
+       PRESET passes under it - so tapping TRACKS from the play surface landed on the preset
+       browser, and holding it walked through several pages with an audio overrun. Touch origin
+       is not expressed in the same shifting coordinates, so touch_started_here() cannot see it.
+       So a transition guard is back, but NOT the old one. nav_busy is released by the finger
+       LIFTING, not by comparing get_scroll_y_16() to a page multiple - "one page change per
+       press" is the actual rule, it needs no reading of the scroll units, and it cannot leave
+       input dead for a fixed second when that reading is wrong. It gates the drum grid too,
+       which is the other thing the sweep used to scribble on. */
+    bool nav_busy = false;
+    void nav_goto(int page) {
+        if (nav_busy) return;          /* one page change per press */
+        scroll_to_page(page);
+        nav_busy = true;
+    }
 
     /* True when the touch on this pad STARTED on this pad. Nav pads are single cells, so the
        rect is the cell. Buttons do not do this themselves - the SDK exposes origin tracking
@@ -1124,8 +1150,8 @@ struct ambiotica : panel_t {
                        the setting reads as a bar; every other row keeps a single dot so the
                        styles you are not on stay findable. */
                     return (t == (int)shuffle_style)
-                             ? (s <= (int)shuffle_depth ? palette[10][6] : DIMMEST(WHITE))
-                             : (s == 0 ? DIMMEST(WHITE) : 0);
+                             ? (s <= (int)shuffle_depth ? palette[10][6] : dim_step())
+                             : (s == 0 ? dim_step() : 0);
                 }
                 const int i = t * DRUM_STEPS + s;
                 const unsigned char vel = pattern[i];
@@ -1135,13 +1161,13 @@ struct ambiotica : panel_t {
                        than erased, so shortening a track and lengthening it again is
                        lossless - and while LENGTH is held the boundary is where the row
                        visibly stops. */
-                    return vel ? DIMMEST(WHITE) : 0;
+                    return vel ? dim_step() : 0;
                 }
                 if (muted) {
                     /* A muted track still shows its pattern, just dimmed - you need to see
                        what you are about to bring back in. Red while MUTE is held, so the
                        gesture reads before you commit to it. */
-                    return vel ? (mute_mod ? DIMMER(RED) : DIMMEST(WHITE)) : 0;
+                    return vel ? (mute_mod ? DIMMER(RED) : dim_step()) : 0;
                 }
                 if (vel) {
                     /* Brightness carries probability, so holding PROB turns the grid into a
@@ -1157,7 +1183,7 @@ struct ambiotica : panel_t {
                     return palette[sh][hue];
                 }
                 if (head)         return DIMMER(WHITE);   /* playhead over an empty step */
-                if ((s & 3) == 0) return DIMMEST(WHITE);  /* beat ruler */
+                if ((s & 3) == 0) return dim_step();      /* beat ruler */
                 return 0;
             };
             for (int s = 0; s < DRUM_STEPS; s++) {
@@ -1170,7 +1196,8 @@ struct ambiotica : panel_t {
                    unlike the freeze this also holds mid-performance, not just during a
                    scroll, and blocks only that touch instead of all input. */
                 const bool down = shift_button(s, y, cell_col(s), NOT_ISOLATED, nullptr);
-                if (down && touch_originates_inside_region(s, y, 0, page_y + UI_Y,
+                if (down && !nav_busy
+                         && touch_originates_inside_region(s, y, 0, page_y + UI_Y,
                                                            DRUM_STEPS, DRUM_TRACKS)) {
                     any_down = true;
                     /* One latch for every gesture on this page. `press` means "first pad
@@ -1538,6 +1565,10 @@ struct ambiotica : panel_t {
         int page = get_scroll_page();
         if (page < 0) { draw_settings_page(page); return; }
         leds_clear();
+        /* Release the page-transition guard the moment nothing is touched anywhere. The rect
+           spans every page, not just the visible one, because a touch mid-scroll sits at a
+           logical row between two pages. */
+        if (count_touches_in_area(0, 0, 15, PAGE_N * 16) == 0) nav_busy = false;
         /* Modifiers FIRST, once, for every page. Immediate-mode widgets are order-dependent,
            so everything that tests a modifier has to be emitted after it - and the grid and
            the nav bar both do. Under raw touch the order was free; it no longer is. */
