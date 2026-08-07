@@ -106,6 +106,27 @@ if command -v clang++ >/dev/null 2>&1; then
     python3 "$HN/check_order.py" "$OUT" || echo "amalgamate: ORDER PROBLEM ABOVE - this WILL fail in the IDE" >&2
 fi
 
+# LEXICAL check. The order check above does NOT compile anything, and nothing else here does
+# either - panel.cpp has no #includes, so the only real compiler is the IDE, on the far side of
+# an upload. That let a wrecked comment ship: prose written after a */ became code, "2026-08-07"
+# lexed as an octal constant, an apostrophe opened a character literal, and a member declaration
+# inside the wreckage vanished. Every error the IDE reported was LEXICAL, and lexical errors
+# need no headers to find - so find them here, where the loop is seconds instead of an upload.
+# Deliberately narrow: only diagnostics that cannot be caused by the missing SDK headers.
+if command -v clang++ >/dev/null 2>&1; then
+    # -ferror-limit=0 is REQUIRED, not tidiness. Without headers clang hits its default 20-error
+    # limit inside the first 30 lines (size_t, the SDK types) and never reaches the real fault
+    # thousands of lines below. The first version of this check was silent for exactly that
+    # reason. The IDE reports these as errors under -Werror; clang calls them warnings, so match
+    # on the text rather than the severity.
+    lex=$(clang++ -fsyntax-only -std=c++17 -ferror-limit=0 "$OUT" 2>&1 \
+          | grep -Ei "invalid digit|missing terminating|unterminated|invalid suffix" | head -20)
+    if [ -n "$lex" ]; then
+        echo "$lex" >&2
+        echo "amalgamate: LEXICAL ERRORS ABOVE - this WILL fail in the IDE (check comment delimiters)" >&2
+    fi
+fi
+
 # Submission bundle in the plinkysynth/community-panels layout. Built locally every time
 # so it never drifts from the sources; submitting is a separate, manual act.
 #
