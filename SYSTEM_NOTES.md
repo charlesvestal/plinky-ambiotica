@@ -75,10 +75,72 @@ Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio*
 - Color: `LED_RGB(r, g, b)` with **5-bit channels (0–31)**.
   `#define LED_RGB(r,g,b) (uint32_t)(((g)<<24)|((r)<<16)|((b)<<8))`.
   Named colors: `RED=LED_RGB(31,0,0)`, `GREEN=(0,31,0)`, `WHITE=(15,15,15)`, `BLACK=0`, plus a `RAINBOW0..15` ramp. Map 8-bit sources with `>>3`.
-- Pads: `get_touch_pressure_xy(x,y)`, drag origin via `get_touch_origin_x/y(x,y)`.
 - Accelerometer: `get_accel_q24(axis, ...)`, `ACCEL_Q24_ONE_G` (see `ball.cpp`).
-- The grid is one window onto a taller logical surface (pages below page 0, panel-settings pages above). Advertise with `get_num_pages()` / `get_num_panel_settings_pages()`.
-- Higher-level widgets: `button`, `slider_t`, `xy_pad_t`, `knob2x2_t`, `radio_buttons`, `file_picker_t`, plus `leds_backup` / `leds_draw_transition_from_backup` for transitions.
+- Higher-level widgets: `button`, `shift_button`, `invisible_button`, `slider_t`, `xy_pad_t`, `knob2x2_t`, `radio_buttons`, `file_picker_t`, plus `leds_backup` / `leds_draw_transition_from_backup` for transitions.
+
+### ⭐ NEVER COMPARE A RAW TOUCH VALUE
+
+Direct from the Plinky side (2026-08-07): *"you should never have to compare a raw value - use
+button, shift_button, slider, xy_pad, play_surface if you need one of those."* `llm.txt` explains
+why: touch is *"mostly pad-by-pad and stateless, but fingers can slide across the grid."* The
+widget layer is where slide handling and press/release state live. Read pads raw and a momentary
+pressure dip reads as a release, and pressure sliding in from a neighbour reads as a press.
+
+`plinky-ambiotica` learned this the expensive way. A spuriously-released shift key turned every
+paint stroke into a silent erase, and users reported dropped taps and dead modifiers for weeks.
+
+- **A held modifier is `shift_button`** - "the same as `button(...)`, except it returns true for
+  as long as the pad is held". `invisible_button` is the same touch behaviour without drawing,
+  for when you want to paint the LED yourself.
+- **Edges come from `is_last_widget_pressed()` / `_released()` / `_held()`**, which refer to the
+  most recently emitted widget - so read them immediately after the call, with nothing between.
+- **A widget may only be emitted ONCE per frame.** Emitting twice draws twice and stomps the
+  last-widget state. If several places need a modifier, emit it once into a member and have
+  everything read that.
+- **Immediate mode is ORDER-DEPENDENT.** Emit modifiers BEFORE anything that tests them. Raw
+  reads were order-free; widgets are not.
+- **Modifiers must be `NOT_ISOLATED`.** `ISOLATED` *"rejects taps that are crowded by
+  neighbouring touches"*, and a modifier exists to be held WHILE another pad is tapped, so
+  crowding IS the gesture. Conversely, keep standalone nav pads `ISOLATED` - it is what stops a
+  dense corner of adjacent pads triggering each other.
+- Origin tracking is **explicit**, not automatic: `touch_originates_inside_region(padx, pady, x1,
+  y1, w, h)` takes the rect directly. Buttons do NOT reject slid-in pressure on their own.
+
+### ⭐ DRAW EVERY PAGE AT ABSOLUTE y 0..15
+
+The grid can be a window onto a taller logical surface (`get_num_pages()` /
+`get_num_panel_settings_pages()`), but **do not build your own pages that way.** The intended
+shape is a switch/case picking which draw function paints the one visible surface, each drawing
+at plain absolute coordinates:
+
+```c
+#define PLAY_START_Y 2
+#define CTRL_START_Y 14
+void DrawSongs() { panel_picker.panel_picker(PLAY_START_Y, PLAY_START_Y+8); ... }
+```
+
+`plinky-ambiotica` instead offsets everything by `page_y = N*16` and lets the firmware scroll a
+window across it. That means page 1's row 0 exists at `y=16` while you are standing on page 0 -
+so during the scroll animation a finger held at a physical row **sweeps upward through other
+pages' pads and fires them**. Tapping one nav pad landed on a different page, and holding it
+walked through several pages with an audio overrun. `touch_originates_inside_region()` does NOT
+save you: touch origin is not expressed in those shifting coordinates. Absolute coordinates make
+the whole bug class unrepresentable.
+
+### Brightness: the dim tiers are far dimmer than they look
+
+`WHITE` is `LED_RGB(15,15,15)` - already **half scale** - so the macros land differently on it
+than on a full-31 colour. `DIMMESTEST` is `>>3`, giving **1 of 31 on white**: the dimmest thing
+the hardware can show, and effectively invisible. A user reported muted tracks as blank because
+of it. `DIMMEST(WHITE)` is 3; `fade_col(WHITE, 48)` gives 2 if you want the step between.
+
+### ⭐ Enabling the mic switches OFF four LEDs
+
+`codec_enable_mic(true)` makes the firmware disable **the 2 LEDs beside each microphone hole**
+(they inject noise into the recording). That is pads **(0,1), (0,2), (15,1), (15,2)** - the top
+corners of the pad area. Intentional, documented in `llm.txt`, and it cost a full debugging
+session: a user reported them as dead LEDs, and two other people could not reproduce it because
+their input source was `off`. **Check `audio_source` before investigating dark corner pads.**
 
 ---
 
@@ -96,6 +158,48 @@ Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio*
 
 - Panels are authored in a **hosted web IDE**: one `.cpp`, `#include` banned, compiled as **C++**.
 - ⭐ **Long source files are fine.** `blocks` (the flagship) is **one ~10k-line file**; the `Chords` panel is ~5,700 lines. There is an **arbitrary server-side source-size limit** (mmalex set it; raisable). mmalex on big ports: *"large codebases suck, don't do it 🙂 (tho i know you will)."*
+
+---
+
+## 6b. Gotchas that cost real debugging time
+
+- ⭐ **`printf` / Device Logs is BROKEN on the STAGING IDE** (`stage.plinky12.com`). The panel
+  compiles and runs, output never appears. **Flash anything you need logs from via
+  `plinky12.com`.** Cost a long "why is nothing printing" detour.
+- ⭐ **Loading a panel kills the WebUSB log.** Firmware bug, reproducible on stock panels, the
+  instrument is unaffected. Do not re-debug it as a panel hang.
+- **A panel's SD folder is created by SAVING**, not provisioned. An empty picker is an empty
+  state, not a broken feature. Also: the picker's name buffer is `char[17]`, and a panel name
+  over 16 chars silently kills the folder scan.
+- **`setup_default_panel_state()` does NOT run on a staged load** (which is how the IDE loads a
+  panel). Rebuild allocations in `on_load_finished()` or things silently die.
+- **`on_serialise` named fields are only written back when PRESENT**, so any field a save omits
+  keeps whatever is already in the object - i.e. **the previously loaded scene's value**. This
+  is not a back-compat issue: two saves from the same build differ if one never set a field.
+  **Reset every deserialised field before `OBJECT_BEGIN`.**
+- **`reverbbuf` is a MACRO** - use it bare. Both `mb->reverbbuf` and `mix_buffers.reverbbuf`
+  fail. It is 64 KB of fast RAM free when `on_dsp` returns true, but **only within a block** -
+  putting anything long-lived there froze the instrument on the first preset load.
+- **The desktop cannot measure CPU.** The RP2350 reaches big buffers through PSRAM behind a tiny
+  XIP cache; things that are free on a desktop cost 150 µs on device. Profile on hardware, and
+  change one thing at a time. Note the profile build's own `printf` inflates the UI timings.
+
+---
+
+## 6c. Submitting to the community library
+
+`plinkysynth/community-panels`, layout `author/panel/panel.cpp` (+ optional `README.md`,
+`artwork.png`). Metadata is a block comment that must be the **first** thing in the file.
+
+- **`@Author` and `@Firmware` are REQUIRED.** `@Firmware` is `latest`, a channel (`beta` /
+  `alpha` / `release`), or a 4-char build code. **The maintainer owns this value** - they can
+  only bless artifacts for firmware in Plinky's `versions.json`.
+- Other fields: `@Name`, `@Description`, `@Preferred Panels`, `@Tags`, `@Documentation`,
+  `@Video`, `@Discussion`, `@Category`. `@Artwork` is banned (ship `artwork.png` beside it).
+- ⭐ **The maintainer EDITS YOUR FILE BY HAND after you submit.** On `ambiotica` they did it
+  three times (`@Video`, then `@Firmware` twice). If your `.cpp` is generated, every one of
+  those is silently reverted by your next build. **After any merge, diff the merged file
+  against your generated one and copy back what they changed.**
 
 ---
 
