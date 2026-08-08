@@ -55,10 +55,16 @@ trap 'rm -f "$BODY"' EXIT
     # displayed but not used for grouping or filtering, so it buys little.
     #
     # @Firmware is the firmware base to build against: `latest`, a channel (`beta` / `alpha` /
-    # `release`), or a four-character build code pinning a specific base. `c019` is the pin the
-    # community-panels MAINTAINER chose for us in their commit f4e5074, and it is kept rather
-    # than moved to `latest` because they can only bless artifacts for firmware listed in
-    # Plinky's versions.json. Do not change it without asking them.
+    # `release`), or a four-character build code pinning a specific base. THE MAINTAINER OWNS
+    # THIS VALUE - do not change it without asking them, because they can only bless artifacts
+    # for firmware listed in Plinky's versions.json. They set `c019` in their f4e5074, then
+    # moved it to `beta` when they merged PR #5. Both times by hand-editing their copy.
+    #
+    # That is now THREE upstream hand-edits to this header (@Video, then @Firmware twice) and
+    # every one of them would have been silently deleted by the next regeneration. AFTER ANY
+    # MERGE, DIFF THE MERGED FILE AGAINST dist/ AND COPY BACK WHAT THEY CHANGED:
+    #   gh api "repos/plinkysynth/community-panels/contents/charlesvestal/ambiotica/ambiotica.cpp" \
+    #     --jq '.content' | base64 -d | diff - dist/charlesvestal/ambiotica/ambiotica.cpp
     #
     # THIS BLOCK IS THE ONLY SOURCE OF TRUTH FOR THE SUBMITTED HEADER. @Video was once added
     # by hand to the copy living in community-panels (their commit 680d7e9) and not here, so
@@ -80,7 +86,7 @@ trap 'rm -f "$BODY"' EXIT
 /*
 @Name: Ambiotica
 @Author: Charles Vestal
-@Firmware: c019
+@Firmware: beta
 @Version: 1.1
 @Description: Play a few notes and let go. A rolling looper, a granular cloud, a plate reverb and a bank of tuned resonators turn them into a slow wash, with an 8-track drum machine running dry underneath.
 @Preferred Panels: chords
