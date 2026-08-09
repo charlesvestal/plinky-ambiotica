@@ -128,6 +128,3 @@ MIT (see [`LICENSE`](LICENSE)). The DSP is vendored from the author's `ambiotica
 
 This panel was built with help from coding agents like Claude, but with significant design,
 oversight and hours from a human (me). If that's not to your taste, totally fine!
-
-The commit history reflects that: agent-assisted commits carry a `Co-Authored-By` trailer, so
-you can see exactly which parts were which.

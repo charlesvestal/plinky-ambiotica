@@ -134,6 +134,35 @@ than on a full-31 colour. `DIMMESTEST` is `>>3`, giving **1 of 31 on white**: th
 the hardware can show, and effectively invisible. A user reported muted tracks as blank because
 of it. `DIMMEST(WHITE)` is 3; `fade_col(WHITE, 48)` gives 2 if you want the step between.
 
+### ⭐ The mounted faceplate IS readable - and the code must be MASKED
+
+The firmware reads the overlay off resistor straps. It is spelled **`frontpanel`**, not
+faceplate/overlay/panel_art - searching for the latter finds nothing and invites the wrong
+conclusion that no such API exists. `grid.cpp` uses it to shift its LEDs down two rows on
+Chords and Drums.
+
+```c
+int get_frontpanel_code(void);        // FRONT_PANEL_CODE_NONE/BLOCKS 0x0, TOADSTEP 0x2,
+                                      // DRUMS 0x10, CHORDS 0x20
+int get_frontpanel_orientation(void); // 0 = missing, 1 = normal, 2 = upside down
+```
+
+⭐ **Test it with `&`, not `==`.** The codes are distinct bits and a real unit returns extra
+bits alongside the plate, so `get_frontpanel_code() == FRONT_PANEL_CODE_CHORDS` silently
+fails on hardware while looking correct. `grid.cpp` compares for equality; that is not a
+safe pattern to copy. Confirmed on a Chords unit: the equality form never matched, the mask
+form did.
+
+Read it **once at load**, not per frame, and `printf` the raw value - the number is the only
+way to tell "detection failed" from "you are not on the page you think you are".
+
+Chords and Drums print the **same** synth page (checked against `panel_art/chords.png` and
+`panel_art/drums.png`, label for label) and both give pad circles only on rows 2..13. Blocks
+is a bare unlabelled 16x16. Toadstep's printed fader order is exactly `preset_pages_t::edit()`'s
+column order, so the stock layout is already correct there.
+
+Panel art: `https://plinky12.com/panel_art/<name>.png`, basic auth `p12code` / `jollygood`.
+
 ### ⭐ Enabling the mic switches OFF four LEDs
 
 `codec_enable_mic(true)` makes the firmware disable **the 2 LEDs beside each microphone hole**
