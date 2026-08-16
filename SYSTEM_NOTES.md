@@ -31,7 +31,7 @@ A panel is a C++ class derived from `panel_t`. Override only the hooks you need.
 |---|---|---|---|
 | `on_ui(int dt_us)` | core0, foreground | ~250 fps | draw the 16×16 view, read widgets/touch. **Can pause** during SD I/O. |
 | `on_sequence(...)` | core0, **IRQ context** | ~500–1000 fps | musical timing: playheads, notes, voice alloc. Keep short & deterministic; no SD / big memory. |
-| `on_dsp_voices(...)` | **core1** | per 64-sample block | audio only; fill `mix_buffers`. |
+| `on_dsp(const int16_t*, int16_t*, mix_buffers_t*)` | **core1** | per 64-sample block | audio only. Return `false` to run the standard FX chain on `mix_buffers_out`, `true` if you wrote final stereo yourself. |
 | `on_click / on_touch / on_midi` | core0 | event | side buttons / raw pad edges / incoming MIDI |
 | `setup_default_panel_state()` | core0 | once | build default song/panel state after settings load |
 | `on_serialise / on_serialise_settings` | core0 | save/load | durable state / durable prefs (JSON) |
@@ -55,7 +55,8 @@ Heavy sustained work in `on_ui` is fine; it just stalls UI refresh, **not audio*
 **Rules:**
 - **No heap.** No `new`/`malloc`/`free`/growing containers. Declare worst-case state as members.
 - **No `#include`.** Headers are auto-injected before your code.
-- ⭐ **Stack variables must stay under ~200 bytes** (mmalex). Big temporaries → members, PSRAM, or `temp_alloc`.
+- ⭐ **Keep stack objects under ~128 bytes; treat 256 bytes as the hard upper bound** (the
+  published figures). Big temporaries → members, PSRAM, or `temp_alloc`.
 - **`static const` data lives in flash (rodata), not the 128 KB arena.** Read-only tables (window functions, coefficients, wavetables) are effectively free of the RAM budget. Only *mutable* state counts against the 128/256 KB.
 
 **Practical placement rule (for DSP-heavy panels):** hot + small + random-access → **SRAM arena** (128/256 KB); big + sequential → **PSRAM**; read-only → **flash**.
@@ -99,33 +100,32 @@ paint stroke into a silent erase, and users reported dropped taps and dead modif
   everything read that.
 - **Immediate mode is ORDER-DEPENDENT.** Emit modifiers BEFORE anything that tests them. Raw
   reads were order-free; widgets are not.
-- **Modifiers must be `NOT_ISOLATED`.** `ISOLATED` *"rejects taps that are crowded by
+- **Modifiers must be `NOT_ISOLATED`** (inferred from `ISOLATED` "rejects taps that are crowded
+by neighbouring touches" - reasonable, but not stated as a rule anywhere). There is also a
+documented API for exactly this: `set_touch_origin_ignore_row_mask(...)` marks pads as
+modifier-style so they "should not donate their origin to neighbouring newly-pressed pads",
+and is meant to be called near the top of `on_ui(...)` for shift/record/clear pads. `ISOLATED` *"rejects taps that are crowded by
   neighbouring touches"*, and a modifier exists to be held WHILE another pad is tapped, so
   crowding IS the gesture. Conversely, keep standalone nav pads `ISOLATED` - it is what stops a
   dense corner of adjacent pads triggering each other.
 - Origin tracking is **explicit**, not automatic: `touch_originates_inside_region(padx, pady, x1,
   y1, w, h)` takes the rect directly. Buttons do NOT reject slid-in pressure on their own.
 
-### ⭐ DRAW EVERY PAGE AT ABSOLUTE y 0..15
+### ⭐ PANEL PAGES LIVE AT y = N*16, AND set_led/button TAKE ABSOLUTE y
 
-The grid can be a window onto a taller logical surface (`get_num_pages()` /
-`get_num_panel_settings_pages()`), but **do not build your own pages that way.** The intended
-shape is a switch/case picking which draw function paints the one visible surface, each drawing
-at plain absolute coordinates:
+The grid is one 16x16 window onto a taller logical surface. Page 0 is at logical `y = 0`,
+page 1 at `y = 16`, page 2 at `y = 32`. Panel **settings** pages go the other way: page -1 is
+at `y = -16`, page -2 at `y = -32`. Override `get_num_pages()` to advertise the extra pages.
 
-```c
-#define PLAY_START_Y 2
-#define CTRL_START_Y 14
-void DrawSongs() { panel_picker.panel_picker(PLAY_START_Y, PLAY_START_Y+8); ... }
-```
+`set_led(x, y, ...)` and `button(x, y, ...)` take the **absolute logical y**, not a
+page-relative one. So a second page must be drawn at `y = 16 + row`, and the whole-page
+helpers take a `y` argument for exactly this: both stock panels that add a save/load page call
+`panel_page.saveload(16, ...)`.
 
-`plinky-ambiotica` instead offsets everything by `page_y = N*16` and lets the firmware scroll a
-window across it. That means page 1's row 0 exists at `y=16` while you are standing on page 0 -
-so during the scroll animation a finger held at a physical row **sweeps upward through other
-pages' pads and fires them**. Tapping one nav pad landed on a different page, and holding it
-walked through several pages with an audio overrun. `touch_originates_inside_region()` does NOT
-save you: touch origin is not expressed in those shifting coordinates. Absolute coordinates make
-the whole bug class unrepresentable.
+Drawing a second page at rows 0..15 puts it a whole page above the viewport: nothing renders
+and none of its buttons can be pressed. This cost a silently dead scene picker in plinky-life,
+because an earlier revision of this file asserted the opposite - "draw every page at absolute
+y 0..15, do not build your own pages that way". That was wrong.
 
 ### Brightness: the dim tiers are far dimmer than they look
 
@@ -134,7 +134,7 @@ than on a full-31 colour. `DIMMESTEST` is `>>3`, giving **1 of 31 on white**: th
 the hardware can show, and effectively invisible. A user reported muted tracks as blank because
 of it. `DIMMEST(WHITE)` is 3; `fade_col(WHITE, 48)` gives 2 if you want the step between.
 
-### ⭐ The mounted faceplate IS readable - and the code must be MASKED
+### The mounted faceplate IS readable (masking is a choice, not a requirement)
 
 The firmware reads the overlay off resistor straps. It is spelled **`frontpanel`**, not
 faceplate/overlay/panel_art - searching for the latter finds nothing and invites the wrong
@@ -181,10 +181,11 @@ TREBLE MID BASS MELODY XY MODULO PROB PATTERN FILL UNLOCK`.
 
 Panel art: `https://plinky12.com/panel_art/<name>.png`, basic auth `p12code` / `jollygood`.
 
-### ⭐ `do_play_surface` derives pitch from BOTH axes - built for 8 strings, not 16 rows
+### ⭐ `do_play_surface` derives pitch from BOTH axes, which runs away over many strings
 
-Plinky's own play surface tunes each string a fourth above the last and takes further pitch from
-the position **along** the string. That is right for the 8 strings the instrument ships with. Use
+`do_play_surface` takes pitch from the string root AND the position **along** the string. The
+per-string interval is a caller parameter (`fill_scale_string_roots(..., interval_degrees)`)
+with no documented default, so "a fourth per string" is a convention, not an API fact. Use
 the same offset across a full-height 16-row grid and the multiplication runs away: measured
 **7.4 octaves** on a Chords faceplate (12 usable rows) and 8.6 on a blank one, top corner clamping
 flat at MIDI 127, against a sequencer covering 3.2.
@@ -206,7 +207,8 @@ the arithmetic drops it and will silently exclude the tonic.
 
 `codec_enable_mic(true)` makes the firmware disable **the 2 LEDs beside each microphone hole**
 (they inject noise into the recording). That is pads **(0,1), (0,2), (15,1), (15,2)** - the top
-corners of the pad area. Intentional, documented in `llm.txt`, and it cost a full debugging
+corners of the pad area. The behaviour is documented ("the 2 leds adjacent to each microphone hole are disabled");
+the specific pad coordinates below are inferred, not published, and it cost a full debugging
 session: a user reported them as dead LEDs, and two other people could not reproduce it because
 their input source was `off`. **Check `audio_source` before investigating dark corner pads.**
 
@@ -245,9 +247,11 @@ their input source was `off`. **Check `audio_source` before investigating dark c
   keeps whatever is already in the object - i.e. **the previously loaded scene's value**. This
   is not a back-compat issue: two saves from the same build differ if one never set a field.
   **Reset every deserialised field before `OBJECT_BEGIN`.**
-- **`reverbbuf` is a MACRO** - use it bare. Both `mb->reverbbuf` and `mix_buffers.reverbbuf`
-  fail. It is 64 KB of fast RAM free when `on_dsp` returns true, but **only within a block** -
-  putting anything long-lived there froze the instrument on the first preset load.
+- **`reverbbuf` is a member of `mix_buffers_t`**: `int16_t reverbbuf[REVERBBUF_SAMPLES]`, and
+  the docs themselves write `mix_buffers.reverbbuf`. It is 64 KB (`REVERBBUF_SAMPLES` is 32768,
+  mono) of fast RAM, usable when `on_dsp` returns true but **only within a block** - putting
+  anything long-lived there froze the instrument on the first preset load. (An earlier revision
+  of this file called it a macro that must be used bare. That was wrong.)
 - **The desktop cannot measure CPU.** The RP2350 reaches big buffers through PSRAM behind a tiny
   XIP cache; things that are free on a desktop cost 150 µs on device. Profile on hardware, and
   change one thing at a time. Note the profile build's own `printf` inflates the UI timings.
