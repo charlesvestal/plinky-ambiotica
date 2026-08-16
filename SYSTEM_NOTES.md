@@ -147,21 +147,60 @@ int get_frontpanel_code(void);        // FRONT_PANEL_CODE_NONE/BLOCKS 0x0, TOADS
 int get_frontpanel_orientation(void); // 0 = missing, 1 = normal, 2 = upside down
 ```
 
-⭐ **Test it with `&`, not `==`.** The codes are distinct bits and a real unit returns extra
-bits alongside the plate, so `get_frontpanel_code() == FRONT_PANEL_CODE_CHORDS` silently
-fails on hardware while looking correct. `grid.cpp` compares for equality; that is not a
-safe pattern to copy. Confirmed on a Chords unit: the equality form never matched, the mask
-form did.
+⭐ **Read it in a MEMBER INITIALISER, at construction.** This is the whole trick, and it is
+why `grid.cpp` does `int8_t y_offset = (get_frontpanel_code() == ...) ? 2 : 0;` as a member
+default rather than calling it from a hook.
 
-Read it **once at load**, not per frame, and `printf` the raw value - the number is the only
-way to tell "detection failed" from "you are not on the page you think you are".
+Confirmed on a Chords unit: the call returns the plate at construction and **`0` from
+`on_ui` later**, while `get_frontpanel_orientation()` reports `1` throughout - so the
+firmware knows a panel is mounted but the code is only readable early. Calling it per frame
+looks tidier, compiles, logs a plausible `0`, and silently never detects anything. Cost most
+of a session.
+
+⭐ **Ship a manual override anyway.** `grid.cpp` persists `y_offset` as a setting with its
+own page for exactly this reason: detection is the default, not the contract.
 
 Chords and Drums print the **same** synth page (checked against `panel_art/chords.png` and
 `panel_art/drums.png`, label for label) and both give pad circles only on rows 2..13. Blocks
 is a bare unlabelled 16x16. Toadstep's printed fader order is exactly `preset_pages_t::edit()`'s
 column order, so the stock layout is already correct there.
 
+⭐ **The stock save/load wrappers cannot be placed; their pieces can.**
+`preset_pages_t::saveload_action(idx, y)` and `panel_page_t::saveload(y)` hardcode their
+cancel and OK to `(14, y+15)` and `(15, y+15)`, which on Chords is the transport corner. Do
+not conclude the picker is immovable - call the parts instead:
+`picker.preset_picker(idx, y1, y2)`, `preset_save_button(idx, x, y)`,
+`preset_load_button(idx, x, y)`, and `panel_picker(y1, y2)` / `panel_save_button` /
+`panel_load_button`. `plinky-ambiotica` builds both pages this way. Note
+`panel_load_button` only STAGES a load: poll `is_panel_load_staged()` and then
+`request_panel_load_finalise()`, and return immediately if it accepts.
+
+Chords prints **SAVE at (12,14) and LOAD at (13,14)**, and row 15 is `● ✕ ■ ▶` at x12..15.
+Row 0 is `ALL / TREBLE / BASS / MELODY`, row 1 is `RHYTHM LENGTH VELOCITY CHORD ARP KEY
+TREBLE MID BASS MELODY XY MODULO PROB PATTERN FILL UNLOCK`.
+
 Panel art: `https://plinky12.com/panel_art/<name>.png`, basic auth `p12code` / `jollygood`.
+
+### ⭐ `do_play_surface` derives pitch from BOTH axes - built for 8 strings, not 16 rows
+
+Plinky's own play surface tunes each string a fourth above the last and takes further pitch from
+the position **along** the string. That is right for the 8 strings the instrument ships with. Use
+the same offset across a full-height 16-row grid and the multiplication runs away: measured
+**7.4 octaves** on a Chords faceplate (12 usable rows) and 8.6 on a blank one, top corner clamping
+flat at MIDI 127, against a sequencer covering 3.2.
+
+It is not a bug in `do_play_surface`. The row count is the variable, and a panel using rows as
+strings has 12 to 15 of them rather than 8.
+
+**Any per-row offset above +1 degree overshoots a full-height grid.** Fourths (+3/row) give 7.4
+octaves; +2/row gives 4.8. Only +1 lands near the instrument's own range - 2.4 octaves on Chords,
+3.0 on a blank plate in a pentatonic scale.
+
+**How to apply:** for a full-height surface, skip `do_play_surface` and drive
+`update_from_touch` / `update_voices` / `get_finger_for_voice` yourself, with `STRINGOPHONIC_MONO`
+so a slide along a row holds its note rather than retriggering. Then map pitch from the row alone.
+Anchor the bottom row at scale degree 0: a window derived from world coordinates lands wherever
+the arithmetic drops it and will silently exclude the tonic.
 
 ### ⭐ Enabling the mic switches OFF four LEDs
 
