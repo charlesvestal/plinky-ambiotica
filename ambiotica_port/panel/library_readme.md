@@ -9,7 +9,8 @@ Underneath all that, an 8-track drum machine.
 
 ## Hear it
 
-- [Ambiotica on Plinky 12](https://www.youtube.com/watch?v=NG1DBZ1N4b0), the engine on its own
+- [Ambiotica on Plinky 12](https://www.youtube.com/watch?v=Etwy-mc-HDs)
+- [The engine on its own](https://www.youtube.com/watch?v=NG1DBZ1N4b0)
 - [Now with Drums](https://www.youtube.com/watch?v=jAwj6go3ipw), the sequencer running underneath
 - [Live Input Demo](https://www.youtube.com/watch?v=nSFfK28sIks), external audio through the chain
 
