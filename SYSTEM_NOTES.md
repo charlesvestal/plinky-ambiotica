@@ -134,52 +134,45 @@ than on a full-31 colour. `DIMMESTEST` is `>>3`, giving **1 of 31 on white**: th
 the hardware can show, and effectively invisible. A user reported muted tracks as blank because
 of it. `DIMMEST(WHITE)` is 3; `fade_col(WHITE, 48)` gives 2 if you want the step between.
 
-### The mounted faceplate IS readable (masking is a choice, not a requirement)
+### ⭐ A NON-SERIALISED MEMBER DOES NOT SURVIVE A PANEL LOAD
 
-The firmware reads the overlay off resistor straps. It is spelled **`frontpanel`**, not
-faceplate/overlay/panel_art - searching for the latter finds nothing and invites the wrong
-conclusion that no such API exists. `grid.cpp` uses it to shift its LEDs down two rows on
-Chords and Drums.
+`panel_t::on_commit_staged_load_audio_thread`'s default body is:
 
 ```c
-int get_frontpanel_code(void);        // FRONT_PANEL_CODE_NONE/BLOCKS 0x0, TOADSTEP 0x2,
-                                      // DRUMS 0x10, CHORDS 0x20
-int get_frontpanel_orientation(void); // 0 = missing, 1 = normal, 2 = upside down
+memcpy((void *)this, (const void *)loaded_state, panel_memory_size);
 ```
 
-⭐ **Read it in a MEMBER INITIALISER, at construction.** This is the whole trick, and it is
-why `grid.cpp` does `int8_t y_offset = (get_frontpanel_code() == ...) ? 2 : 0;` as a member
-default rather than calling it from a hook.
+The staged copy replaces the **whole live object**. So anything a panel worked out at
+construction is overwritten by whatever the STAGED instance holds - and that instance was
+placement-new'd at LOAD time, not at boot.
 
-Confirmed on a Chords unit: the call returns the plate at construction and **`0` from
-`on_ui` later**, while `get_frontpanel_orientation()` reports `1` throughout - so the
-firmware knows a panel is mounted but the code is only readable early. Calling it per frame
-looks tidier, compiles, logs a plausible `0`, and silently never detects anything. Cost most
-of a session.
+Declared settings are the exception: the system copies them live to staged *before*
+deserialising, so a `FIELD` in `on_serialise_settings` rides through the memcpy.
 
-⭐ **Ship a manual override anyway.** `grid.cpp` persists `y_offset` as a setting with its
-own page for exactly this reason: detection is the default, not the contract.
+A remembered-song boot is a staged load too, so this happens before the first frame is drawn.
 
-Chords and Drums print the **same** synth page (checked against `panel_art/chords.png` and
-`panel_art/drums.png`, label for label) and both give pad circles only on rows 2..13. Blocks
-is a bare unlabelled 16x16. Toadstep's printed fader order is exactly `preset_pages_t::edit()`'s
-column order, so the stock layout is already correct there.
+**This cost most of a day.** `get_frontpanel_code()` reads the plate correctly at construction
+on a Chords unit, and 0 afterwards. Held in a plain member it looked like detection was broken:
+the value was right, then a load memcpy'd a 0 over it. The fix is to hand it to the staged
+instance in `on_prepare_staged_load(staged, size)`, which runs on the LIVE instance with the
+staged pointer, after settings are copied and before deserialisation.
 
-⭐ **The stock save/load wrappers cannot be placed; their pieces can.**
-`preset_pages_t::saveload_action(idx, y)` and `panel_page_t::saveload(y)` hardcode their
-cancel and OK to `(14, y+15)` and `(15, y+15)`, which on Chords is the transport corner. Do
-not conclude the picker is immovable - call the parts instead:
-`picker.preset_picker(idx, y1, y2)`, `preset_save_button(idx, x, y)`,
-`preset_load_button(idx, x, y)`, and `panel_picker(y1, y2)` / `panel_save_button` /
-`panel_load_button`. `plinky-ambiotica` builds both pages this way. Note
-`panel_load_button` only STAGES a load: poll `is_panel_load_staged()` and then
-`request_panel_load_finalise()`, and return immediately if it accepts.
+`grid.cpp` looks like it detects the plate in a member initialiser. It does, but that is not why
+it works: `y_offset` is a declared setting (`FIELD("y_offset", ...)`), so it survives. Copying
+the initialiser without the FIELD copies the part that does not matter.
 
-Chords prints **SAVE at (12,14) and LOAD at (13,14)**, and row 15 is `● ✕ ■ ▶` at x12..15.
-Row 0 is `ALL / TREBLE / BASS / MELODY`, row 1 is `RHYTHM LENGTH VELOCITY CHORD ARP KEY
-TREBLE MID BASS MELODY XY MODULO PROB PATTERN FILL UNLOCK`.
+### The mounted faceplate: `get_frontpanel_code()`
 
-Panel art: `https://plinky12.com/panel_art/<name>.png`, basic auth `p12code` / `jollygood`.
+Values are distinct bits: `TOADSTEP 0x2`, `DRUMS 0x10`, `CHORDS 0x20`, and `BLOCKS`/`NONE` are
+`0x0`. `grid.cpp` compares with `==`; masking also works and is a superset.
+
+**Zero is ambiguous.** It means "blank plate" and "no answer right now" alike, and at least one
+Chords unit returns 0 from `on_ui` while answering correctly at construction. So: read it at
+construction, keep the last non-zero reading in a settings field, and carry it across loads as
+above. A panel that only reads it live will detect nothing on that hardware.
+
+`get_frontpanel_orientation()` reports 0 missing, 1 normal, 2 upside down. It stays 1 on a unit
+whose code reads 0, so it can tell you a plate is mounted but not which one.
 
 ### ⭐ `do_play_surface` derives pitch from BOTH axes, which runs away over many strings
 
